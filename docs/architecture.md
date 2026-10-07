@@ -16,7 +16,7 @@ Covers PRD-01 (`docs/prd-01-orientation-map.md`). Living document: update it whe
 |---|---|---|
 | Python | >= 3.11 (developed on 3.13) | Agent skills already ship Python. coverage.py formats are native. |
 | uv | 0.12 | Install with `uv tool install`, so `cbi` is on PATH with an isolated environment. |
-| tree-sitter (py-tree-sitter) | 0.26 | Error-tolerant parsing for every language we need. |
+| tree-sitter (py-tree-sitter) | 0.25 | Error-tolerant parsing for every language we need. Held below 0.26: 0.26.0 segfaults on node access after a few parses of one file (deliverable 3), 0.25.2 does not. |
 | tree-sitter-language-pack | 1.21 | Prebuilt grammars for Python, TypeScript, TSX, JavaScript and 150+ others in one wheel. Checked: `get_parser("tsx")` and `("python")` work on 3.13. |
 | SQLite (stdlib `sqlite3`) with FTS5 | 3.53 on macOS | The model store. Fast `show`/`tests-for` queries and full-text `search` with no extra dependency. FTS5 checked present. |
 | argparse (stdlib) | | Enough for a dozen subcommands. Help text is the agent's documentation, so it is written by hand either way. |
@@ -85,6 +85,15 @@ Enumeration details settled in deliverable 2:
 - `file_state.path` is relative to the top repo. A `meta` table holds the no-change fingerprint (ignore file, `structure.json`, parser version, every workspace's pinned and checked-out commit).
 - The schema version is SQLite's `user_version`. On a mismatch the model is dropped and rebuilt, since it is derived from the repo and answers live in the shared cache.
 - `.cbi/ignore` patterns match paths from the top repo root, so they reach into submodules. An ignored submodule path skips the whole submodule.
+
+Parsing and tasks, settled in deliverable 3:
+
+- The TypeScript parser walks the syntax tree rather than running query files: top-level statements (unwrapping `export`) and class members. Symbol `kind` is `symbol`; display kinds are `class`, `method`, `function` (including arrow-function and function-expression consts), `component` and `interface`. Signatures are the declaration text up to the body, whitespace collapsed. A doc is a `/** */` comment ending on the line above.
+- In test files, `test`, `it`, `describe`, `test.skip`-style calls and `t.test` subtests with a string name become `kind` `test` nodes: display kind `test case`, or `test suite` for `describe`. Nested cases are children of their suite, and their qualified name joins names with ` > ` (`#double > doubles`).
+- Duplicate qualified names: each gets `~<8 hex of sha1(signature)>`; a later duplicate with an identical signature adds `~2`, `~3` after that (`#same~f361afdb`, `#same~f361afdb~2`).
+- A file is reparsed when its content hash or parser version changed, or its file ID is new to the model (a workspace ID change).
+- `summarise-files` covers code and test files. A folder's files are split, in path order, into batches of 15; batch n is task `sf-<8 hex of sha1(folder ID)>-<n>` and lists only its uncached files. Files at a workspace root use the workspace as the task's node. `tasks.inputs` holds the node IDs a brief lists. `input_hash` is a hash of the protocol version, parser version and each listed file's ID and content hash. A file whose content changed loses its agent summary until it is answered again.
+- The answer cache is attached to the model connection (`ATTACH ... AS cache`), so a submit writes the cache, the summaries and the task state in one transaction. A task's files are given as paths from the top repo, which is also what the answer echoes.
 
 **Structure overrides**: `.cbi/structure.json`, written only by accepted `confirm-structure` answers and editable by hand. It lists deployables (name, display kind, source entry points) and packages (name, directory) to add, rename or remove. It is applied at the start of manifest detection on every scan, so a correction outlives rescans.
 

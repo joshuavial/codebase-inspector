@@ -7,6 +7,14 @@ def _git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
+@pytest.fixture(autouse=True)
+def answer_cache(tmp_path, monkeypatch):
+    """Keep every test's answer cache in its own temp dir, never the user's."""
+    path = tmp_path / "answer-cache"
+    monkeypatch.setenv("CBI_CACHE_DIR", str(path))
+    return path
+
+
 @pytest.fixture
 def make_repo(tmp_path):
     """Build a git repo from {relative path: content} and commit it. Returns its path."""

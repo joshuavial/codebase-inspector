@@ -5,7 +5,7 @@ import sqlite3
 
 # Bump when the schema changes. The model is derived from the repo, so an old
 # database is dropped and rebuilt rather than migrated.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE nodes (
@@ -77,7 +77,8 @@ CREATE TABLE tasks (
     node_id TEXT NOT NULL,
     input_hash TEXT NOT NULL,
     state TEXT NOT NULL,
-    depends_on TEXT NOT NULL DEFAULT '[]'
+    depends_on TEXT NOT NULL DEFAULT '[]',
+    inputs TEXT NOT NULL DEFAULT '[]' -- JSON list of the node IDs the brief covers
 );
 
 CREATE VIRTUAL TABLE search USING fts5(
@@ -163,3 +164,48 @@ def replace_enumerated_nodes(conn, nodes):
 
 def counts_by_display_kind(conn):
     return dict(conn.execute("SELECT display_kind, COUNT(*) FROM nodes GROUP BY display_kind ORDER BY display_kind"))
+
+
+SYMBOL_COLUMNS = ("id", "parent_id", "kind", "display_kind", "name", "workspace_id", "path",
+                  "start_line", "end_line", "lang", "loc", "signature", "doc")
+
+
+def replace_file_symbols(conn, workspace_id, path, loc, nodes):
+    """Replace the symbol and test nodes parsed from one file and set the file's LOC."""
+    conn.execute(
+        "DELETE FROM nodes WHERE kind IN ('symbol', 'test') AND workspace_id = ? AND path = ?",
+        (workspace_id, path),
+    )
+    conn.executemany(
+        f"INSERT INTO nodes ({', '.join(SYMBOL_COLUMNS)}) VALUES ({', '.join('?' * len(SYMBOL_COLUMNS))})",
+        [tuple(n.get(c) for c in SYMBOL_COLUMNS) for n in nodes],
+    )
+    conn.execute("UPDATE nodes SET loc = ? WHERE kind = 'file' AND workspace_id = ? AND path = ?", (loc, workspace_id, path))
+
+
+def drop_orphan_symbols(conn):
+    """Delete symbol and test nodes whose file is gone from the model, and diagnostics of missing nodes."""
+    conn.execute(
+        "DELETE FROM nodes WHERE kind IN ('symbol', 'test') AND NOT EXISTS ("
+        "SELECT 1 FROM nodes f WHERE f.kind = 'file' AND f.workspace_id = nodes.workspace_id AND f.path = nodes.path)"
+    )
+    conn.execute("DELETE FROM diagnostics WHERE node_id NOT IN (SELECT id FROM nodes)")
+
+
+def set_diagnostic(conn, node_id, kind, detail):
+    """Replace the node's diagnostics of this kind with one row, or none when detail is None."""
+    conn.execute("DELETE FROM diagnostics WHERE node_id = ? AND kind = ?", (node_id, kind))
+    if detail is not None:
+        conn.execute("INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, ?, ?)", (node_id, kind, detail))
+
+
+def reindex(conn, ids=None):
+    """Rebuild the search rows for the given node IDs, or for every node."""
+    columns = "id, name, display_kind, path, signature, doc, summary"
+    if ids is None:
+        conn.execute("DELETE FROM search")
+        conn.execute(f"INSERT INTO search ({columns}) SELECT {columns} FROM nodes")
+        return
+    ids = json.dumps(list(ids))
+    conn.execute("DELETE FROM search WHERE id IN (SELECT value FROM json_each(?))", (ids,))
+    conn.execute(f"INSERT INTO search ({columns}) SELECT {columns} FROM nodes WHERE id IN (SELECT value FROM json_each(?))", (ids,))
