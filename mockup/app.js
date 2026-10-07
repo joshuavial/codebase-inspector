@@ -652,8 +652,11 @@ function initCamera() {
   svg.addEventListener("wheel", (ev) => {
     ev.preventDefault();
     const r = svg.getBoundingClientRect();
-    const speed = ev.ctrlKey ? 0.01 : 0.002; // pinch arrives as ctrl+wheel
-    zoomBy(Math.exp(ev.deltaY * speed), ev.clientX - r.left, ev.clientY - r.top);
+    // Figma convention: scroll pans both axes; pinch (arrives as ctrl+wheel) or Cmd/Ctrl+wheel zooms at the cursor.
+    if (ev.ctrlKey || ev.metaKey) return zoomBy(Math.exp(ev.deltaY * 0.01), ev.clientX - r.left, ev.clientY - r.top);
+    const line = ev.deltaMode === 1 ? 16 : 1; // some mice report lines, not pixels
+    const s = stageSize();
+    setCam({ ...cam, x: cam.x + ev.deltaX * line * cam.w / s.w, y: cam.y + ev.deltaY * line * cam.h / s.h });
   }, { passive: false });
   let start = null;
   svg.addEventListener("pointerdown", (ev) => {
@@ -735,7 +738,7 @@ function drawer() {
   if (!c) {
     d.append(el("h2", "", M.workspace), el("p", "", M.summary));
     d.append(el("h3", "", "Reading this map"));
-    d.append(el("p", "", "Coloured boxes are parts of the system, inside its boundary. Dashed boxes are outside it. Click to open, scroll to zoom, drag to pan, Esc to go up."));
+    d.append(el("p", "", "Coloured boxes are parts of the system, inside its boundary. Dashed boxes are outside it. Click to open. Scroll or drag to pan, pinch or Cmd+scroll to zoom. Esc goes up."));
     integrationList(d, integrationPoints(null));
     envList(d, null);
     return;
