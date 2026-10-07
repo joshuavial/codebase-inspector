@@ -248,8 +248,14 @@ function drawConcepts(f, enter) {
   const outside = new Set(f ? [] : M.externals.map((x) => x.id));
   for (const e of edges) for (const x of [e.a, e.b]) if (!shown.has(x)) outside.add(x);
 
+  // Entry concepts form the first tier and carry the "start" marker, unless a sibling in view hosts
+  // them (Desktop app opens the window for Lead overview UI); calls back up to an entry then route
+  // as return edges.
+  const hostedHere = (id) => M.relationships.some((r) => r.kind === "hosts" && r.to === id && shown.has(project(r.from, f ? f.id : null)));
+  const startsHere = (c) => !!c.entry && !hostedHere(c.id);
   const boundary = {
-    id: "boundary", cls: "boundary" + (f ? ` role-${f.role}` : ""), label: f ? f.name : M.workspace, children: kids.map((c) => box(c, "")),
+    id: "boundary", cls: "boundary" + (f ? ` role-${f.role}` : ""), label: f ? f.name : M.workspace,
+    children: kids.map((c) => Object.assign(box(c, "", startsHere(c)), { pinned: startsHere(c) })),
   };
   const outsideNodes = [...outside].map((id) => box(byId[id], f ? "ctx" : "ext"));
   const nodes = [boundary, ...outsideNodes];
@@ -258,7 +264,9 @@ function drawConcepts(f, enter) {
   for (const e of [...elkEdges]) {
     const twin = elkEdges.find((x) => x !== e && x.a === e.b && x.b === e.a);
     if (!twin || !elkEdges.includes(e)) continue;
-    const [first, second] = shown.has(e.b) && !shown.has(e.a) ? [e, twin] : [twin, e];
+    const hosts = (x) => (x.rels || []).some((r) => r.kind === "hosts");
+    // The hosting direction leads, so a call back up (UI to Desktop app over IPC) never reorders the tiers.
+    const [first, second] = hosts(e) ? [e, twin] : hosts(twin) ? [twin, e] : shown.has(e.b) && !shown.has(e.a) ? [e, twin] : [twin, e];
     elkEdges = elkEdges.filter((x) => x !== twin && x !== e);
     elkEdges.push({
       ...first, cls: first.cls + " both", text: `${first.text} / ${second.text}`,
@@ -307,13 +315,16 @@ function drawConcepts(f, enter) {
   legendInside = f;
 }
 
-function box(c, cls) {
+const START = "▶ start"; // marks a concept that owns a deployable entry point
+
+function box(c, cls, startsHere = !!c.entry) {
   const tone = c.ext ? "kind-" + c.kind : "role-" + c.role;
   if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}`, w: textW(c.name, 500, 14) + 36, h: 38, name: c.name, lines: [] };
   const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
   const lines = wrap(c.summary, w - 32, 12, 3);
-  const env = envOf(c).length;
-  return { id: c.id, cls: `node ${cls} ${tone}`, w: w + (env ? 44 : 0), h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env };
+  const env = envOf(c).length, entry = !c.ext && startsHere;
+  const extra = (env ? 44 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0);
+  return { id: c.id, cls: `node ${cls} ${tone}`, w: w + extra, h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env, entry };
 }
 
 // ---------- leaf diagrams ----------
@@ -757,10 +768,14 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     return { p1, at, W, H, bx, by, pos, below: new Set(below), width, height };
   };
 
+  // Two first-tier boxes joined by an edge sit in one column; leave room for that edge's label.
+  const pinned = new Set(boundary.children.filter((n) => n.pinned).map((n) => n.id));
+  const tierLink = insideEdges.some((e) => pinned.has(e.a) && pinned.has(e.b) && e.text);
   const layoutInside = (dir, wrapping, ratio) => elk.layout({
     id: "inner",
-    layoutOptions: { ...elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
-    children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h })), edges: insideEdges.map(elkEdge),
+    layoutOptions: { ...elkOptions({ dir, layer: 30, gap: tierLink ? 60 : 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
+    children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(n.pinned ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
+    edges: insideEdges.map(elkEdge),
   });
 
   try {
@@ -812,7 +827,17 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     const out = {
       width: best.width, height: best.height,
       edges: [
-        ...p1.edges.map((e) => ({ ...e, sections: (e.sections || []).map((q) => ({ startPoint: shift(q.startPoint), endPoint: shift(q.endPoint), bendPoints: (q.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) })),
+        ...p1.edges.map((e) => {
+          // ELK leaves edges between two first-tier boxes unrouted: join them side to side, then the
+          // renderer puts the label back on the line.
+          if (!(e.sections && e.sections.length)) {
+            const a = at[e.sources[0]], z = at[e.targets[0]], down = z.y > a.y;
+            const sx = a.x + a.width / 2, ex = z.x + z.width / 2;
+            const sy = down ? a.y + a.height : a.y, ey = down ? z.y : z.y + z.height, my = (sy + ey) / 2;
+            e = { ...e, sections: [{ startPoint: { x: sx, y: sy }, bendPoints: sx === ex ? [] : [{ x: sx, y: my }, { x: ex, y: my }], endPoint: { x: ex, y: ey } }], labels: (e.labels || []).map((l) => ({ ...l, x: -9999, y: -9999 })) };
+          }
+          return { ...e, sections: e.sections.map((q) => ({ startPoint: shift(q.startPoint), endPoint: shift(q.endPoint), bendPoints: (q.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) };
+        }),
         ...crossEdges,
       ],
       children: [
@@ -862,6 +887,14 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     }
     for (const l of e.labels || []) {
       if (!m.lines) labelBox(m); // edges re-pointed at ports were measured on a copy
+      const pts = (e.sections || []).flatMap((q) => [q.startPoint, ...(q.bendPoints || []), q.endPoint]);
+      const near = pts.some((p, i) => i && Math.abs((pts[i - 1].x + p.x) / 2 - (l.x + l.width / 2)) < l.width + 60 && Math.abs((pts[i - 1].y + p.y) / 2 - (l.y + l.height / 2)) < l.height + 60);
+      if (pts.length > 1 && !near) {
+        let best = 1, len = -1;
+        for (let i = 1; i < pts.length; i++) { const d = dist(pts[i - 1], pts[i]); if (d > len) { len = d; best = i; } }
+        l.x = (pts[best - 1].x + pts[best].x) / 2 + 4;
+        l.y = (pts[best - 1].y + pts[best].y) / 2 - l.height - 2;
+      }
       m.lines.forEach((line, i) => {
         const t = svgEl("text", { x: l.x + 3, y: l.y + 11 + i * 13 });
         t.textContent = line;
@@ -947,7 +980,16 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       const name = svgEl("text", { class: "name", x: ctx ? 24 : 16, y: ctx ? 24 : 26 });
       name.textContent = m.name;
       g.append(name);
-      if (m.env) g.append(envPill(`env ${m.env}`, n.width - textW(`env ${m.env}`, 600, 10.5, true) - 22, 9, `${m.env} environment variable${m.env > 1 ? "s" : ""} read here`));
+      // Markers sit top right, right to left: env count, then "start".
+      let px = n.width - 10;
+      if (m.env) { px -= textW(`env ${m.env}`, 600, 10.5, true) + 12; g.append(envPill(`env ${m.env}`, px, 9, `${m.env} environment variable${m.env > 1 ? "s" : ""} read here`)); px -= 6; }
+      if (m.entry) {
+        px -= textW(START, 600, 10.5, true) + 12;
+        const files = (leafList(byId[n.id]).flatMap((l) => l.entryFiles || [])).join(", ");
+        const p = envPill(START, px, 9, `Starts here: owns the entry point ${files}`);
+        p.classList.add("start");
+        g.append(p);
+      }
       m.lines.forEach((line, i) => {
         const t = svgEl("text", { class: "sum", x: 16, y: 46 + i * 16 });
         t.textContent = line;
@@ -1152,7 +1194,8 @@ function legendFromDiagram(svg) {
     has(".edge.reexport") && [miniLine("call ghosted reexport"), "Re-export"],
   ].filter(Boolean));
   sec("Markers", [
-    has(".env") && [miniEnv(), "Env vars read"],
+    has(".env.start") && [mini(52, 18, (s) => { const p = envPill(START, 1, 0.5, ""); p.classList.add("start"); s.append(p); }), "Starts here: owns a deployable entry point"],
+    has(".env:not(.start)") && [miniEnv(), "Env vars read"],
     has(".badge") && [miniBadge(), "Linked tests (static links, not results)"],
   ].filter(Boolean));
   lg.hidden = !sections.length;
@@ -1202,7 +1245,7 @@ function setCam(c) {
 // The space a fitted map gets: the stage less padding and the open key card.
 function availSize() {
   const s = stageSize();
-  return { w: s.w - 48 - (keyCollapsed() ? 0 : 252), h: s.h - 48 };
+  return { w: s.w - 48 - (keyCollapsed() ? 0 : 266), h: s.h - 48 };
 }
 
 function stageSize() {

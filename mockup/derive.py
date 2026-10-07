@@ -179,6 +179,7 @@ def main(db_path, root):
                         sym.setdefault("env", []).append(name)
         leaf["env"] = sorted(found.values(), key=lambda e: e["name"])
     evidence(answer, owner, syms, calls, file_imports, source)
+    entries(answer, owner, root)
     for sym in syms.values():
         del sym["end"]
 
@@ -199,6 +200,52 @@ def main(db_path, root):
 
 IMPORT = re.compile(r"""import\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+\w+|\w+)[^;'"]*from\s+["']([^"']+)["']""")
 INJECTED = re.compile(r"(?:private|public|protected)\s+(?:readonly\s+)?(\w+)\s*:\s*(\w+)")
+
+
+def entry_files(root, owner):
+    """Deployable entry points from the manifests: package.json main, `node <file>` start scripts and
+    the module scripts of HTML pages. Built paths (dist-*/x.js) map back to their source files.
+    The scan on this branch has no deployable nodes yet, so the manifests are read directly."""
+    rootp = Path(root)
+    def source_of(path):
+        path = re.sub(r"^\./", "", path)
+        path = re.sub(r"^dist[^/]*/", "", path)
+        stem = re.sub(r"\.(m|c)?js$", "", path)
+        return next((c for c in (path, stem + ".ts", stem + ".tsx") if c in owner), None)
+    found = set()
+    pkg = rootp / "package.json"
+    if pkg.exists():
+        meta = json.loads(pkg.read_text())
+        for path in [meta.get("main") or ""] + re.findall(r"\bnode\s+(\S+\.(?:m|c)?js)", " ".join((meta.get("scripts") or {}).values())):
+            if path and (f := source_of(path)):
+                found.add(f)
+    for html in rootp.glob("**/*.html"):
+        rel = html.relative_to(rootp).as_posix()
+        if re.match(r"(node_modules|dist|\.)", rel) or "/dist" in rel:
+            continue
+        for src in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", html.read_text()):
+            path = src.lstrip("/") if src.startswith("/") else os.path.normpath(os.path.join(os.path.dirname(rel), src))
+            if f := source_of(path):
+                found.add(f)
+    return found
+
+
+def entries(answer, owner, root):
+    """Mark entry concepts: a leaf owning an entry file, and every concept above it. An explicit
+    "entry" in the concept answer wins. The entry files are listed on the leaf for the drawer."""
+    files = entry_files(root, owner)
+    marked = {}
+    def walk(c):
+        kids = c.get("children") or []
+        own = [f for f in c.get("files", []) + [t["file"] for t in c.get("tests", [])] if f in files]
+        hit = any([walk(k) for k in kids]) or bool(own)
+        if own:
+            c["entryFiles"] = sorted(own)
+        if "entry" not in c:
+            c["entry"] = hit
+        return hit
+    for c in answer["concepts"]:
+        walk(c)
 
 
 def evidence(answer, owner, syms, calls, file_imports, source):
@@ -240,6 +287,9 @@ def evidence(answer, owner, syms, calls, file_imports, source):
 
     for r in answer["relationships"]:
         if r["from"].startswith("x.") or r["to"].startswith("x."):
+            continue
+        if r.get("kind") == "hosts":  # one runs the other (a window, a process): no call to resolve
+            r["backing"] = "hosts"
             continue
         lf, lt = set(leaves_of.get(r["from"], [])), set(leaves_of.get(r["to"], []))
         if any(syms[a]["concept"] in lf and syms[b]["concept"] in lt for a, b in calls):

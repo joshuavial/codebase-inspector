@@ -1262,6 +1262,20 @@
       "label": "keeps the device token in",
       "basis": "reading",
       "via": "IndexedDB API"
+    },
+    {
+      "from": "desktop",
+      "to": "ui",
+      "label": "opens the window for",
+      "basis": "reading",
+      "kind": "hosts"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "ui.app",
+      "label": "opens the window for",
+      "basis": "reading",
+      "kind": "hosts"
     }
   ],
   "screens": [
