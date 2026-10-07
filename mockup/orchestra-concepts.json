@@ -1,0 +1,1167 @@
+{
+  "workspace": "orchestra",
+  "summary": "A read-only desktop and phone overview of JV's orchestrator and lead agents: what needs him, quota, delegations and lead cards.",
+  "concepts": [
+    {
+      "id": "desktop",
+      "name": "Desktop app",
+      "summary": "The Electron main process: window, IPC to the overview UI, terminal jumps and task summaries.",
+      "children": [
+        {
+          "id": "desktop.shell",
+          "name": "Window and IPC bridge",
+          "summary": "Opens the window, starts the poller and exposes a read-only API to the UI.",
+          "files": [
+            "electron/main.ts",
+            "electron/preload.ts",
+            "src/types/preload.d.ts"
+          ]
+        },
+        {
+          "id": "desktop.goto",
+          "name": "Go to terminal",
+          "summary": "Selects a lead's tmux pane and focuses or opens its iTerm2 tab, rate limited.",
+          "files": [
+            "electron/goto.ts",
+            "electron/goto.test.ts"
+          ]
+        },
+        {
+          "id": "desktop.summaries",
+          "name": "Task summaries",
+          "summary": "One-line cheap-model summaries of background tasks and CLI calls.",
+          "files": [
+            "electron/summarizer.ts",
+            "electron/summarizer.test.ts"
+          ]
+        },
+        {
+          "id": "desktop.messages",
+          "name": "Message actions",
+          "summary": "Show, reply, archive and jump from operator messages, resolving the sender's terminal.",
+          "files": [
+            "electron/messages.ts",
+            "electron/messages.test.ts"
+          ]
+        },
+        {
+          "id": "desktop.adapters",
+          "name": "Core adapters",
+          "summary": "Thin re-exports that keep the desktop module API stable over the shared core.",
+          "files": [
+            "electron/env.ts",
+            "electron/sources.ts",
+            "electron/poller.ts",
+            "electron/sanitize.ts",
+            "electron/snapshot.ts",
+            "electron/mobile.ts",
+            "electron/core-equivalence.test.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ui",
+      "name": "Lead overview UI",
+      "summary": "The React window that shows what needs JV, lead cards, the orchestrator board, messages and quota.",
+      "children": [
+        {
+          "id": "ui.app",
+          "name": "App shell",
+          "summary": "Mounts the app, subscribes to snapshots and lays out the panels.",
+          "files": [
+            "src/main.tsx",
+            "src/App.tsx",
+            "vite.config.ts",
+            "src/styles.test.ts"
+          ]
+        },
+        {
+          "id": "ui.leads",
+          "name": "Lead cards",
+          "summary": "Per-lead cards and summaries with their lanes, subagents and background tasks.",
+          "files": [
+            "src/components/LeadCard.tsx",
+            "src/components/LeadCard.test.ts",
+            "src/components/LeadSummary.tsx",
+            "src/components/LeadSummary.test.ts",
+            "src/components/BackgroundTasks.tsx"
+          ]
+        },
+        {
+          "id": "ui.board",
+          "name": "Orchestrator board",
+          "summary": "The orchestrator's own groups of delegated work.",
+          "files": [
+            "src/components/OrchestratorBoard.tsx"
+          ]
+        },
+        {
+          "id": "ui.messages",
+          "name": "Messages panel",
+          "summary": "Operator message threads rendered through a safe markdown model.",
+          "files": [
+            "src/components/MessagesPanel.tsx",
+            "src/messages.ts",
+            "src/messages.test.ts"
+          ]
+        },
+        {
+          "id": "ui.quota",
+          "name": "Quota bar",
+          "summary": "Remaining AI subscription quota and reset times.",
+          "files": [
+            "src/components/QuotaBar.tsx",
+            "src/components/QuotaBar.test.ts"
+          ]
+        },
+        {
+          "id": "ui.viewmodel",
+          "name": "View model",
+          "summary": "Turns a snapshot into display rows, ages, percents and stale badges.",
+          "files": [
+            "src/viewModel.ts",
+            "src/viewModel.test.ts",
+            "src/format.ts",
+            "src/format.test.ts",
+            "src/components/StaleBadge.tsx"
+          ]
+        },
+        {
+          "id": "ui.collapse",
+          "name": "Collapsible sections",
+          "summary": "Sections that remember whether they are open between sessions.",
+          "files": [
+            "src/collapse.ts",
+            "src/collapse.test.ts",
+            "src/useCollapsed.ts",
+            "src/components/CollapsibleSection.tsx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "name": "Core poller",
+      "summary": "Runs each source on its own timer and merges the results into one allowlisted snapshot.",
+      "children": [
+        {
+          "id": "core.sources",
+          "name": "Sources",
+          "summary": "Commands to run and parsers for agents, lanes, quota, processes, tasks and PRs.",
+          "files": [
+            "orchestra-core/sources.ts",
+            "electron/sources.test.ts"
+          ]
+        },
+        {
+          "id": "core.poller",
+          "name": "Poll scheduler",
+          "summary": "Staggered timers that never overlap a source and keep its last good result.",
+          "files": [
+            "orchestra-core/poller.ts",
+            "electron/poller.test.ts"
+          ]
+        },
+        {
+          "id": "core.snapshot",
+          "name": "Snapshot builder",
+          "summary": "Merges source states into a snapshot, derives needs-JV and runs the final leak scan.",
+          "files": [
+            "orchestra-core/snapshot.ts",
+            "electron/snapshot.test.ts"
+          ]
+        },
+        {
+          "id": "core.messages",
+          "name": "Messages model",
+          "summary": "Allowlists message JSON and validates actions against the current snapshot.",
+          "files": [
+            "orchestra-core/messages.ts",
+            "orchestra-core/message-actions.ts"
+          ]
+        },
+        {
+          "id": "core.safety",
+          "name": "Safety filters",
+          "summary": "Field allowlists, truncation, banned-key scans and tmux target checks.",
+          "files": [
+            "orchestra-core/sanitize.ts",
+            "orchestra-core/tmux.ts",
+            "electron/sanitize.test.ts"
+          ]
+        },
+        {
+          "id": "core.runtime",
+          "name": "Node runtime",
+          "summary": "Fixed-argv command runner, file reads, clock and process liveness for Node hosts.",
+          "files": [
+            "orchestra-core/node.ts",
+            "orchestra-core/index.ts"
+          ]
+        },
+        {
+          "id": "core.contracts",
+          "name": "Contracts",
+          "summary": "Snapshot and mobile API v1 types, and the projection from one to the other.",
+          "files": [
+            "shared/snapshot.ts",
+            "shared/mobile-api.ts",
+            "orchestra-core/mobile.ts",
+            "electron/mobile.test.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "name": "Phone preview service",
+      "summary": "A loopback HTTP service that serves the snapshot to paired phones over Tailscale.",
+      "children": [
+        {
+          "id": "service.runtime",
+          "name": "Service runtime",
+          "summary": "Production entrypoint that composes its own poller, auth and server.",
+          "files": [
+            "service/entrypoint.ts",
+            "service/daemon.ts",
+            "service/daemon.test.ts",
+            "service/custody-race.test.ts"
+          ]
+        },
+        {
+          "id": "service.api",
+          "name": "Snapshot API and event stream",
+          "summary": "Conditional snapshot reads, revision-only SSE, rate limits and a final egress scan.",
+          "files": [
+            "service/server.ts",
+            "service/egress.ts",
+            "service/rate-limit.ts",
+            "service/server.test.ts"
+          ]
+        },
+        {
+          "id": "service.pairing",
+          "name": "Device pairing",
+          "summary": "Local-only admin socket for pairing, rotating and revoking phones.",
+          "files": [
+            "service/device-admin.ts",
+            "service/admin-socket.ts",
+            "service/device-admin.test.ts",
+            "service/admin-socket.test.ts",
+            "service/custody-counterexample.test.ts",
+            "service/custody-replacement.test.ts"
+          ]
+        },
+        {
+          "id": "service.registry",
+          "name": "Device registry",
+          "summary": "Mode-0600 metadata for paired devices and their token generations.",
+          "files": [
+            "service/registry.ts",
+            "service/registry.test.ts",
+            "service/registry-postrename.test.ts"
+          ]
+        },
+        {
+          "id": "service.auth",
+          "name": "Bearer auth",
+          "summary": "Per-device bearer tokens verified against secrets held in the Keychain.",
+          "files": [
+            "service/auth.ts",
+            "service/keychain.ts",
+            "service/auth.test.ts"
+          ]
+        },
+        {
+          "id": "service.audit",
+          "name": "Audit log",
+          "summary": "Content-free JSONL audit with the caller's Tailscale identity.",
+          "files": [
+            "service/audit.ts",
+            "service/identity.ts",
+            "service/audit.test.ts"
+          ]
+        },
+        {
+          "id": "service.tailscale",
+          "name": "Tailscale exposure",
+          "summary": "Plans the Tailscale Serve command and checks the installed CLI.",
+          "files": [
+            "service/tailscale.ts",
+            "service/tailscale.test.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phone",
+      "name": "Phone app",
+      "summary": "The installable phone preview that pairs once and shows a read-only snapshot.",
+      "children": [
+        {
+          "id": "phone.credentials",
+          "name": "Credential custody",
+          "summary": "Keeps the device token in IndexedDB and nowhere else.",
+          "files": [
+            "src/mobile/credential-store.ts",
+            "src/mobile/credential-store.test.ts"
+          ]
+        },
+        {
+          "id": "phone.transport",
+          "name": "HTTP transport",
+          "summary": "Fetches the snapshot, follows the event stream and validates every response.",
+          "files": [
+            "src/mobile/http-transport.ts",
+            "src/mobile/transport.ts",
+            "src/mobile/validate.ts",
+            "src/mobile/http-transport.test.ts"
+          ]
+        },
+        {
+          "id": "phone.views",
+          "name": "Phone views",
+          "summary": "Pairing screen, needs-JV list and lead views for a small screen.",
+          "files": [
+            "src/mobile/main.tsx",
+            "src/mobile/MobileApp.tsx",
+            "src/mobile/views.tsx",
+            "src/mobile/state.ts",
+            "src/mobile/vite.config.ts",
+            "src/mobile/mobile.test.ts"
+          ]
+        },
+        {
+          "id": "phone.fixtures",
+          "name": "Fixture preview",
+          "summary": "A browser-only entry that runs the phone views on canned data.",
+          "files": [
+            "src/mobile/fixture-main.tsx",
+            "src/mobile/fixtures.ts"
+          ]
+        }
+      ]
+    }
+  ],
+  "externals": [
+    {
+      "id": "x.aishared",
+      "name": "ai-shared CLIs",
+      "summary": "subagent-status, lead-agents, ai-quota, msg and ai-route."
+    },
+    {
+      "id": "x.terminal",
+      "name": "tmux and iTerm2",
+      "summary": "Panes the leads run in, and the terminal app that shows them."
+    },
+    {
+      "id": "x.github",
+      "name": "GitHub",
+      "summary": "Open pull requests through the gh CLI."
+    },
+    {
+      "id": "x.keychain",
+      "name": "macOS Keychain",
+      "summary": "Holds each paired device's token secret."
+    },
+    {
+      "id": "x.tailscale",
+      "name": "Tailscale",
+      "summary": "Serves the loopback service to the tailnet with caller identity."
+    }
+  ],
+  "relationships": [
+    {
+      "from": "desktop.shell",
+      "to": "core.poller",
+      "label": "starts",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "core.snapshot",
+      "label": "pushes snapshot from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "core.messages",
+      "label": "runs message actions",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "core.runtime",
+      "label": "runs on",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.shell",
+      "to": "desktop.goto",
+      "label": "handles go-to with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "desktop.messages",
+      "label": "handles messages with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "desktop.summaries",
+      "label": "summarises with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "desktop.adapters",
+      "label": "loads core through",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.shell",
+      "to": "core.contracts",
+      "label": "exposes",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.messages",
+      "to": "desktop.goto",
+      "label": "jumps with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.messages",
+      "to": "core.messages",
+      "label": "validates with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.goto",
+      "to": "core.safety",
+      "label": "checks targets with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.goto",
+      "to": "core.sources",
+      "label": "finds panes with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.summaries",
+      "to": "core.safety",
+      "label": "sanitises with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.summaries",
+      "to": "core.sources",
+      "label": "reads tasks from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.sources",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.poller",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.snapshot",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.safety",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.contracts",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.adapters",
+      "to": "core.runtime",
+      "label": "re-exports",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.app",
+      "to": "desktop.shell",
+      "label": "reads snapshot over IPC",
+      "basis": "reading"
+    },
+    {
+      "from": "ui.app",
+      "to": "ui.leads",
+      "label": "renders",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.app",
+      "to": "ui.board",
+      "label": "renders",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.app",
+      "to": "ui.messages",
+      "label": "renders",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.app",
+      "to": "ui.quota",
+      "label": "renders",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.app",
+      "to": "ui.viewmodel",
+      "label": "derives rows with",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.leads",
+      "to": "ui.viewmodel",
+      "label": "formats with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.leads",
+      "to": "ui.collapse",
+      "label": "folds with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.board",
+      "to": "ui.viewmodel",
+      "label": "formats with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.board",
+      "to": "ui.collapse",
+      "label": "folds with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.board",
+      "to": "ui.leads",
+      "label": "reuses task list",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.messages",
+      "to": "ui.viewmodel",
+      "label": "formats with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "ui.quota",
+      "to": "ui.viewmodel",
+      "label": "formats with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.sources",
+      "to": "x.aishared",
+      "label": "polls",
+      "basis": "reading"
+    },
+    {
+      "from": "core.sources",
+      "to": "x.github",
+      "label": "lists PRs from",
+      "basis": "reading"
+    },
+    {
+      "from": "core.sources",
+      "to": "x.terminal",
+      "label": "lists panes from",
+      "basis": "reading"
+    },
+    {
+      "from": "desktop.goto",
+      "to": "x.terminal",
+      "label": "focuses",
+      "basis": "reading"
+    },
+    {
+      "from": "desktop.summaries",
+      "to": "x.aishared",
+      "label": "asks ai-route",
+      "basis": "reading"
+    },
+    {
+      "from": "core.messages",
+      "to": "x.aishared",
+      "label": "replies through msg",
+      "basis": "reading"
+    },
+    {
+      "from": "core.sources",
+      "to": "core.poller",
+      "label": "defines jobs for",
+      "basis": "imports"
+    },
+    {
+      "from": "core.sources",
+      "to": "core.messages",
+      "label": "parses messages with",
+      "basis": "imports"
+    },
+    {
+      "from": "core.sources",
+      "to": "core.safety",
+      "label": "filters with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.poller",
+      "to": "core.sources",
+      "label": "runs",
+      "basis": "imports"
+    },
+    {
+      "from": "core.snapshot",
+      "to": "core.poller",
+      "label": "reads states from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.snapshot",
+      "to": "core.sources",
+      "label": "merges",
+      "basis": "imports"
+    },
+    {
+      "from": "core.snapshot",
+      "to": "core.messages",
+      "label": "adds threads from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.snapshot",
+      "to": "core.safety",
+      "label": "leak-scans with",
+      "basis": "imports"
+    },
+    {
+      "from": "core.messages",
+      "to": "core.safety",
+      "label": "allowlists with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.sources",
+      "label": "supplies runtime to",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.poller",
+      "label": "supplies runtime to",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.contracts",
+      "to": "core.messages",
+      "label": "projects",
+      "basis": "imports"
+    },
+    {
+      "from": "service.runtime",
+      "to": "core.poller",
+      "label": "runs its own",
+      "basis": "imports"
+    },
+    {
+      "from": "service.runtime",
+      "to": "core.snapshot",
+      "label": "builds snapshots with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.runtime",
+      "to": "service.api",
+      "label": "starts",
+      "basis": "imports"
+    },
+    {
+      "from": "service.runtime",
+      "to": "service.pairing",
+      "label": "opens",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.runtime",
+      "to": "service.auth",
+      "label": "wires",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.runtime",
+      "to": "service.registry",
+      "label": "loads",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.runtime",
+      "to": "service.audit",
+      "label": "writes",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.api",
+      "to": "core.contracts",
+      "label": "serves projected",
+      "basis": "imports"
+    },
+    {
+      "from": "service.api",
+      "to": "service.auth",
+      "label": "authenticates with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.api",
+      "to": "service.audit",
+      "label": "records to",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.api",
+      "to": "service.pairing",
+      "label": "redeems pairing codes with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.pairing",
+      "to": "service.registry",
+      "label": "updates",
+      "basis": "imports"
+    },
+    {
+      "from": "service.pairing",
+      "to": "service.auth",
+      "label": "issues tokens with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.pairing",
+      "to": "service.audit",
+      "label": "records to",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.auth",
+      "to": "service.registry",
+      "label": "checks generation in",
+      "basis": "imports"
+    },
+    {
+      "from": "service.auth",
+      "to": "x.keychain",
+      "label": "verifies tokens with",
+      "basis": "reading"
+    },
+    {
+      "from": "service.audit",
+      "to": "service.registry",
+      "label": "names devices from",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.tailscale",
+      "to": "x.tailscale",
+      "label": "plans Serve with",
+      "basis": "reading"
+    },
+    {
+      "from": "x.tailscale",
+      "to": "service.api",
+      "label": "forwards phone requests to",
+      "basis": "reading"
+    },
+    {
+      "from": "phone.transport",
+      "to": "service.api",
+      "label": "fetches snapshot and events from",
+      "basis": "reading"
+    },
+    {
+      "from": "phone.transport",
+      "to": "phone.credentials",
+      "label": "reads token from",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.transport",
+      "to": "core.contracts",
+      "label": "validates against",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.views",
+      "to": "phone.transport",
+      "label": "subscribes through",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.views",
+      "to": "phone.credentials",
+      "label": "pairs with",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.views",
+      "to": "ui.viewmodel",
+      "label": "reuses",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.views",
+      "to": "ui.messages",
+      "label": "reuses markdown from",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.fixtures",
+      "to": "phone.views",
+      "label": "renders on canned data",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.fixtures",
+      "to": "phone.transport",
+      "label": "fakes",
+      "basis": "imports"
+    },
+    {
+      "from": "core.messages",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.poller",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.messages",
+      "label": "runs msg for",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.safety",
+      "label": "bounds reads with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.runtime",
+      "to": "core.snapshot",
+      "label": "supplies runtime to",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "core.safety",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.snapshot",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "core.sources",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.goto",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.goto",
+      "to": "core.runtime",
+      "label": "runs tmux through",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.messages",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.messages",
+      "to": "core.runtime",
+      "label": "runs msg through",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "desktop.messages",
+      "to": "core.sources",
+      "label": "finds senders with",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.summaries",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop.summaries",
+      "to": "core.runtime",
+      "label": "runs ai-route through",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "phone.fixtures",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "phone.views",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "service.api",
+      "to": "core.messages",
+      "label": "projects threads with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.api",
+      "to": "core.safety",
+      "label": "scans egress with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.audit",
+      "to": "core.safety",
+      "label": "bounds fields with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.registry",
+      "to": "core.safety",
+      "label": "bounds fields with",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.runtime",
+      "to": "core.messages",
+      "label": "reads messages with",
+      "basis": "imports"
+    },
+    {
+      "from": "service.runtime",
+      "to": "core.runtime",
+      "label": "runs on",
+      "basis": "imports",
+      "minor": true
+    },
+    {
+      "from": "service.runtime",
+      "to": "core.sources",
+      "label": "polls",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.app",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.board",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.leads",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.messages",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.quota",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui.viewmodel",
+      "to": "core.contracts",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "ui",
+      "to": "desktop",
+      "label": "reads snapshot over IPC",
+      "basis": "reading"
+    },
+    {
+      "from": "desktop",
+      "to": "core",
+      "label": "polls through",
+      "basis": "imports"
+    },
+    {
+      "from": "ui",
+      "to": "core",
+      "label": "uses types from",
+      "basis": "imports"
+    },
+    {
+      "from": "desktop",
+      "to": "x.terminal",
+      "label": "focuses",
+      "basis": "reading"
+    },
+    {
+      "from": "desktop",
+      "to": "x.aishared",
+      "label": "summarises with",
+      "basis": "reading"
+    },
+    {
+      "from": "core",
+      "to": "x.aishared",
+      "label": "polls",
+      "basis": "reading"
+    },
+    {
+      "from": "core",
+      "to": "x.github",
+      "label": "lists PRs from",
+      "basis": "reading"
+    },
+    {
+      "from": "core",
+      "to": "x.terminal",
+      "label": "lists panes from",
+      "basis": "reading"
+    },
+    {
+      "from": "service",
+      "to": "core",
+      "label": "runs its own",
+      "basis": "imports"
+    },
+    {
+      "from": "service",
+      "to": "x.keychain",
+      "label": "verifies tokens with",
+      "basis": "reading"
+    },
+    {
+      "from": "service",
+      "to": "x.tailscale",
+      "label": "plans Serve with",
+      "basis": "reading"
+    },
+    {
+      "from": "x.tailscale",
+      "to": "service",
+      "label": "forwards phone requests to",
+      "basis": "reading"
+    },
+    {
+      "from": "phone",
+      "to": "service",
+      "label": "fetches snapshot from",
+      "basis": "reading"
+    },
+    {
+      "from": "phone",
+      "to": "ui",
+      "label": "reuses formatting from",
+      "basis": "imports"
+    },
+    {
+      "from": "phone",
+      "to": "core",
+      "label": "uses types from",
+      "basis": "imports"
+    }
+  ]
+}
