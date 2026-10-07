@@ -286,3 +286,10 @@ main { flex: 1; display: flex; min-height: 0; }
 #debug { position: absolute; left: 16px; bottom: 16px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 4px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
 #debug[hidden] { display: none; }
 #sketch .sketch-main { overscroll-behavior: none; }
+#context { padding: 6px 24px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#context[hidden] { display: none; }
+#context b { color: var(--text); font-weight: 500; cursor: pointer; }
+#context b:hover { color: var(--accent); }
+#context .sep { color: var(--faint); }
+.sym.reexport rect.body { fill: var(--box); stroke: var(--faint); stroke-dasharray: 2 2; }
+.edge.reexport path { stroke-dasharray: 1 3; }

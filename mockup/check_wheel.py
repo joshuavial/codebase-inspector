@@ -1,6 +1,6 @@
 """Check that horizontal wheel input pans the concept map, in Chromium and Firefox.
 
-usage: uv run --no-project --with playwright==1.56.0 python -I mockup/wheel_test.py "$PWD/mockup/index.html"
+usage: uv run --no-project --with playwright==1.56.0 python -I mockup/check_wheel.py "$PWD/mockup/index.html"
 Uses the system Chrome and an already-cached Playwright Firefox build; downloads nothing.
 """
 import sys, glob, os

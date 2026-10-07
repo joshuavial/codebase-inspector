@@ -92,6 +92,7 @@ function route() {
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
   restore = !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   crumbs();
+  context();
   const f = view.focus && byId[view.focus];
   const from = first ? null : last.focus;
   last = { focus: view.focus, hash: location.hash };
@@ -147,6 +148,48 @@ function crumbs() {
   }
 }
 
+// The line under the breadcrumb: where this concept sits, who uses it, what it uses. Every name is a jump.
+function context() {
+  const bar = document.getElementById("context");
+  bar.replaceChildren();
+  const c = view.focus && byId[view.focus];
+  bar.hidden = !c;
+  if (!c) return;
+  const within = (id) => id === c.id || ancestors(id).includes(c.id);
+  const level = (id) => project(id, parentOf[c.id]) || id; // the sibling-level box for an outside concept
+  const usedBy = new Set(), uses = new Set();
+  for (const r of M.relationships) {
+    if (r.minor || r.label === TYPES) continue;
+    if (within(r.to) && !within(r.from)) usedBy.add(level(r.from));
+    if (within(r.from) && !within(r.to)) uses.add(level(r.to));
+  }
+  for (const l of leafList(c)) {
+    for (const [a, b] of l.calls) {
+      const x = symById[a], y = symById[b];
+      if (x && y && !within(x.leaf.id) && within(y.leaf.id)) usedBy.add(x.leaf.id);
+      if (x && y && within(x.leaf.id) && !within(y.leaf.id)) uses.add(y.leaf.id);
+    }
+    for (const i of l.importsIn || []) if (!within(i.concept)) usedBy.add(i.concept);
+    for (const r of l.reexports || []) if (!within(r.concept)) uses.add(r.concept);
+  }
+  // Prefer the most specific name: drop a concept when one of its descendants is listed.
+  const tidy = (set) => [...set].filter((id) => ![...set].some((o) => o !== id && ancestors(o).includes(id)));
+  const names = (ids) => {
+    const span = el("span");
+    ids.forEach((id, i) => {
+      if (i) span.append(", ");
+      const x = byId[id];
+      span.append(link(x.name, () => (x.ext ? go(view.focus, id) : jump(id, null, { force: true }))));
+    });
+    return span;
+  };
+  const parent = parentOf[c.id];
+  bar.append("Inside ", link(parent ? byId[parent].name : M.workspace, () => go(parent)));
+  const by = tidy(usedBy), to = tidy(uses);
+  if (by.length) bar.append(el("span", "sep", " · "), "used by ", names(by));
+  if (to.length) bar.append(el("span", "sep", " · "), "uses ", names(to));
+}
+
 // ---------- concept diagrams ----------
 
 // Map any concept id onto the box that stands for it in the view focused on `focus`.
@@ -192,15 +235,17 @@ function drawConcepts(f, enter) {
   };
   const nodes = [boundary, ...[...outside].map((id) => box(byId[id], f ? "ctx" : "ext"))];
   const kind = (e) => byId[e.a].ext || byId[e.b].ext ? "integration" : shown.has(e.a) && shown.has(e.b) ? "" : "port";
-  layout(nodes, edges.map((e, i) => ({
-    id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e),
-  })), { dir: "DOWN", layer: 52, gap: 40 }, (id) => {
+  const elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) }));
+  const onClick = (id) => {
     const c = byId[id];
     if (!c) return;
     if (c.ext) go(view.focus, id);
     else if (lateral(id)) jump(id);
     else zoomInto(id, () => go(id));
-  }, enter);
+  };
+  // Top level reads top to bottom with externals around it; inside a concept, outside links run left to right.
+  if (f) layoutBridged(boundary, nodes.slice(1), elkEdges, onClick, enter);
+  else layout(nodes, elkEdges, { dir: "DOWN", layer: 52, gap: 40 }, onClick, enter);
   legend([...kids, ...[...outside].map((id) => byId[id])], edges.some((e) => kind(e) === "integration"), false);
 }
 
@@ -225,52 +270,101 @@ function drawLeaf(c, enter) {
     const envW = envText ? textW(s.kind, 400, 11) + textW(envText, 600, 10.5, true) + 52 : 0;
     return { id: s.id, sym: s, cls: `sym ${cls}`, w: Math.max(textW(s.name, 500, 13, true) + 28 + (badge && badge + 8), envW, 110), h: 46, name: s.name, badge, envText };
   };
-  if (!c.symbols.length) { empty("No classes or functions here, only types."); legend([], false, false); return; }
+  const typesOnly = !c.symbols.length;
+  if (typesOnly && !c.importsIn.length && !c.reexports.length) { empty("No classes or functions here, only types."); legend([], false, false); return; }
+  const pseudo = (id, name, cls = "") => ({ id, cls: `sym ghost more ${cls}`, w: textW(name, 400, 12) + 28, h: 32, name, more: id.split(":").slice(1).join(":") });
+  const edges = [];
+  const edge = (a, b, cls, text) => edges.push({ id: "e" + edges.length, a, b, cls, text });
 
-  // Foreign symbols, grouped by owning concept, capped per group.
+  // Foreign symbols, grouped by owning concept, capped per group. Callers end up left, callees right.
   const groups = {};
-  for (const [id, g] of Object.entries(c.ghosts)) (groups[g.concept] ||= []).push(id);
+  const group = (cid) => (groups[cid] ||= { ids: [], extra: [] });
+  for (const [id, g] of Object.entries(c.ghosts)) group(g.concept).ids.push(id);
+
+  // Concepts that only import this one (re-exports hide the calls): an "imports" node on the left.
+  const fileSyms = (files) => c.symbols.filter((x) => files.includes(x.file)).map((x) => x.id);
+  for (const imp of c.importsIn) {
+    if (groups[imp.concept] && groups[imp.concept].ids.some((id) => c.calls.some(([x]) => x === id))) continue;
+    const node = "imp:" + imp.concept;
+    group(imp.concept).extra.push(pseudo(node, "imports"));
+    const targets = fileSyms(imp.files);
+    if (!targets.length || targets.length > 4) edge(node, "boundary", "call ghosted", "imports");
+    else targets.forEach((t, i) => edge(node, t, "call ghosted", i ? null : "imports"));
+  }
+
+  // Re-exports: each passed-through name, bridged to the function that defines it.
+  const rx = [];
+  const many = c.reexports.length > 12;
+  const byTarget = {};
+  for (const r of c.reexports) (byTarget[r.concept] ||= []).push(r);
+  for (const [cid, rs] of Object.entries(byTarget)) {
+    if (cid === c.id) continue;
+    const all = "all:" + cid;
+    const needAll = many || rs.some((r) => !r.def);
+    if (needAll) group(cid).extra.push(pseudo(all, "all exports"));
+    const list = many ? [{ name: `${rs.length} re-exports`, def: null }] : rs;
+    for (const r of list) {
+      const id = `rx:${cid}:${r.name}`;
+      const label = r.name === "*" ? `all of ${byId[cid].name}` : r.name;
+      rx.push({ id, cls: "sym reexport", w: Math.max(textW(label, 500, 13, true) + 28, 110), h: 46, name: label, sym: { kind: "re-export", tests: [] } });
+      edge(id, r.def && !own.has(r.def) ? r.def : all, "call ghosted reexport");
+    }
+  }
+
   const alias = {};
-  const groupNodes = Object.entries(groups).map(([cid, ids]) => {
-    ids.sort((a, b) => ghostById[a].name.localeCompare(ghostById[b].name));
-    const shown = ids.slice(0, GHOSTS_PER_GROUP), hidden = ids.slice(GHOSTS_PER_GROUP);
+  const groupNodes = Object.entries(groups).map(([cid, g]) => {
+    g.ids.sort((a, b) => ghostById[a].name.localeCompare(ghostById[b].name));
+    const shown = g.ids.slice(0, GHOSTS_PER_GROUP), hidden = g.ids.slice(GHOSTS_PER_GROUP);
     const kids = shown.map((id) => symNode(Object.assign({ id }, ghostById[id]), "ghost"));
     if (hidden.length) {
-      const more = "more:" + cid;
-      kids.push({ id: more, cls: "sym ghost more", w: 90, h: 32, name: `+${hidden.length} more`, more: cid });
-      for (const id of hidden) alias[id] = more;
+      kids.push(pseudo("more:" + cid, `+${hidden.length} more`));
+      for (const id of hidden) alias[id] = "more:" + cid;
     }
+    kids.push(...g.extra);
     return { id: "group:" + cid, cls: `group role-${byId[cid].role}`, label: byId[cid].name, concept: cid, children: kids };
   });
 
   const seen = new Set();
-  const edges = [];
   for (const [a0, b0, verb] of c.calls) {
     const a = alias[a0] || a0, b = alias[b0] || b0, key = a + ">" + b;
     if (seen.has(key)) continue;
     seen.add(key);
-    edges.push({ id: "c" + edges.length, a, b, cls: (own.has(a) && own.has(b) ? "call" : "call ghosted") + (verb === "renders" ? " renders" : "") });
+    edge(a, b, (own.has(a) && own.has(b) ? "call" : "call ghosted") + (verb === "renders" ? " renders" : ""));
   }
-  // Integration points of this leaf, drawn to the external from the function named in the code.
-  const ext = [];
+  for (const e of edges) if (alias[e.b]) e.b = alias[e.b];
+
+  // Relationships drawn at the parent level keep their label here: on the group header when that
+  // concept already shows, else as a stub entering from the left (incoming) or leaving right (outgoing).
+  const ext = [], stubs = [];
   for (const r of M.relationships) {
-    const mine = r.from === c.id ? r.to : r.to === c.id ? r.from : null;
-    if (!mine || !byId[mine].ext) continue;
-    if (!ext.includes(mine)) ext.push(mine);
-    const fn = r.at && r.at.split(":")[1];
-    const s = c.symbols.find((x) => x.name === fn);
-    const inner = s ? s.id : "boundary";
-    edges.push({ id: "x" + edges.length, a: r.from === c.id ? inner : mine, b: r.from === c.id ? mine : inner, text: r.label, via: r.via, cls: "integration" });
+    if (r.minor || r.label === TYPES) continue;
+    const incoming = r.to === c.id, other = incoming ? r.from : r.to;
+    if (!incoming && r.from !== c.id) continue;
+    if (byId[other].ext) {
+      if (!ext.includes(other)) ext.push(other);
+      const fn = r.at && r.at.split(":")[1];
+      const s = c.symbols.find((x) => x.name === fn);
+      const inner = s ? s.id : "boundary";
+      edges.push({ id: "x" + edges.length, a: incoming ? other : inner, b: incoming ? inner : other, text: r.label, via: r.via, cls: "integration" });
+      continue;
+    }
+    const g = groupNodes.find((n) => n.concept === other);
+    if (g) { g.label += (g.labels ? ", " : " · ") + r.label; g.labels = true; continue; }
+    if (!stubs.includes(other)) stubs.push(other);
+    edge(incoming ? other : "boundary", incoming ? "boundary" : other, "port", r.label);
   }
 
-  const boundary = { id: "boundary", cls: `boundary role-${c.role}`, label: c.name, children: c.symbols.map((s) => symNode(s, "")) };
-  const nodes = [boundary, ...groupNodes, ...ext.map((id) => box(byId[id], "ctx"))];
+  const inside = c.symbols.map((s) => symNode(s, ""));
+  if (typesOnly) inside.push({ id: "types", cls: "sym ghost more", w: 120, h: 32, name: "types only", more: "-" });
+  const boundary = { id: "boundary", cls: `boundary role-${c.role}`, label: c.name, children: [...inside, ...rx] };
+  const nodes = [boundary, ...groupNodes, ...ext.map((id) => box(byId[id], "ctx")), ...stubs.map((id) => box(byId[id], "ctx"))];
   layout(nodes, edges, { dir: "RIGHT", layer: 56, gap: 14 }, (id) => {
     if (own.has(id)) return go(view.focus, id, { v: view.mode });
     if (ghostById[id]) return go(view.focus, id, { v: view.mode }); // select; double-click jumps
-    if (id.startsWith("more:")) return jump(id.slice(5), null, { force: true });
+    if (/^(more|imp|all):/.test(id)) return jump(id.slice(id.indexOf(":") + 1), null, { force: true });
     if (id.startsWith("group:")) return jump(id.slice(6), null, { force: true });
     if (byId[id] && byId[id].ext) return go(view.focus, id, { v: view.mode });
+    if (byId[id]) return jump(id, null, { force: true });
   }, enter, (id) => { if (ghostById[id] && !own.has(id)) jump(ghostById[id].concept, id, { force: true }); });
   legend([c, ...ext.map((id) => byId[id])], ext.length > 0, groupNodes.length > 0, c.symbols.some((s) => s.env));
 }
@@ -387,32 +481,89 @@ async function layout(nodes, edges, opt, onClick, enter, onDbl) {
       layoutOptions: { "elk.padding": "[top=40,left=20,bottom=20,right=20]" },
     } : {}),
   });
-  const graph = {
-    id: "root",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": opt.dir,
-      "elk.hierarchyHandling": "INCLUDE_CHILDREN",
-      "org.eclipse.elk.json.edgeCoords": "ROOT",
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.layered.spacing.nodeNodeBetweenLayers": String(opt.layer),
-      "elk.spacing.nodeNode": String(opt.gap),
-      "elk.spacing.edgeLabel": "4",
-      "elk.spacing.edgeNode": "16",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "16",
-      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-      "elk.spacing.componentComponent": String(opt.gap * 1.5),
-      "elk.padding": "[top=12,left=12,bottom=12,right=12]",
-    },
-    children: nodes.map(toElk),
-    edges: edges.map((e) => ({
-      id: e.id, sources: [e.a], targets: [e.b],
-      labels: e.text ? [{ text: e.text, width: labelW(e) , height: 16 }] : [],
-    })),
-  };
+  const graph = { id: "root", layoutOptions: elkOptions(opt), children: nodes.map(toElk), edges: edges.map(elkEdge) };
   let out;
   try { out = await elk.layout(graph); } catch (err) { return empty("Layout failed: " + err.message); }
   render(out, nodes, edges, onClick, enter, onDbl);
+}
+
+function elkOptions(opt) {
+  return {
+    "elk.algorithm": "layered",
+    "elk.direction": opt.dir,
+    "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+    "org.eclipse.elk.json.edgeCoords": "ROOT",
+    "elk.edgeRouting": "ORTHOGONAL",
+    "elk.layered.spacing.nodeNodeBetweenLayers": String(opt.layer),
+    "elk.spacing.nodeNode": String(opt.gap),
+    "elk.spacing.edgeLabel": "4",
+    "elk.spacing.edgeNode": "16",
+    "elk.layered.spacing.edgeNodeBetweenLayers": "16",
+    "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+    "elk.spacing.componentComponent": String(opt.gap * 1.5),
+    "elk.padding": "[top=12,left=12,bottom=12,right=12]",
+  };
+}
+
+const elkEdge = (e) => ({ id: e.id, sources: [e.a], targets: [e.b], labels: e.text ? [{ text: e.text, width: labelW(e), height: 16 }] : [] });
+
+// Two passes, so the inside of a concept reads top to bottom while its connections to the outside
+// enter on the left (incoming) and leave on the right (outgoing). Pass 1 lays out the inside; pass 2
+// places the outside around the boundary as one fixed box with a port at the height of each inner box.
+async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
+  const inner = new Set(boundary.children.map((n) => n.id));
+  const insideEdges = edges.filter((e) => inner.has(e.a) && inner.has(e.b));
+  const crossing = edges.filter((e) => inner.has(e.a) !== inner.has(e.b));
+  let p1, p2;
+  try {
+    p1 = await elk.layout({
+      id: "inner", layoutOptions: elkOptions({ dir: "DOWN", layer: 52, gap: 40 }),
+      children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h })), edges: insideEdges.map(elkEdge),
+    });
+    const OX = 8, OY = 28, W = p1.width + 2 * OX, H = p1.height + OY + 8;
+    const at = Object.fromEntries(p1.children.map((n) => [n.id, n]));
+    const used = {};
+    const ports = crossing.map((e, i) => {
+      const incoming = inner.has(e.b), n = at[incoming ? e.b : e.a];
+      const key = (incoming ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
+      const y = OY + n.y + n.height / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
+      return { id: "port" + i, width: 1, height: 1, x: incoming ? 0 : W - 1, y, layoutOptions: { "elk.port.side": incoming ? "WEST" : "EAST" } };
+    });
+    p2 = await elk.layout({
+      id: "root", layoutOptions: { ...elkOptions({ dir: "RIGHT", layer: 64, gap: 24 }), "elk.hierarchyHandling": "SEPARATE_CHILDREN" },
+      children: [
+        { id: "boundary", width: W, height: H, ports, layoutOptions: { "elk.portConstraints": "FIXED_POS" } },
+        ...outside.map((n) => ({ id: n.id, width: n.w, height: n.h })),
+      ],
+      edges: crossing.map((e, i) => elkEdge({ ...e, a: inner.has(e.a) ? "port" + i : e.a, b: inner.has(e.b) ? "port" + i : e.b })),
+    });
+    // Stitch into one result in root coordinates, as render() expects.
+    const b = p2.children.find((n) => n.id === "boundary");
+    const dx = b.x + OX, dy = b.y + OY;
+    const shift = (p) => ({ x: p.x + dx, y: p.y + dy });
+    const outEdges = [
+      ...p1.edges.map((e) => ({ ...e, sections: (e.sections || []).map((s) => ({ startPoint: shift(s.startPoint), endPoint: shift(s.endPoint), bendPoints: (s.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) })),
+      ...p2.edges.map((e, i) => {
+        const ce = crossing[i], incoming = inner.has(ce.b), n = at[incoming ? ce.b : ce.a];
+        const s = e.sections[0];
+        // Carry the stub from the port on to the inner box's side, unless another box is in the way;
+        // then it stops at the boundary (hovering the box still highlights it).
+        const y = incoming ? s.endPoint.y - dy : s.startPoint.y - dy;
+        const [x0, x1] = incoming ? [0, n.x] : [n.x + n.width, p1.width + OX];
+        const blocked = p1.children.some((k) => k !== n && y > k.y - 4 && y < k.y + k.height + 4 && k.x < x1 && k.x + k.width > x0);
+        const sections = blocked ? e.sections : [incoming
+          ? { startPoint: s.startPoint, bendPoints: [...(s.bendPoints || []), s.endPoint], endPoint: { x: dx + n.x, y: s.endPoint.y } }
+          : { startPoint: { x: dx + n.x + n.width, y: s.startPoint.y }, bendPoints: [s.startPoint, ...(s.bendPoints || [])], endPoint: s.endPoint }];
+        return { ...e, id: ce.id, sections };
+      }),
+    ];
+    const out = {
+      width: p2.width, height: p2.height, edges: outEdges,
+      children: p2.children.map((n) => n.id !== "boundary" ? n
+        : { ...n, children: p1.children.map((k) => ({ ...k, x: k.x + OX, y: k.y + OY })) }),
+    };
+    render(out, [boundary, ...outside], edges, onClick, enter, onDbl);
+  } catch (err) { return empty("Layout failed: " + err.message); }
 }
 
 const labelW = (e) => textW(e.text, 400, 11.5) + 6 + (e.via ? textW(e.via, 600, 10.5, true) + 18 : 0);

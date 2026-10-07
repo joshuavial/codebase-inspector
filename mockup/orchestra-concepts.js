@@ -101,6 +101,61 @@ loadConcepts({
       ]
      ],
      "ghosts": {},
+     "importsIn": [],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "electron/poller.ts",
+        "electron/snapshot.ts",
+        "electron/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "electron/goto.ts"
+       ]
+      },
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "electron/messages.ts"
+       ]
+      },
+      {
+       "concept": "desktop.summaries",
+       "files": [
+        "electron/summarizer.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": [
       {
        "name": "ORCHESTRA_DEBUG_SOURCES",
@@ -259,6 +314,58 @@ loadConcepts({
        "concept": "core.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "electron/goto.ts"
+       ]
+      },
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "electron/goto.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/tmux.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [
+      {
+       "name": "PANE",
+       "concept": "core.safety",
+       "def": null
+      },
+      {
+       "name": "TARGET",
+       "concept": "core.safety",
+       "def": null
+      }
+     ],
      "env": []
     },
     {
@@ -449,15 +556,15 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
-       "name": "scrubSecrets",
-       "kind": "function",
-       "concept": "core.safety"
-      },
       "local:orchestra:orchestra-core/node.ts#childEnv": {
        "name": "childEnv",
        "kind": "function",
        "concept": "core.runtime"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
+       "name": "scrubSecrets",
+       "kind": "function",
+       "concept": "core.safety"
       },
       "local:orchestra:orchestra-core/sanitize.ts#firstLine": {
        "name": "firstLine",
@@ -465,6 +572,41 @@ loadConcepts({
        "concept": "core.safety"
       }
      },
+     "importsIn": [
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "electron/summarizer.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -545,7 +687,76 @@ loadConcepts({
       }
      ],
      "calls": [],
-     "ghosts": {},
+     "ghosts": {
+      "local:orchestra:orchestra-core/message-actions.ts#createMessageActions": {
+       "name": "createMessageActions",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/message-actions.ts#messageLink": {
+       "name": "messageLink",
+       "kind": "function",
+       "concept": "core.messages"
+      }
+     },
+     "importsIn": [
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "electron/messages.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "electron/goto.ts"
+       ]
+      }
+     ],
+     "reexports": [
+      {
+       "name": "*",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "createMessageActions",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/message-actions.ts#createMessageActions"
+      },
+      {
+       "name": "messageLink",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/message-actions.ts#messageLink"
+      }
+     ],
      "env": []
     },
     {
@@ -706,8 +917,8 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:orchestra-core/sources.ts#foldTasks": {
-       "name": "foldTasks",
+      "local:orchestra:orchestra-core/sources.ts#parseProcesses": {
+       "name": "parseProcesses",
        "kind": "function",
        "concept": "core.sources"
       },
@@ -716,23 +927,13 @@ loadConcepts({
        "kind": "function",
        "concept": "core.snapshot"
       },
-      "local:orchestra:orchestra-core/sources.ts#parseProcesses": {
-       "name": "parseProcesses",
-       "kind": "function",
-       "concept": "core.sources"
-      },
       "local:orchestra:orchestra-core/poller.ts#startPoller": {
        "name": "startPoller",
        "kind": "function",
        "concept": "core.poller"
       },
-      "local:orchestra:orchestra-core/sources.ts#parseTasks": {
-       "name": "parseTasks",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
-       "name": "revealablePath",
+      "local:orchestra:orchestra-core/sources.ts#foldTasks": {
+       "name": "foldTasks",
        "kind": "function",
        "concept": "core.sources"
       },
@@ -740,8 +941,134 @@ loadConcepts({
        "name": "readTail",
        "kind": "function",
        "concept": "core.runtime"
+      },
+      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
+       "name": "revealablePath",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseTasks": {
+       "name": "parseTasks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/node.ts#childEnv": {
+       "name": "childEnv",
+       "kind": "function",
+       "concept": "core.runtime"
+      },
+      "local:orchestra:orchestra-core/poller.ts#classify": {
+       "name": "classify",
+       "kind": "function",
+       "concept": "core.poller"
+      },
+      "local:orchestra:orchestra-core/poller.ts#initialStates": {
+       "name": "initialStates",
+       "kind": "function",
+       "concept": "core.poller"
+      },
+      "local:orchestra:orchestra-core/node.ts#realExec": {
+       "name": "realExec",
+       "kind": "function",
+       "concept": "core.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "electron/poller.ts",
+        "electron/snapshot.ts",
+        "electron/sources.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "orchestra-core/mobile.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [
+      {
+       "name": "HOME",
+       "concept": "core.runtime",
+       "def": null
+      },
+      {
+       "name": "childEnv",
+       "concept": "core.runtime",
+       "def": "local:orchestra:orchestra-core/node.ts#childEnv"
+      },
+      {
+       "name": "*",
+       "concept": "core.sources",
+       "def": null
+      },
+      {
+       "name": "classify",
+       "concept": "core.poller",
+       "def": "local:orchestra:orchestra-core/poller.ts#classify"
+      },
+      {
+       "name": "initialStates",
+       "concept": "core.poller",
+       "def": "local:orchestra:orchestra-core/poller.ts#initialStates"
+      },
+      {
+       "name": "realExec",
+       "concept": "core.runtime",
+       "def": "local:orchestra:orchestra-core/node.ts#realExec"
+      },
+      {
+       "name": "*",
+       "concept": "core.safety",
+       "def": null
+      },
+      {
+       "name": "*",
+       "concept": "core.snapshot",
+       "def": null
+      },
+      {
+       "name": "*",
+       "concept": "core.contracts",
+       "def": null
+      }
+     ],
      "env": []
     }
    ],
@@ -833,35 +1160,35 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:src/components/MessagesPanel.tsx#MessagesPanel": {
-       "name": "MessagesPanel",
-       "kind": "component",
-       "concept": "ui.messages"
-      },
-      "local:orchestra:src/viewModel.ts#orderedLeads": {
-       "name": "orderedLeads",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
       "local:orchestra:src/components/OrchestratorBoard.tsx#OrchestratorBoard": {
        "name": "OrchestratorBoard",
        "kind": "component",
        "concept": "ui.board"
-      },
-      "local:orchestra:src/components/QuotaBar.tsx#QuotaBar": {
-       "name": "QuotaBar",
-       "kind": "component",
-       "concept": "ui.quota"
       },
       "local:orchestra:src/format.ts#formatUpdated": {
        "name": "formatUpdated",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
+      "local:orchestra:src/components/MessagesPanel.tsx#MessagesPanel": {
+       "name": "MessagesPanel",
+       "kind": "component",
+       "concept": "ui.messages"
+      },
       "local:orchestra:src/components/LeadSummary.tsx#LeadSummary": {
        "name": "LeadSummary",
        "kind": "component",
        "concept": "ui.leads"
+      },
+      "local:orchestra:src/components/QuotaBar.tsx#QuotaBar": {
+       "name": "QuotaBar",
+       "kind": "component",
+       "concept": "ui.quota"
+      },
+      "local:orchestra:src/viewModel.ts#orderedLeads": {
+       "name": "orderedLeads",
+       "kind": "function",
+       "concept": "ui.viewmodel"
       },
       "local:orchestra:src/components/LeadCard.tsx#LeadList": {
        "name": "LeadList",
@@ -869,6 +1196,48 @@ loadConcepts({
        "concept": "ui.leads"
       }
      },
+     "importsIn": [],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.board",
+       "files": [
+        "src/components/OrchestratorBoard.tsx"
+       ]
+      },
+      {
+       "concept": "ui.leads",
+       "files": [
+        "src/components/LeadCard.tsx",
+        "src/components/LeadSummary.tsx"
+       ]
+      },
+      {
+       "concept": "ui.messages",
+       "files": [
+        "src/components/MessagesPanel.tsx"
+       ]
+      },
+      {
+       "concept": "ui.quota",
+       "files": [
+        "src/components/QuotaBar.tsx"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -1187,6 +1556,46 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.viewmodel"
       },
+      "local:orchestra:src/collapse.ts#collapseKey": {
+       "name": "collapseKey",
+       "kind": "function",
+       "concept": "ui.collapse"
+      },
+      "local:orchestra:src/viewModel.ts#leadSummaryRows": {
+       "name": "leadSummaryRows",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/components/BackgroundTasks.tsx#TaskHistoryLists": {
+       "name": "TaskHistoryLists",
+       "kind": "component",
+       "concept": "ui.board"
+      },
+      "local:orchestra:src/format.ts#formatAge": {
+       "name": "formatAge",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#rollupState": {
+       "name": "rollupState",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#prBadges": {
+       "name": "prBadges",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/collapse.ts#leadCollapsePanel": {
+       "name": "leadCollapsePanel",
+       "kind": "function",
+       "concept": "ui.collapse"
+      },
+      "local:orchestra:src/components/BackgroundTasks.tsx#LeadTasks": {
+       "name": "LeadTasks",
+       "kind": "component",
+       "concept": "ui.board"
+      },
       "local:orchestra:src/format.ts#formatCountdown": {
        "name": "formatCountdown",
        "kind": "function",
@@ -1197,39 +1606,9 @@ loadConcepts({
        "kind": "function",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/format.ts#formatAge": {
-       "name": "formatAge",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#prBadges": {
-       "name": "prBadges",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#lanePr": {
-       "name": "lanePr",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#workCounts": {
-       "name": "workCounts",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#laneNote": {
-       "name": "laneNote",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#rollupState": {
-       "name": "rollupState",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/collapse.ts#collapseKey": {
-       "name": "collapseKey",
-       "kind": "function",
+      "local:orchestra:src/components/CollapsibleSection.tsx#CollapsibleSection": {
+       "name": "CollapsibleSection",
+       "kind": "component",
        "concept": "ui.collapse"
       },
       "local:orchestra:src/App.tsx#App": {
@@ -1237,8 +1616,8 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.app"
       },
-      "local:orchestra:src/viewModel.ts#leadSummaryRows": {
-       "name": "leadSummaryRows",
+      "local:orchestra:src/viewModel.ts#workCounts": {
+       "name": "workCounts",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -1247,27 +1626,56 @@ loadConcepts({
        "kind": "function",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/components/BackgroundTasks.tsx#LeadTasks": {
-       "name": "LeadTasks",
-       "kind": "component",
-       "concept": "ui.board"
-      },
-      "local:orchestra:src/collapse.ts#leadCollapsePanel": {
-       "name": "leadCollapsePanel",
+      "local:orchestra:src/viewModel.ts#laneNote": {
+       "name": "laneNote",
        "kind": "function",
-       "concept": "ui.collapse"
+       "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/components/BackgroundTasks.tsx#TaskHistoryLists": {
-       "name": "TaskHistoryLists",
-       "kind": "component",
-       "concept": "ui.board"
-      },
-      "local:orchestra:src/components/CollapsibleSection.tsx#CollapsibleSection": {
-       "name": "CollapsibleSection",
-       "kind": "component",
-       "concept": "ui.collapse"
+      "local:orchestra:src/viewModel.ts#lanePr": {
+       "name": "lanePr",
+       "kind": "function",
+       "concept": "ui.viewmodel"
       }
      },
+     "importsIn": [
+      {
+       "concept": "ui.app",
+       "files": [
+        "src/components/LeadCard.tsx",
+        "src/components/LeadSummary.tsx"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.board",
+       "files": [
+        "src/components/BackgroundTasks.tsx"
+       ]
+      },
+      {
+       "concept": "ui.collapse",
+       "files": [
+        "src/collapse.ts",
+        "src/components/CollapsibleSection.tsx"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -1664,15 +2072,20 @@ loadConcepts({
       ]
      ],
      "ghosts": {
+      "local:orchestra:src/components/CollapsibleSection.tsx#CollapsibleSection": {
+       "name": "CollapsibleSection",
+       "kind": "component",
+       "concept": "ui.collapse"
+      },
       "local:orchestra:src/format.ts#formatAge": {
        "name": "formatAge",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/format.ts#formatCount": {
-       "name": "formatCount",
-       "kind": "function",
-       "concept": "ui.viewmodel"
+      "local:orchestra:src/components/LeadCard.tsx#LeadCard": {
+       "name": "LeadCard",
+       "kind": "component",
+       "concept": "ui.leads"
       },
       "local:orchestra:src/viewModel.ts#workCounts": {
        "name": "workCounts",
@@ -1684,27 +2097,60 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.app"
       },
+      "local:orchestra:src/format.ts#formatCount": {
+       "name": "formatCount",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
       "local:orchestra:src/collapse.ts#collapseKey": {
        "name": "collapseKey",
        "kind": "function",
-       "concept": "ui.collapse"
-      },
-      "local:orchestra:src/components/CollapsibleSection.tsx#CollapsibleSection": {
-       "name": "CollapsibleSection",
-       "kind": "component",
        "concept": "ui.collapse"
       },
       "local:orchestra:src/components/StaleBadge.tsx#StaleBadge": {
        "name": "StaleBadge",
        "kind": "component",
        "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/components/LeadCard.tsx#LeadCard": {
-       "name": "LeadCard",
-       "kind": "component",
-       "concept": "ui.leads"
       }
      },
+     "importsIn": [
+      {
+       "concept": "ui.app",
+       "files": [
+        "src/components/OrchestratorBoard.tsx"
+       ]
+      },
+      {
+       "concept": "ui.leads",
+       "files": [
+        "src/components/BackgroundTasks.tsx"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.collapse",
+       "files": [
+        "src/collapse.ts",
+        "src/components/CollapsibleSection.tsx"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -1972,6 +2418,36 @@ loadConcepts({
        "concept": "ui.viewmodel"
       }
      },
+     "importsIn": [
+      {
+       "concept": "phone.views",
+       "files": [
+        "src/messages.ts"
+       ]
+      },
+      {
+       "concept": "ui.app",
+       "files": [
+        "src/components/MessagesPanel.tsx"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -2131,18 +2607,13 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:src/viewModel.ts#pace": {
-       "name": "pace",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
       "local:orchestra:src/format.ts#formatCountdown": {
        "name": "formatCountdown",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/viewModel.ts#pillLevel": {
-       "name": "pillLevel",
+      "local:orchestra:src/viewModel.ts#pace": {
+       "name": "pace",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -2151,8 +2622,18 @@ loadConcepts({
        "kind": "function",
        "concept": "ui.viewmodel"
       },
+      "local:orchestra:src/viewModel.ts#effectiveQuotaWindow": {
+       "name": "effectiveQuotaWindow",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
       "local:orchestra:src/viewModel.ts#quotaRowExhausted": {
        "name": "quotaRowExhausted",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#chipLevel": {
+       "name": "chipLevel",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -2166,8 +2647,8 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/viewModel.ts#effectiveQuotaWindow": {
-       "name": "effectiveQuotaWindow",
+      "local:orchestra:src/viewModel.ts#pillLevel": {
+       "name": "pillLevel",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -2175,13 +2656,33 @@ loadConcepts({
        "name": "quotaRows",
        "kind": "function",
        "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#chipLevel": {
-       "name": "chipLevel",
-       "kind": "function",
-       "concept": "ui.viewmodel"
       }
      },
+     "importsIn": [
+      {
+       "concept": "ui.app",
+       "files": [
+        "src/components/QuotaBar.tsx"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -3057,39 +3558,19 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:src/components/QuotaBar.tsx#QuotaBar": {
-       "name": "QuotaBar",
-       "kind": "component",
-       "concept": "ui.quota"
-      },
-      "local:orchestra:src/mobile/views.tsx#LeadCardView": {
-       "name": "LeadCardView",
-       "kind": "component",
-       "concept": "phone.views"
-      },
       "local:orchestra:src/components/MessagesPanel.tsx#MessageBody": {
        "name": "MessageBody",
        "kind": "component",
        "concept": "ui.messages"
       },
-      "local:orchestra:src/mobile/views.tsx#MessageEntryView": {
-       "name": "MessageEntryView",
+      "local:orchestra:src/mobile/views.tsx#RunItem": {
+       "name": "RunItem",
        "kind": "component",
        "concept": "phone.views"
       },
-      "local:orchestra:src/mobile/views.tsx#QuotaSection": {
-       "name": "QuotaSection",
-       "kind": "component",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/mobile/views.tsx#NowView": {
-       "name": "NowView",
-       "kind": "component",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/mobile/views.tsx#ActivityView": {
-       "name": "ActivityView",
-       "kind": "component",
+      "local:orchestra:src/mobile/views.tsx#unhealthySources": {
+       "name": "unhealthySources",
+       "kind": "function",
        "concept": "phone.views"
       },
       "local:orchestra:src/components/LeadSummary.tsx#LeadSummary": {
@@ -3097,13 +3578,23 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.leads"
       },
-      "local:orchestra:src/components/LeadCard.tsx#etaText": {
-       "name": "etaText",
-       "kind": "function",
-       "concept": "ui.leads"
+      "local:orchestra:src/mobile/views.tsx#ActivityView": {
+       "name": "ActivityView",
+       "kind": "component",
+       "concept": "phone.views"
       },
-      "local:orchestra:src/mobile/views.tsx#MissionView": {
-       "name": "MissionView",
+      "local:orchestra:src/mobile/views.tsx#QuotaWindowCell": {
+       "name": "QuotaWindowCell",
+       "kind": "component",
+       "concept": "phone.views"
+      },
+      "local:orchestra:src/components/BackgroundTasks.tsx#RunRow": {
+       "name": "RunRow",
+       "kind": "component",
+       "concept": "ui.board"
+      },
+      "local:orchestra:src/mobile/views.tsx#CallItem": {
+       "name": "CallItem",
        "kind": "component",
        "concept": "phone.views"
       },
@@ -3112,10 +3603,40 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.quota"
       },
+      "local:orchestra:src/mobile/views.tsx#LeadsView": {
+       "name": "LeadsView",
+       "kind": "component",
+       "concept": "phone.views"
+      },
+      "local:orchestra:src/mobile/views.tsx#LeadCardView": {
+       "name": "LeadCardView",
+       "kind": "component",
+       "concept": "phone.views"
+      },
+      "local:orchestra:src/components/MessagesPanel.tsx#MessagesPanel": {
+       "name": "MessagesPanel",
+       "kind": "component",
+       "concept": "ui.messages"
+      },
+      "local:orchestra:src/components/OrchestratorBoard.tsx#OrchestratorBoard": {
+       "name": "OrchestratorBoard",
+       "kind": "component",
+       "concept": "ui.board"
+      },
+      "local:orchestra:src/components/QuotaBar.tsx#QuotaBar": {
+       "name": "QuotaBar",
+       "kind": "component",
+       "concept": "ui.quota"
+      },
       "local:orchestra:src/components/LeadCard.tsx#LeadCard": {
        "name": "LeadCard",
        "kind": "component",
        "concept": "ui.leads"
+      },
+      "local:orchestra:src/mobile/views.tsx#QuotaSection": {
+       "name": "QuotaSection",
+       "kind": "component",
+       "concept": "phone.views"
       },
       "local:orchestra:src/mobile/views.tsx#MessagesView": {
        "name": "MessagesView",
@@ -3127,18 +3648,8 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.board"
       },
-      "local:orchestra:src/components/OrchestratorBoard.tsx#OrchestratorBoard": {
-       "name": "OrchestratorBoard",
-       "kind": "component",
-       "concept": "ui.board"
-      },
-      "local:orchestra:src/mobile/views.tsx#QuotaWindowCell": {
-       "name": "QuotaWindowCell",
-       "kind": "component",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/mobile/views.tsx#LeadsView": {
-       "name": "LeadsView",
+      "local:orchestra:src/mobile/views.tsx#ThreadDetail": {
+       "name": "ThreadDetail",
        "kind": "component",
        "concept": "phone.views"
       },
@@ -3147,54 +3658,44 @@ loadConcepts({
        "kind": "component",
        "concept": "phone.views"
       },
-      "local:orchestra:src/components/BackgroundTasks.tsx#TaskRow": {
-       "name": "TaskRow",
-       "kind": "component",
-       "concept": "ui.board"
-      },
       "local:orchestra:src/App.tsx#App": {
        "name": "App",
        "kind": "component",
        "concept": "ui.app"
       },
-      "local:orchestra:src/components/MessagesPanel.tsx#MessagesPanel": {
-       "name": "MessagesPanel",
-       "kind": "component",
-       "concept": "ui.messages"
-      },
-      "local:orchestra:src/mobile/views.tsx#ThreadDetail": {
-       "name": "ThreadDetail",
+      "local:orchestra:src/mobile/views.tsx#TaskItem": {
+       "name": "TaskItem",
        "kind": "component",
        "concept": "phone.views"
       },
-      "local:orchestra:src/mobile/views.tsx#unhealthySources": {
-       "name": "unhealthySources",
-       "kind": "function",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/mobile/views.tsx#phonePace": {
-       "name": "phonePace",
-       "kind": "function",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/mobile/views.tsx#RunItem": {
-       "name": "RunItem",
+      "local:orchestra:src/mobile/views.tsx#NowView": {
+       "name": "NowView",
        "kind": "component",
        "concept": "phone.views"
       },
-      "local:orchestra:src/mobile/views.tsx#CallItem": {
-       "name": "CallItem",
-       "kind": "component",
-       "concept": "phone.views"
-      },
-      "local:orchestra:src/components/BackgroundTasks.tsx#RunRow": {
-       "name": "RunRow",
+      "local:orchestra:src/components/BackgroundTasks.tsx#TaskRow": {
+       "name": "TaskRow",
        "kind": "component",
        "concept": "ui.board"
+      },
+      "local:orchestra:src/components/LeadCard.tsx#etaText": {
+       "name": "etaText",
+       "kind": "function",
+       "concept": "ui.leads"
+      },
+      "local:orchestra:src/mobile/views.tsx#MissionView": {
+       "name": "MissionView",
+       "kind": "component",
+       "concept": "phone.views"
       },
       "local:orchestra:src/mobile/views.tsx#snapshotAgeBanner": {
        "name": "snapshotAgeBanner",
        "kind": "function",
+       "concept": "phone.views"
+      },
+      "local:orchestra:src/mobile/views.tsx#MessageEntryView": {
+       "name": "MessageEntryView",
+       "kind": "component",
        "concept": "phone.views"
       },
       "local:orchestra:src/components/LeadCard.tsx#LeadList": {
@@ -3202,17 +3703,74 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.leads"
       },
-      "local:orchestra:src/mobile/views.tsx#TaskItem": {
-       "name": "TaskItem",
-       "kind": "component",
-       "concept": "phone.views"
-      },
       "local:orchestra:src/mobile/views.tsx#ConnectionBanner": {
        "name": "ConnectionBanner",
        "kind": "component",
        "concept": "phone.views"
+      },
+      "local:orchestra:src/mobile/views.tsx#phonePace": {
+       "name": "phonePace",
+       "kind": "function",
+       "concept": "phone.views"
       }
      },
+     "importsIn": [
+      {
+       "concept": "phone.views",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      },
+      {
+       "concept": "ui.app",
+       "files": [
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      },
+      {
+       "concept": "ui.board",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      },
+      {
+       "concept": "ui.leads",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      },
+      {
+       "concept": "ui.messages",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts"
+       ]
+      },
+      {
+       "concept": "ui.quota",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -3374,11 +3932,6 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:src/components/OrchestratorBoard.tsx#OrchestratorBoard": {
-       "name": "OrchestratorBoard",
-       "kind": "component",
-       "concept": "ui.board"
-      },
       "local:orchestra:src/components/BackgroundTasks.tsx#RunList": {
        "name": "RunList",
        "kind": "component",
@@ -3389,12 +3942,35 @@ loadConcepts({
        "kind": "component",
        "concept": "ui.leads"
       },
+      "local:orchestra:src/components/OrchestratorBoard.tsx#OrchestratorBoard": {
+       "name": "OrchestratorBoard",
+       "kind": "component",
+       "concept": "ui.board"
+      },
       "local:orchestra:src/components/BackgroundTasks.tsx#LeadTasks": {
        "name": "LeadTasks",
        "kind": "component",
        "concept": "ui.board"
       }
      },
+     "importsIn": [
+      {
+       "concept": "ui.board",
+       "files": [
+        "src/collapse.ts",
+        "src/components/CollapsibleSection.tsx"
+       ]
+      },
+      {
+       "concept": "ui.leads",
+       "files": [
+        "src/collapse.ts",
+        "src/components/CollapsibleSection.tsx"
+       ]
+      }
+     ],
+     "importsOut": [],
+     "reexports": [],
      "env": []
     }
    ],
@@ -4951,6 +5527,31 @@ loadConcepts({
       ]
      ],
      "ghosts": {
+      "local:orchestra:electron/sources.ts#parseProcesses": {
+       "name": "parseProcesses",
+       "kind": "function",
+       "concept": "desktop.adapters"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#num": {
+       "name": "num",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:service/daemon.ts#startHeadlessService": {
+       "name": "startHeadlessService",
+       "kind": "function",
+       "concept": "service.runtime"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#obj": {
+       "name": "obj",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#isoMs": {
+       "name": "isoMs",
+       "kind": "function",
+       "concept": "core.safety"
+      },
       "local:orchestra:orchestra-core/sanitize.ts#arr": {
        "name": "arr",
        "kind": "function",
@@ -4961,28 +5562,23 @@ loadConcepts({
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#isoMs": {
-       "name": "isoMs",
-       "kind": "function",
-       "concept": "core.safety"
-      },
       "local:orchestra:orchestra-core/sanitize.ts#bool": {
        "name": "bool",
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#num": {
-       "name": "num",
+      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
+       "name": "scrubSecrets",
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#obj": {
-       "name": "obj",
+      "local:orchestra:orchestra-core/sanitize.ts#leadMode": {
+       "name": "leadMode",
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#liveness": {
-       "name": "liveness",
+      "local:orchestra:orchestra-core/sanitize.ts#agentState": {
+       "name": "agentState",
        "kind": "function",
        "concept": "core.safety"
       },
@@ -4996,13 +5592,28 @@ loadConcepts({
        "kind": "function",
        "concept": "desktop.adapters"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
-       "name": "scrubSecrets",
+      "local:orchestra:orchestra-core/sanitize.ts#liveness": {
+       "name": "liveness",
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:electron/sources.ts#parseProcesses": {
-       "name": "parseProcesses",
+      "local:orchestra:orchestra-core/sanitize.ts#firstLine": {
+       "name": "firstLine",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseMessages": {
+       "name": "parseMessages",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:electron/sources.ts#revealablePath": {
+       "name": "revealablePath",
+       "kind": "function",
+       "concept": "desktop.adapters"
+      },
+      "local:orchestra:electron/sources.ts#parseTasks": {
+       "name": "parseTasks",
        "kind": "function",
        "concept": "desktop.adapters"
       },
@@ -5011,47 +5622,89 @@ loadConcepts({
        "kind": "function",
        "concept": "core.snapshot"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#firstLine": {
-       "name": "firstLine",
-       "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:electron/sources.ts#parseTasks": {
-       "name": "parseTasks",
-       "kind": "function",
-       "concept": "desktop.adapters"
-      },
-      "local:orchestra:service/daemon.ts#startHeadlessService": {
-       "name": "startHeadlessService",
-       "kind": "function",
-       "concept": "service.runtime"
-      },
-      "local:orchestra:orchestra-core/sanitize.ts#leadMode": {
-       "name": "leadMode",
-       "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:orchestra-core/sanitize.ts#agentState": {
-       "name": "agentState",
-       "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:electron/sources.ts#revealablePath": {
-       "name": "revealablePath",
-       "kind": "function",
-       "concept": "desktop.adapters"
-      },
       "local:orchestra:orchestra-core/messages.ts#combineMessageLists": {
        "name": "combineMessageLists",
        "kind": "function",
        "concept": "core.messages"
-      },
-      "local:orchestra:orchestra-core/messages.ts#parseMessages": {
-       "name": "parseMessages",
-       "kind": "function",
-       "concept": "core.messages"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "desktop.summaries",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -5153,17 +5806,64 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:service/daemon.ts#startHeadlessService": {
-       "name": "startHeadlessService",
-       "kind": "function",
-       "concept": "service.runtime"
-      },
       "local:orchestra:electron/poller.ts#startPoller": {
        "name": "startPoller",
        "kind": "function",
        "concept": "desktop.adapters"
+      },
+      "local:orchestra:service/daemon.ts#startHeadlessService": {
+       "name": "startHeadlessService",
+       "kind": "function",
+       "concept": "service.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -5410,11 +6110,6 @@ loadConcepts({
        "kind": "function",
        "concept": "desktop.adapters"
       },
-      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
-       "name": "revealablePath",
-       "kind": "function",
-       "concept": "core.sources"
-      },
       "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
        "name": "scrubSecrets",
        "kind": "function",
@@ -5429,8 +6124,72 @@ loadConcepts({
        "name": "startHeadlessService",
        "kind": "function",
        "concept": "service.runtime"
+      },
+      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
+       "name": "revealablePath",
+       "kind": "function",
+       "concept": "core.sources"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -5826,13 +6585,28 @@ loadConcepts({
       ]
      ],
      "ghosts": {
+      "local:orchestra:service/daemon.ts#startHeadlessService": {
+       "name": "startHeadlessService",
+       "kind": "function",
+       "concept": "service.runtime"
+      },
       "local:orchestra:orchestra-core/sanitize.ts#obj": {
        "name": "obj",
        "kind": "function",
        "concept": "core.safety"
       },
+      "local:orchestra:orchestra-core/sanitize.ts#arr": {
+       "name": "arr",
+       "kind": "function",
+       "concept": "core.safety"
+      },
       "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
        "name": "scrubSecrets",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#num": {
+       "name": "num",
        "kind": "function",
        "concept": "core.safety"
       },
@@ -5846,32 +6620,80 @@ loadConcepts({
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#num": {
-       "name": "num",
+      "local:orchestra:orchestra-core/sources.ts#createSources": {
+       "name": "createSources",
        "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:orchestra-core/sanitize.ts#arr": {
-       "name": "arr",
-       "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:service/daemon.ts#startHeadlessService": {
-       "name": "startHeadlessService",
-       "kind": "function",
-       "concept": "service.runtime"
+       "concept": "core.sources"
       },
       "local:orchestra:orchestra-core/sanitize.ts#isoMs": {
        "name": "isoMs",
        "kind": "function",
        "concept": "core.safety"
-      },
-      "local:orchestra:orchestra-core/sources.ts#createSources": {
-       "name": "createSources",
-       "kind": "function",
-       "concept": "core.sources"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "service.api",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts",
+        "orchestra-core/tmux.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -6555,28 +7377,8 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:orchestra-core/sources.ts#parseLeadOverview": {
-       "name": "parseLeadOverview",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#parseMission": {
-       "name": "parseMission",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#parsePrList": {
-       "name": "parsePrList",
-       "kind": "function",
-       "concept": "core.sources"
-      },
       "local:orchestra:orchestra-core/sources.ts#quotaWindow": {
        "name": "quotaWindow",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#rollupChecks": {
-       "name": "rollupChecks",
        "kind": "function",
        "concept": "core.sources"
       },
@@ -6585,15 +7387,105 @@ loadConcepts({
        "kind": "function",
        "concept": "core.sources"
       },
-      "local:orchestra:orchestra-core/messages.ts#parseShownMessage": {
-       "name": "parseShownMessage",
+      "local:orchestra:orchestra-core/sources.ts#parseTasks": {
+       "name": "parseTasks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/snapshot.ts#buildSnapshot": {
+       "name": "buildSnapshot",
+       "kind": "function",
+       "concept": "core.snapshot"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parsePrList": {
+       "name": "parsePrList",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseEntry": {
+       "name": "parseEntry",
        "kind": "function",
        "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseMission": {
+       "name": "parseMission",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseQuota": {
+       "name": "parseQuota",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#blockerSince": {
+       "name": "blockerSince",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
+       "name": "revealablePath",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#foldTasks": {
+       "name": "foldTasks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseLeadOverview": {
+       "name": "parseLeadOverview",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseLeadRegistry": {
+       "name": "parseLeadRegistry",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#claudeCredits": {
+       "name": "claudeCredits",
+       "kind": "function",
+       "concept": "core.sources"
       },
       "local:orchestra:orchestra-core/sources.ts#parseProcesses": {
        "name": "parseProcesses",
        "kind": "function",
        "concept": "core.sources"
+      },
+      "local:orchestra:electron/summarizer.ts#filterForModel": {
+       "name": "filterForModel",
+       "kind": "function",
+       "concept": "desktop.summaries"
+      },
+      "local:orchestra:orchestra-core/sources.ts#codexResets": {
+       "name": "codexResets",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseMessages": {
+       "name": "parseMessages",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseShownMessage": {
+       "name": "parseShownMessage",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:service/audit.ts#safe": {
+       "name": "safe",
+       "kind": "function",
+       "concept": "service.audit"
+      },
+      "local:orchestra:orchestra-core/messages.ts#combineMessageLists": {
+       "name": "combineMessageLists",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseThread": {
+       "name": "parseThread",
+       "kind": "function",
+       "concept": "core.messages"
       },
       "local:orchestra:service/egress.ts#assertMobileEgress": {
        "name": "assertMobileEgress",
@@ -6605,43 +7497,18 @@ loadConcepts({
        "kind": "function",
        "concept": "core.sources"
       },
+      "local:orchestra:service/registry.ts#deviceLabel": {
+       "name": "deviceLabel",
+       "kind": "function",
+       "concept": "service.registry"
+      },
       "local:orchestra:orchestra-core/messages.ts#markdown": {
        "name": "markdown",
        "kind": "function",
        "concept": "core.messages"
       },
-      "local:orchestra:orchestra-core/sources.ts#foldTasks": {
-       "name": "foldTasks",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:electron/summarizer.ts#filterForModel": {
-       "name": "filterForModel",
-       "kind": "function",
-       "concept": "desktop.summaries"
-      },
-      "local:orchestra:orchestra-core/sources.ts#parseLeadRegistry": {
-       "name": "parseLeadRegistry",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#blockerSince": {
-       "name": "blockerSince",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#parseTasks": {
-       "name": "parseTasks",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/messages.ts#safeMessageLink": {
-       "name": "safeMessageLink",
-       "kind": "function",
-       "concept": "core.messages"
-      },
-      "local:orchestra:orchestra-core/sources.ts#expiryMs": {
-       "name": "expiryMs",
+      "local:orchestra:orchestra-core/sources.ts#reasons": {
+       "name": "reasons",
        "kind": "function",
        "concept": "core.sources"
       },
@@ -6650,63 +7517,8 @@ loadConcepts({
        "kind": "function",
        "concept": "core.sources"
       },
-      "local:orchestra:orchestra-core/sources.ts#claudeCredits": {
-       "name": "claudeCredits",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#codexResets": {
-       "name": "codexResets",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/messages.ts#parseThread": {
-       "name": "parseThread",
-       "kind": "function",
-       "concept": "core.messages"
-      },
-      "local:orchestra:service/registry.ts#deviceLabel": {
-       "name": "deviceLabel",
-       "kind": "function",
-       "concept": "service.registry"
-      },
-      "local:orchestra:orchestra-core/sources.ts#createSources": {
-       "name": "createSources",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:service/audit.ts#safe": {
-       "name": "safe",
-       "kind": "function",
-       "concept": "service.audit"
-      },
-      "local:orchestra:orchestra-core/messages.ts#parseMessages": {
-       "name": "parseMessages",
-       "kind": "function",
-       "concept": "core.messages"
-      },
-      "local:orchestra:orchestra-core/sources.ts#parseQuota": {
-       "name": "parseQuota",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
-       "name": "revealablePath",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/snapshot.ts#buildSnapshot": {
-       "name": "buildSnapshot",
-       "kind": "function",
-       "concept": "core.snapshot"
-      },
-      "local:orchestra:orchestra-core/sources.ts#reasons": {
-       "name": "reasons",
-       "kind": "function",
-       "concept": "core.sources"
-      },
-      "local:orchestra:orchestra-core/messages.ts#parseEntry": {
-       "name": "parseEntry",
+      "local:orchestra:orchestra-core/messages.ts#safeMessageLink": {
+       "name": "safeMessageLink",
        "kind": "function",
        "concept": "core.messages"
       },
@@ -6715,17 +7527,99 @@ loadConcepts({
        "kind": "function",
        "concept": "core.messages"
       },
-      "local:orchestra:orchestra-core/messages.ts#combineMessageLists": {
-       "name": "combineMessageLists",
+      "local:orchestra:orchestra-core/sources.ts#expiryMs": {
+       "name": "expiryMs",
        "kind": "function",
-       "concept": "core.messages"
+       "concept": "core.sources"
       },
       "local:orchestra:electron/summarizer.ts#createSummarizer": {
        "name": "createSummarizer",
        "kind": "function",
        "concept": "desktop.summaries"
+      },
+      "local:orchestra:orchestra-core/sources.ts#createSources": {
+       "name": "createSources",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#rollupChecks": {
+       "name": "rollupChecks",
+       "kind": "function",
+       "concept": "core.sources"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/sanitize.ts",
+        "orchestra-core/tmux.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "orchestra-core/tmux.ts"
+       ]
+      },
+      {
+       "concept": "desktop.summaries",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "service.api",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "service.audit",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "service.registry",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -6839,20 +7733,10 @@ loadConcepts({
        "kind": "function",
        "concept": "desktop.summaries"
       },
-      "local:orchestra:electron/summarizer.ts#realSummaryExec": {
-       "name": "realSummaryExec",
-       "kind": "function",
-       "concept": "desktop.summaries"
-      },
       "local:orchestra:service/daemon.ts#fixedMessageExec": {
        "name": "fixedMessageExec",
        "kind": "function",
        "concept": "service.runtime"
-      },
-      "local:orchestra:electron/goto.ts#resolveTmux": {
-       "name": "resolveTmux",
-       "kind": "function",
-       "concept": "desktop.goto"
       },
       "local:orchestra:electron/sources.ts#readTail": {
        "name": "readTail",
@@ -6863,8 +7747,582 @@ loadConcepts({
        "name": "startHeadlessService",
        "kind": "function",
        "concept": "service.runtime"
+      },
+      "local:orchestra:electron/goto.ts#resolveTmux": {
+       "name": "resolveTmux",
+       "kind": "function",
+       "concept": "desktop.goto"
+      },
+      "local:orchestra:electron/summarizer.ts#realSummaryExec": {
+       "name": "realSummaryExec",
+       "kind": "function",
+       "concept": "desktop.summaries"
+      },
+      "local:orchestra:orchestra-core/messages.ts#combineMessageLists": {
+       "name": "combineMessageLists",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseMessages": {
+       "name": "parseMessages",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#parseShownMessage": {
+       "name": "parseShownMessage",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#safeMessageLink": {
+       "name": "safeMessageLink",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/messages.ts#showArgv": {
+       "name": "showArgv",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/message-actions.ts#createMessageActions": {
+       "name": "createMessageActions",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/message-actions.ts#messageLink": {
+       "name": "messageLink",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/mobile.ts#mobileMarkdown": {
+       "name": "mobileMarkdown",
+       "kind": "function",
+       "concept": "core.contracts"
+      },
+      "local:orchestra:orchestra-core/mobile.ts#toMobileLink": {
+       "name": "toMobileLink",
+       "kind": "function",
+       "concept": "core.contracts"
+      },
+      "local:orchestra:orchestra-core/mobile.ts#toMobileSnapshot": {
+       "name": "toMobileSnapshot",
+       "kind": "function",
+       "concept": "core.contracts"
+      },
+      "local:orchestra:orchestra-core/mobile.ts#toMobileThread": {
+       "name": "toMobileThread",
+       "kind": "function",
+       "concept": "core.contracts"
+      },
+      "local:orchestra:orchestra-core/poller.ts#classify": {
+       "name": "classify",
+       "kind": "function",
+       "concept": "core.poller"
+      },
+      "local:orchestra:orchestra-core/poller.ts#initialStates": {
+       "name": "initialStates",
+       "kind": "function",
+       "concept": "core.poller"
+      },
+      "local:orchestra:orchestra-core/poller.ts#startPoller": {
+       "name": "startPoller",
+       "kind": "function",
+       "concept": "core.poller"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#arr": {
+       "name": "arr",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#bool": {
+       "name": "bool",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#findLeak": {
+       "name": "findLeak",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#firstLine": {
+       "name": "firstLine",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#isoMs": {
+       "name": "isoMs",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#num": {
+       "name": "num",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#obj": {
+       "name": "obj",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
+       "name": "scrubSecrets",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/sanitize.ts#str": {
+       "name": "str",
+       "kind": "function",
+       "concept": "core.safety"
+      },
+      "local:orchestra:orchestra-core/snapshot.ts#buildSnapshot": {
+       "name": "buildSnapshot",
+       "kind": "function",
+       "concept": "core.snapshot"
+      },
+      "local:orchestra:orchestra-core/snapshot.ts#busyLane": {
+       "name": "busyLane",
+       "kind": "function",
+       "concept": "core.snapshot"
+      },
+      "local:orchestra:orchestra-core/snapshot.ts#deriveNeedsJv": {
+       "name": "deriveNeedsJv",
+       "kind": "function",
+       "concept": "core.snapshot"
+      },
+      "local:orchestra:orchestra-core/snapshot.ts#isAppOwnedWhy": {
+       "name": "isAppOwnedWhy",
+       "kind": "function",
+       "concept": "core.snapshot"
+      },
+      "local:orchestra:orchestra-core/sources.ts#createSources": {
+       "name": "createSources",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#foldTasks": {
+       "name": "foldTasks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#githubSlug": {
+       "name": "githubSlug",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseLeadOverview": {
+       "name": "parseLeadOverview",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseLeadRegistry": {
+       "name": "parseLeadRegistry",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parsePrList": {
+       "name": "parsePrList",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseProcesses": {
+       "name": "parseProcesses",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parsePrs": {
+       "name": "parsePrs",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseQuota": {
+       "name": "parseQuota",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseSubagentStatus": {
+       "name": "parseSubagentStatus",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#parseTasks": {
+       "name": "parseTasks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#revealablePath": {
+       "name": "revealablePath",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#rollupChecks": {
+       "name": "rollupChecks",
+       "kind": "function",
+       "concept": "core.sources"
+      },
+      "local:orchestra:orchestra-core/sources.ts#sourcePaths": {
+       "name": "sourcePaths",
+       "kind": "function",
+       "concept": "core.sources"
       }
      },
+     "importsIn": [
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "desktop.summaries",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "orchestra-core/mobile.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/message-actions.ts",
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      }
+     ],
+     "reexports": [
+      {
+       "name": "ENTRIES_PER_THREAD",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "LINKS_PER_THREAD",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "MESSAGE_BODY_MAX",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "REPLY_BODY_MAX",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "THREAD_ID",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "THREAD_LIMIT",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "TOTAL_THREAD_LIMIT",
+       "concept": "core.messages",
+       "def": null
+      },
+      {
+       "name": "combineMessageLists",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/messages.ts#combineMessageLists"
+      },
+      {
+       "name": "parseMessages",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/messages.ts#parseMessages"
+      },
+      {
+       "name": "parseShownMessage",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/messages.ts#parseShownMessage"
+      },
+      {
+       "name": "safeMessageLink",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/messages.ts#safeMessageLink"
+      },
+      {
+       "name": "showArgv",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/messages.ts#showArgv"
+      },
+      {
+       "name": "createMessageActions",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/message-actions.ts#createMessageActions"
+      },
+      {
+       "name": "messageLink",
+       "concept": "core.messages",
+       "def": "local:orchestra:orchestra-core/message-actions.ts#messageLink"
+      },
+      {
+       "name": "mobileMarkdown",
+       "concept": "core.contracts",
+       "def": "local:orchestra:orchestra-core/mobile.ts#mobileMarkdown"
+      },
+      {
+       "name": "toMobileLink",
+       "concept": "core.contracts",
+       "def": "local:orchestra:orchestra-core/mobile.ts#toMobileLink"
+      },
+      {
+       "name": "toMobileSnapshot",
+       "concept": "core.contracts",
+       "def": "local:orchestra:orchestra-core/mobile.ts#toMobileSnapshot"
+      },
+      {
+       "name": "toMobileThread",
+       "concept": "core.contracts",
+       "def": "local:orchestra:orchestra-core/mobile.ts#toMobileThread"
+      },
+      {
+       "name": "classify",
+       "concept": "core.poller",
+       "def": "local:orchestra:orchestra-core/poller.ts#classify"
+      },
+      {
+       "name": "initialStates",
+       "concept": "core.poller",
+       "def": "local:orchestra:orchestra-core/poller.ts#initialStates"
+      },
+      {
+       "name": "startPoller",
+       "concept": "core.poller",
+       "def": "local:orchestra:orchestra-core/poller.ts#startPoller"
+      },
+      {
+       "name": "arr",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#arr"
+      },
+      {
+       "name": "bool",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#bool"
+      },
+      {
+       "name": "findLeak",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#findLeak"
+      },
+      {
+       "name": "firstLine",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#firstLine"
+      },
+      {
+       "name": "isoMs",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#isoMs"
+      },
+      {
+       "name": "num",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#num"
+      },
+      {
+       "name": "obj",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#obj"
+      },
+      {
+       "name": "scrubSecrets",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets"
+      },
+      {
+       "name": "str",
+       "concept": "core.safety",
+       "def": "local:orchestra:orchestra-core/sanitize.ts#str"
+      },
+      {
+       "name": "CLI_RUN_DETAIL_LIMIT",
+       "concept": "core.snapshot",
+       "def": null
+      },
+      {
+       "name": "FINISHED_OK_WINDOW_MS",
+       "concept": "core.snapshot",
+       "def": null
+      },
+      {
+       "name": "ORCHESTRATOR_TMUX",
+       "concept": "core.snapshot",
+       "def": null
+      },
+      {
+       "name": "TASK_HISTORY_LIMIT",
+       "concept": "core.snapshot",
+       "def": null
+      },
+      {
+       "name": "buildSnapshot",
+       "concept": "core.snapshot",
+       "def": "local:orchestra:orchestra-core/snapshot.ts#buildSnapshot"
+      },
+      {
+       "name": "busyLane",
+       "concept": "core.snapshot",
+       "def": "local:orchestra:orchestra-core/snapshot.ts#busyLane"
+      },
+      {
+       "name": "deriveNeedsJv",
+       "concept": "core.snapshot",
+       "def": "local:orchestra:orchestra-core/snapshot.ts#deriveNeedsJv"
+      },
+      {
+       "name": "isAppOwnedWhy",
+       "concept": "core.snapshot",
+       "def": "local:orchestra:orchestra-core/snapshot.ts#isAppOwnedWhy"
+      },
+      {
+       "name": "DOING_ENABLED",
+       "concept": "core.sources",
+       "def": null
+      },
+      {
+       "name": "REDEEM_DAYS",
+       "concept": "core.sources",
+       "def": null
+      },
+      {
+       "name": "TASKS_TAIL_BYTES",
+       "concept": "core.sources",
+       "def": null
+      },
+      {
+       "name": "TASKS_WINDOW_MS",
+       "concept": "core.sources",
+       "def": null
+      },
+      {
+       "name": "createSources",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#createSources"
+      },
+      {
+       "name": "foldTasks",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#foldTasks"
+      },
+      {
+       "name": "githubSlug",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#githubSlug"
+      },
+      {
+       "name": "parseLeadOverview",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseLeadOverview"
+      },
+      {
+       "name": "parseLeadRegistry",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseLeadRegistry"
+      },
+      {
+       "name": "parsePrList",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parsePrList"
+      },
+      {
+       "name": "parseProcesses",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseProcesses"
+      },
+      {
+       "name": "parsePrs",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parsePrs"
+      },
+      {
+       "name": "parseQuota",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseQuota"
+      },
+      {
+       "name": "parseSubagentStatus",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseSubagentStatus"
+      },
+      {
+       "name": "parseTasks",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#parseTasks"
+      },
+      {
+       "name": "revealablePath",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#revealablePath"
+      },
+      {
+       "name": "rollupChecks",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#rollupChecks"
+      },
+      {
+       "name": "sourcePaths",
+       "concept": "core.sources",
+       "def": "local:orchestra:orchestra-core/sources.ts#sourcePaths"
+      }
+     ],
      "env": [
       {
        "name": "*",
@@ -7028,6 +8486,141 @@ loadConcepts({
        "concept": "service.api"
       }
      },
+     "importsIn": [
+      {
+       "concept": "core.messages",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/mobile.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.adapters",
+       "files": [
+        "orchestra-core/mobile.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.goto",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.messages",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.shell",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "desktop.summaries",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "phone.fixtures",
+       "files": [
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "phone.transport",
+       "files": [
+        "shared/mobile-api.ts"
+       ]
+      },
+      {
+       "concept": "phone.views",
+       "files": [
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "service.api",
+       "files": [
+        "orchestra-core/mobile.ts",
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.app",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.board",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.leads",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.messages",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.quota",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "shared/snapshot.ts"
+       ]
+      }
+     ],
+     "importsOut": [],
+     "reexports": [],
      "env": []
     }
    ],
@@ -7247,30 +8840,30 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:service/registry.ts#DeviceRegistry": {
-       "name": "DeviceRegistry",
-       "kind": "class",
-       "concept": "service.registry"
+      "local:orchestra:orchestra-core/sources.ts#createSources": {
+       "name": "createSources",
+       "kind": "function",
+       "concept": "core.sources"
       },
-      "local:orchestra:service/identity.ts#HeaderTailnetIdentityProvider": {
-       "name": "HeaderTailnetIdentityProvider",
-       "kind": "class",
-       "concept": "service.audit"
+      "local:orchestra:orchestra-core/messages.ts#createMessagePeek": {
+       "name": "createMessagePeek",
+       "kind": "function",
+       "concept": "core.messages"
+      },
+      "local:orchestra:orchestra-core/sources.ts#sourcePaths": {
+       "name": "sourcePaths",
+       "kind": "function",
+       "concept": "core.sources"
       },
       "local:orchestra:service/device-admin.ts#DeviceAdministrator": {
        "name": "DeviceAdministrator",
        "kind": "class",
        "concept": "service.pairing"
       },
-      "local:orchestra:orchestra-core/poller.ts#startPoller": {
-       "name": "startPoller",
-       "kind": "function",
-       "concept": "core.poller"
-      },
-      "local:orchestra:service/keychain.ts#MacKeychainStore": {
-       "name": "MacKeychainStore",
+      "local:orchestra:service/registry.ts#DeviceRegistry": {
+       "name": "DeviceRegistry",
        "kind": "class",
-       "concept": "service.auth"
+       "concept": "service.registry"
       },
       "local:orchestra:service/registry.ts#secureDirectory": {
        "name": "secureDirectory",
@@ -7282,43 +8875,53 @@ loadConcepts({
        "kind": "function",
        "concept": "service.pairing"
       },
-      "local:orchestra:service/server.ts#startReadService": {
-       "name": "startReadService",
+      "local:orchestra:orchestra-core/poller.ts#startPoller": {
+       "name": "startPoller",
        "kind": "function",
-       "concept": "service.api"
+       "concept": "core.poller"
       },
       "local:orchestra:orchestra-core/node.ts#childEnv": {
        "name": "childEnv",
        "kind": "function",
        "concept": "core.runtime"
       },
-      "local:orchestra:orchestra-core/sources.ts#createSources": {
-       "name": "createSources",
-       "kind": "function",
-       "concept": "core.sources"
+      "local:orchestra:service/auth.ts#DeviceAuthorizer": {
+       "name": "DeviceAuthorizer",
+       "kind": "class",
+       "concept": "service.auth"
       },
-      "local:orchestra:orchestra-core/messages.ts#createMessagePeek": {
-       "name": "createMessagePeek",
+      "local:orchestra:orchestra-core/node.ts#createNodeRuntime": {
+       "name": "createNodeRuntime",
        "kind": "function",
-       "concept": "core.messages"
+       "concept": "core.runtime"
+      },
+      "local:orchestra:service/identity.ts#HeaderTailnetIdentityProvider": {
+       "name": "HeaderTailnetIdentityProvider",
+       "kind": "class",
+       "concept": "service.audit"
       },
       "local:orchestra:orchestra-core/snapshot.ts#buildSnapshot": {
        "name": "buildSnapshot",
        "kind": "function",
        "concept": "core.snapshot"
       },
-      "local:orchestra:orchestra-core/sources.ts#sourcePaths": {
-       "name": "sourcePaths",
+      "local:orchestra:service/server.ts#startReadService": {
+       "name": "startReadService",
        "kind": "function",
-       "concept": "core.sources"
+       "concept": "service.api"
+      },
+      "local:orchestra:service/server.ts#testAuthorizationFor": {
+       "name": "testAuthorizationFor",
+       "kind": "function",
+       "concept": "service.api"
       },
       "local:orchestra:service/audit.ts#AuditLog": {
        "name": "AuditLog",
        "kind": "class",
        "concept": "service.audit"
       },
-      "local:orchestra:service/auth.ts#DeviceAuthorizer": {
-       "name": "DeviceAuthorizer",
+      "local:orchestra:service/keychain.ts#MacKeychainStore": {
+       "name": "MacKeychainStore",
        "kind": "class",
        "concept": "service.auth"
       },
@@ -7326,18 +8929,76 @@ loadConcepts({
        "name": "initialStates",
        "kind": "function",
        "concept": "core.poller"
-      },
-      "local:orchestra:service/server.ts#testAuthorizationFor": {
-       "name": "testAuthorizationFor",
-       "kind": "function",
-       "concept": "service.api"
-      },
-      "local:orchestra:orchestra-core/node.ts#createNodeRuntime": {
-       "name": "createNodeRuntime",
-       "kind": "function",
-       "concept": "core.runtime"
       }
      },
+     "importsIn": [],
+     "importsOut": [
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.poller",
+       "files": [
+        "orchestra-core/poller.ts"
+       ]
+      },
+      {
+       "concept": "core.runtime",
+       "files": [
+        "orchestra-core/node.ts"
+       ]
+      },
+      {
+       "concept": "core.snapshot",
+       "files": [
+        "orchestra-core/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.sources",
+       "files": [
+        "orchestra-core/sources.ts"
+       ]
+      },
+      {
+       "concept": "service.api",
+       "files": [
+        "service/rate-limit.ts",
+        "service/server.ts"
+       ]
+      },
+      {
+       "concept": "service.audit",
+       "files": [
+        "service/audit.ts",
+        "service/identity.ts"
+       ]
+      },
+      {
+       "concept": "service.auth",
+       "files": [
+        "service/auth.ts",
+        "service/keychain.ts"
+       ]
+      },
+      {
+       "concept": "service.pairing",
+       "files": [
+        "service/admin-socket.ts",
+        "service/device-admin.ts"
+       ]
+      },
+      {
+       "concept": "service.registry",
+       "files": [
+        "service/registry.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": [
       {
        "name": "NODE_ENV",
@@ -7810,30 +9471,25 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
-       "name": "scrubSecrets",
+      "local:orchestra:service/identity.ts#boundedIdentity": {
+       "name": "boundedIdentity",
        "kind": "function",
-       "concept": "core.safety"
+       "concept": "service.audit"
       },
       "local:orchestra:orchestra-core/mobile.ts#toMobileThread": {
        "name": "toMobileThread",
        "kind": "function",
        "concept": "core.contracts"
       },
-      "local:orchestra:service/identity.ts#boundedIdentity": {
-       "name": "boundedIdentity",
+      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
+       "name": "scrubSecrets",
        "kind": "function",
-       "concept": "service.audit"
+       "concept": "core.safety"
       },
       "local:orchestra:service/audit.ts#opaquePeerKey": {
        "name": "opaquePeerKey",
        "kind": "function",
        "concept": "service.audit"
-      },
-      "local:orchestra:service/daemon.ts#startHeadlessService": {
-       "name": "startHeadlessService",
-       "kind": "function",
-       "concept": "service.runtime"
       },
       "local:orchestra:service/auth.ts#parseDeviceToken": {
        "name": "parseDeviceToken",
@@ -7844,8 +9500,64 @@ loadConcepts({
        "name": "toMobileSnapshot",
        "kind": "function",
        "concept": "core.contracts"
+      },
+      "local:orchestra:service/daemon.ts#startHeadlessService": {
+       "name": "startHeadlessService",
+       "kind": "function",
+       "concept": "service.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "service.runtime",
+       "files": [
+        "service/rate-limit.ts",
+        "service/server.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "orchestra-core/mobile.ts",
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "core.messages",
+       "files": [
+        "orchestra-core/messages.ts"
+       ]
+      },
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "service.audit",
+       "files": [
+        "service/audit.ts",
+        "service/identity.ts"
+       ]
+      },
+      {
+       "concept": "service.auth",
+       "files": [
+        "service/auth.ts"
+       ]
+      },
+      {
+       "concept": "service.pairing",
+       "files": [
+        "service/device-admin.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": [
       {
        "name": "NODE_ENV",
@@ -8038,42 +9750,79 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:service/auth.ts#newDeviceToken": {
-       "name": "newDeviceToken",
-       "kind": "function",
-       "concept": "service.auth"
-      },
       "local:orchestra:service/entrypoint.ts#startEntrypoint": {
        "name": "startEntrypoint",
        "kind": "function",
        "concept": "service.runtime"
-      },
-      "local:orchestra:service/auth.ts#newDeviceId": {
-       "name": "newDeviceId",
-       "kind": "function",
-       "concept": "service.auth"
-      },
-      "local:orchestra:service/registry.ts#deviceLabel": {
-       "name": "deviceLabel",
-       "kind": "function",
-       "concept": "service.registry"
       },
       "local:orchestra:service/keychain.ts#tokenVerifier": {
        "name": "tokenVerifier",
        "kind": "function",
        "concept": "service.auth"
       },
-      "local:orchestra:service/registry.ts#statsIdentity": {
-       "name": "statsIdentity",
+      "local:orchestra:service/auth.ts#newDeviceId": {
+       "name": "newDeviceId",
        "kind": "function",
-       "concept": "service.registry"
+       "concept": "service.auth"
+      },
+      "local:orchestra:service/auth.ts#newDeviceToken": {
+       "name": "newDeviceToken",
+       "kind": "function",
+       "concept": "service.auth"
       },
       "local:orchestra:service/registry.ts#secureDirectory": {
        "name": "secureDirectory",
        "kind": "function",
        "concept": "service.registry"
+      },
+      "local:orchestra:service/registry.ts#deviceLabel": {
+       "name": "deviceLabel",
+       "kind": "function",
+       "concept": "service.registry"
+      },
+      "local:orchestra:service/registry.ts#statsIdentity": {
+       "name": "statsIdentity",
+       "kind": "function",
+       "concept": "service.registry"
       }
      },
+     "importsIn": [
+      {
+       "concept": "service.api",
+       "files": [
+        "service/device-admin.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "service/admin-socket.ts",
+        "service/device-admin.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "service.audit",
+       "files": [
+        "service/audit.ts"
+       ]
+      },
+      {
+       "concept": "service.auth",
+       "files": [
+        "service/auth.ts",
+        "service/keychain.ts"
+       ]
+      },
+      {
+       "concept": "service.registry",
+       "files": [
+        "service/registry.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -8438,27 +10187,62 @@ loadConcepts({
        "kind": "function",
        "concept": "service.runtime"
       },
-      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
-       "name": "scrubSecrets",
-       "kind": "function",
-       "concept": "core.safety"
-      },
-      "local:orchestra:service/device-admin.ts#DeviceAdministrator": {
-       "name": "DeviceAdministrator",
-       "kind": "class",
-       "concept": "service.pairing"
-      },
       "local:orchestra:service/audit.ts#AuditLog": {
        "name": "AuditLog",
        "kind": "class",
        "concept": "service.audit"
       },
+      "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
+       "name": "scrubSecrets",
+       "kind": "function",
+       "concept": "core.safety"
+      },
       "local:orchestra:service/admin-socket.ts#startAdminSocket": {
        "name": "startAdminSocket",
        "kind": "function",
        "concept": "service.pairing"
+      },
+      "local:orchestra:service/device-admin.ts#DeviceAdministrator": {
+       "name": "DeviceAdministrator",
+       "kind": "class",
+       "concept": "service.pairing"
       }
      },
+     "importsIn": [
+      {
+       "concept": "service.audit",
+       "files": [
+        "service/registry.ts"
+       ]
+      },
+      {
+       "concept": "service.auth",
+       "files": [
+        "service/registry.ts"
+       ]
+      },
+      {
+       "concept": "service.pairing",
+       "files": [
+        "service/registry.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "service/registry.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -8657,17 +10441,48 @@ loadConcepts({
        "kind": "class",
        "concept": "service.pairing"
       },
-      "local:orchestra:service/entrypoint.ts#startEntrypoint": {
-       "name": "startEntrypoint",
-       "kind": "function",
-       "concept": "service.runtime"
-      },
       "local:orchestra:service/server.ts#sendCredential": {
        "name": "sendCredential",
        "kind": "function",
        "concept": "service.api"
+      },
+      "local:orchestra:service/entrypoint.ts#startEntrypoint": {
+       "name": "startEntrypoint",
+       "kind": "function",
+       "concept": "service.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "service.api",
+       "files": [
+        "service/auth.ts"
+       ]
+      },
+      {
+       "concept": "service.pairing",
+       "files": [
+        "service/auth.ts",
+        "service/keychain.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "service/auth.ts",
+        "service/keychain.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "service.registry",
+       "files": [
+        "service/registry.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -8843,20 +10658,25 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:service/entrypoint.ts#startEntrypoint": {
-       "name": "startEntrypoint",
+      "local:orchestra:service/server.ts#startReadService": {
+       "name": "startReadService",
        "kind": "function",
-       "concept": "service.runtime"
+       "concept": "service.api"
       },
       "local:orchestra:orchestra-core/sanitize.ts#scrubSecrets": {
        "name": "scrubSecrets",
        "kind": "function",
        "concept": "core.safety"
       },
-      "local:orchestra:service/server.ts#startReadService": {
-       "name": "startReadService",
+      "local:orchestra:service/registry.ts#sameFileIdentity": {
+       "name": "sameFileIdentity",
        "kind": "function",
-       "concept": "service.api"
+       "concept": "service.registry"
+      },
+      "local:orchestra:service/registry.ts#secureDirectory": {
+       "name": "secureDirectory",
+       "kind": "function",
+       "concept": "service.registry"
       },
       "local:orchestra:service/registry.ts#statsIdentity": {
        "name": "statsIdentity",
@@ -8868,17 +10688,49 @@ loadConcepts({
        "kind": "class",
        "concept": "service.registry"
       },
-      "local:orchestra:service/registry.ts#sameFileIdentity": {
-       "name": "sameFileIdentity",
+      "local:orchestra:service/entrypoint.ts#startEntrypoint": {
+       "name": "startEntrypoint",
        "kind": "function",
-       "concept": "service.registry"
-      },
-      "local:orchestra:service/registry.ts#secureDirectory": {
-       "name": "secureDirectory",
-       "kind": "function",
-       "concept": "service.registry"
+       "concept": "service.runtime"
       }
      },
+     "importsIn": [
+      {
+       "concept": "service.api",
+       "files": [
+        "service/audit.ts",
+        "service/identity.ts"
+       ]
+      },
+      {
+       "concept": "service.pairing",
+       "files": [
+        "service/audit.ts"
+       ]
+      },
+      {
+       "concept": "service.runtime",
+       "files": [
+        "service/audit.ts",
+        "service/identity.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.safety",
+       "files": [
+        "orchestra-core/sanitize.ts"
+       ]
+      },
+      {
+       "concept": "service.registry",
+       "files": [
+        "service/registry.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -9043,6 +10895,9 @@ loadConcepts({
       ]
      ],
      "ghosts": {},
+     "importsIn": [],
+     "importsOut": [],
+     "reexports": [],
      "env": []
     }
    ],
@@ -9132,6 +10987,22 @@ loadConcepts({
       ]
      ],
      "ghosts": {},
+     "importsIn": [
+      {
+       "concept": "phone.transport",
+       "files": [
+        "src/mobile/credential-store.ts"
+       ]
+      },
+      {
+       "concept": "phone.views",
+       "files": [
+        "src/mobile/credential-store.ts"
+       ]
+      }
+     ],
+     "importsOut": [],
+     "reexports": [],
      "env": []
     },
     {
@@ -10205,6 +12076,36 @@ loadConcepts({
       ]
      ],
      "ghosts": {},
+     "importsIn": [
+      {
+       "concept": "phone.fixtures",
+       "files": [
+        "src/mobile/transport.ts"
+       ]
+      },
+      {
+       "concept": "phone.views",
+       "files": [
+        "src/mobile/http-transport.ts",
+        "src/mobile/transport.ts"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/mobile-api.ts"
+       ]
+      },
+      {
+       "concept": "phone.credentials",
+       "files": [
+        "src/mobile/credential-store.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -11318,108 +13219,8 @@ loadConcepts({
       ]
      ],
      "ghosts": {
-      "local:orchestra:src/viewModel.ts#rollupState": {
-       "name": "rollupState",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/messages.ts#markdownModel": {
-       "name": "markdownModel",
-       "kind": "function",
-       "concept": "ui.messages"
-      },
       "local:orchestra:src/format.ts#formatAge": {
        "name": "formatAge",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#effectiveQuotaWindow": {
-       "name": "effectiveQuotaWindow",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/components/StaleBadge.tsx#StaleBadge": {
-       "name": "StaleBadge",
-       "kind": "component",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#prBadges": {
-       "name": "prBadges",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#lanePr": {
-       "name": "lanePr",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/format.ts#formatCount": {
-       "name": "formatCount",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/format.ts#formatCountdown": {
-       "name": "formatCountdown",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#workCounts": {
-       "name": "workCounts",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#orderedLeads": {
-       "name": "orderedLeads",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#quotaRows": {
-       "name": "quotaRows",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#laneNote": {
-       "name": "laneNote",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#pillLevel": {
-       "name": "pillLevel",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/format.ts#formatUpdated": {
-       "name": "formatUpdated",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#isNeedStale": {
-       "name": "isNeedStale",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#elapsedPercent": {
-       "name": "elapsedPercent",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#rollupStateTitle": {
-       "name": "rollupStateTitle",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/messages.ts#visibleMessageThreads": {
-       "name": "visibleMessageThreads",
-       "kind": "function",
-       "concept": "ui.messages"
-      },
-      "local:orchestra:src/viewModel.ts#cardBlockers": {
-       "name": "cardBlockers",
-       "kind": "function",
-       "concept": "ui.viewmodel"
-      },
-      "local:orchestra:src/viewModel.ts#quotaRowExhausted": {
-       "name": "quotaRowExhausted",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -11428,8 +13229,78 @@ loadConcepts({
        "kind": "function",
        "concept": "ui.viewmodel"
       },
-      "local:orchestra:src/viewModel.ts#pace": {
-       "name": "pace",
+      "local:orchestra:src/viewModel.ts#workCounts": {
+       "name": "workCounts",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#elapsedPercent": {
+       "name": "elapsedPercent",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#orderedLeads": {
+       "name": "orderedLeads",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#rollupState": {
+       "name": "rollupState",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/format.ts#formatCount": {
+       "name": "formatCount",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#prBadges": {
+       "name": "prBadges",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/components/StaleBadge.tsx#StaleBadge": {
+       "name": "StaleBadge",
+       "kind": "component",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/messages.ts#markdownModel": {
+       "name": "markdownModel",
+       "kind": "function",
+       "concept": "ui.messages"
+      },
+      "local:orchestra:src/viewModel.ts#effectiveQuotaWindow": {
+       "name": "effectiveQuotaWindow",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#laneNote": {
+       "name": "laneNote",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#isNeedStale": {
+       "name": "isNeedStale",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#quotaRowExhausted": {
+       "name": "quotaRowExhausted",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/messages.ts#visibleMessageThreads": {
+       "name": "visibleMessageThreads",
+       "kind": "function",
+       "concept": "ui.messages"
+      },
+      "local:orchestra:src/format.ts#formatUpdated": {
+       "name": "formatUpdated",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#rollupStateTitle": {
+       "name": "rollupStateTitle",
        "kind": "function",
        "concept": "ui.viewmodel"
       },
@@ -11437,8 +13308,83 @@ loadConcepts({
        "name": "chipLevel",
        "kind": "function",
        "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#lanePr": {
+       "name": "lanePr",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#pillLevel": {
+       "name": "pillLevel",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#cardBlockers": {
+       "name": "cardBlockers",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#pace": {
+       "name": "pace",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/viewModel.ts#quotaRows": {
+       "name": "quotaRows",
+       "kind": "function",
+       "concept": "ui.viewmodel"
+      },
+      "local:orchestra:src/format.ts#formatCountdown": {
+       "name": "formatCountdown",
+       "kind": "function",
+       "concept": "ui.viewmodel"
       }
      },
+     "importsIn": [
+      {
+       "concept": "phone.fixtures",
+       "files": [
+        "src/mobile/MobileApp.tsx"
+       ]
+      }
+     ],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "phone.credentials",
+       "files": [
+        "src/mobile/credential-store.ts"
+       ]
+      },
+      {
+       "concept": "phone.transport",
+       "files": [
+        "src/mobile/http-transport.ts",
+        "src/mobile/transport.ts"
+       ]
+      },
+      {
+       "concept": "ui.messages",
+       "files": [
+        "src/messages.ts"
+       ]
+      },
+      {
+       "concept": "ui.viewmodel",
+       "files": [
+        "src/components/StaleBadge.tsx",
+        "src/format.ts",
+        "src/viewModel.ts"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     },
     {
@@ -11558,6 +13504,29 @@ loadConcepts({
       ]
      ],
      "ghosts": {},
+     "importsIn": [],
+     "importsOut": [
+      {
+       "concept": "core.contracts",
+       "files": [
+        "shared/mobile-api.ts",
+        "shared/snapshot.ts"
+       ]
+      },
+      {
+       "concept": "phone.transport",
+       "files": [
+        "src/mobile/transport.ts"
+       ]
+      },
+      {
+       "concept": "phone.views",
+       "files": [
+        "src/mobile/MobileApp.tsx"
+       ]
+      }
+     ],
+     "reexports": [],
      "env": []
     }
    ],

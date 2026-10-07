@@ -8,6 +8,7 @@ Prints leaf-level import pairs that have no labelled relationship.
 """
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -17,6 +18,7 @@ HERE = Path(__file__).parent
 SHOWN = ("class", "function", "component")
 ENV = re.compile(r"""(?:process\.env|import\.meta\.env)(?:\.([A-Z_][A-Z0-9_]*)|\[["']([A-Z_][A-Z0-9_]*)["']\])(?:\s*(?:\?\?|\|\|)\s*["'`]([^"'`]*)["'`])?""")
 SPREAD = re.compile(r"\.\.\.process\.env\b")
+REEXPORT = re.compile(r"""export\s+(?!type\b)(\*|\{([^}]*)\})\s+from\s+["']([^"']+)["']""")
 ARRAY = {"length", "map", "filter", "some", "every", "at", "find", "slice", "join", "toFixed"}
 
 
@@ -65,11 +67,13 @@ def main(db_path, root):
     # Leaf-level import pairs from code (not tests), to check labels are complete.
     labelled = {(r["from"], r["to"]) for r in answer["relationships"]}
     pairs = set()
+    file_imports = set()  # (src file, dst file) across concepts, code only
     for s, d in q("""select s.path, d.path from edges e join nodes s on s.id=e.src join nodes d on d.id=e.dst
                      where e.kind='imports'"""):
         if s in tests_files or s not in owner or d not in owner or owner[s] == owner[d]:
             continue
         pairs.add((owner[s], owner[d]))
+        file_imports.add((s, d))
     for p in sorted(pairs - labelled):
         print("unlabelled import pair:", *p)
 
@@ -131,6 +135,30 @@ def main(db_path, root):
         # Foreign symbols this leaf calls or is called by, drawn as ghosts grouped by their concept.
         c["ghosts"] = {x: {"name": syms[x]["name"], "kind": syms[x]["kind"], "concept": syms[x]["concept"]}
                        for a, b in mine for x in (a, b) if x not in ids}
+        # Import edges between concepts, so a concept used only through imports still shows who uses it.
+        def grouped(pairs_, key, files):
+            out = {}
+            for src, dst in pairs_:
+                out.setdefault(owner[key(src, dst)], set()).add(files(src, dst))
+            return [{"concept": k, "files": sorted(v)} for k, v in sorted(out.items())]
+        mine_files = set(c["files"])
+        c["importsIn"] = grouped([p for p in file_imports if p[1] in mine_files], lambda a, b: a, lambda a, b: b)
+        c["importsOut"] = grouped([p for p in file_imports if p[0] in mine_files], lambda a, b: b, lambda a, b: b)
+        # Re-exports: what this concept passes through, and the function that defines each one.
+        c["reexports"] = []
+        for f in c["files"]:
+            for m in REEXPORT.finditer("\n".join(source(f))):
+                base = os.path.normpath(os.path.join(os.path.dirname(f), m.group(3)))
+                target = next((t for t in (base, base + ".ts", base + ".tsx", base + "/index.ts") if t in owner), None)
+                if not target:
+                    continue
+                names = ["*"] if m.group(1) == "*" else [x.strip() for x in m.group(2).split(",") if x.strip() and not x.strip().startswith("type ")]
+                for name in names:
+                    src_name, _, as_name = name.partition(" as ")
+                    d = next((x for x in syms.values() if x["file"] == target and x["name"] == src_name.strip()), None)
+                    c["reexports"].append({"name": (as_name or src_name).strip(), "concept": owner[target], "def": d and d["id"]})
+                    if d and d["id"] not in ids:
+                        c["ghosts"][d["id"]] = {"name": d["name"], "kind": d["kind"], "concept": d["concept"]}
 
     for c in answer["concepts"]:
         enrich(c)
