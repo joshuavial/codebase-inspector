@@ -722,7 +722,9 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   for (const n of outside) side[n.id] ||= "right";
   const labelOf = (o) => Math.max(0, ...crossing.filter((e) => otherEnd(e) === o).map((e) => labelBox(e).width));
 
-  const place = (p1) => {
+  // "sides": outbound systems in a column on the right (overflow below); "rows": outbound systems in
+  // rows above and below the boundary, by the half of it they connect to. Inbound stay on the left.
+  const place = (p1, mode) => {
     const at = Object.fromEntries(p1.children.map((n) => [n.id, n]));
     const W = p1.width + 2 * OX, H = p1.height + OY + 8;
     const ends = (e) => (e.bundle || [inner.has(e.b) ? e.b : e.a]).map((id) => at[id]);
@@ -733,7 +735,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
         ? { x: OX + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length, y: OY + ns.reduce((t, k) => t + k.y + k.height / 2, 0) / ns.length }
         : { x: W / 2, y: H / 2 };
     }
-    const below = [];
+    const below = [], above = [];
     const column = (ids) => {
       ids.sort((p, q) => want[p].y - want[q].y);
       const out = [];
@@ -747,25 +749,32 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       return out;
     };
     const left = column(outside.filter((n) => side[n.id] === "left").map((n) => n.id));
-    const right = column(outside.filter((n) => side[n.id] === "right").map((n) => n.id));
+    const outbound = outside.filter((n) => side[n.id] === "right").map((n) => n.id);
+    const right = mode === "rows" ? [] : column(outbound);
+    if (mode === "rows") for (const id of outbound) (want[id].y < H / 2 ? above : below).push(id);
+    const rowH = (ids) => (ids.length ? Math.max(...ids.map((id) => size[id].h)) + 70 : 0);
     const colW = (list) => Math.max(0, ...list.map(([id]) => size[id].w));
     const labW = (list) => Math.max(0, ...list.map(([id]) => labelOf(id)));
-    const bx = left.length ? colW(left) + labW(left) + 2 * LANE + 8 : 0, by = 0;
+    const bx = left.length ? colW(left) + labW(left) + 2 * LANE + 8 : 0, by = rowH(above);
     const pos = {};
-    for (const [id, top] of left) pos[id] = { x: bx - 2 * LANE - 8 - labW(left) - size[id].w, y: top };
+    for (const [id, top] of left) pos[id] = { x: bx - 2 * LANE - 8 - labW(left) - size[id].w, y: by + top };
     const rx = bx + W + (right.length ? labW(right) + 2 * LANE + 8 : 0);
-    for (const [id, top] of right) pos[id] = { x: rx, y: top };
-    below.sort((p, q) => want[p].x - want[q].x);
-    let x = bx;
-    const rowY = by + H + 70;
-    for (const id of below) {
-      const lx = Math.max(bx + want[id].x - size[id].w / 2, x);
-      pos[id] = { x: lx, y: rowY };
-      x = lx + Math.max(size[id].w, labelOf(id) + 12) + GAP;
-    }
+    for (const [id, top] of right) pos[id] = { x: rx, y: by + top };
+    const row = (ids, y, alignBottom) => {
+      ids.sort((p, q) => want[p].x - want[q].x);
+      let x = bx;
+      const tallest = Math.max(0, ...ids.map((id) => size[id].h));
+      for (const id of ids) {
+        const lx = Math.max(bx + want[id].x - size[id].w / 2, x);
+        pos[id] = { x: lx, y: alignBottom ? y + tallest - size[id].h : y };
+        x = lx + Math.max(size[id].w, labelOf(id) + 12) + GAP;
+      }
+    };
+    row(above, 0, true);
+    row(below, by + H + 70, false);
     const all = outside.map((n) => [pos[n.id].x + size[n.id].w, pos[n.id].y + size[n.id].h]);
     const width = Math.max(bx + W, ...all.map((p) => p[0])), height = Math.max(by + H, ...all.map((p) => p[1]));
-    return { p1, at, W, H, bx, by, pos, below: new Set(below), width, height };
+    return { p1, at, W, H, bx, by, pos, below: new Set(below), above: new Set(above), width, height, mode };
   };
 
   // Two first-tier boxes joined by an edge sit in one column; leave room for that edge's label.
@@ -784,12 +793,15 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     // (which adds long return loops between rows) 25% better before either is chosen.
     const modes = [["RIGHT", null, 1, 1], ...["MULTI_EDGE", "SINGLE_EDGE"].flatMap((w) => [0.5, 0.8, 1.1].map((r) => ["RIGHT", w, r, 1.25])), ["DOWN", null, 1, 1.1]];
     for (const [dir, w, r, bias] of modes) {
-      try { tries.push({ dir, wrapping: w, ratio: r, bias, ...place(await layoutInside(dir, w, r)) }); } catch { /* a wrapping mode ELK cannot apply here */ }
+      try {
+        const p1 = await layoutInside(dir, w, r);
+        for (const mode of ["sides", "rows"]) tries.push({ dir, wrapping: w, ratio: r, bias, ...place(p1, mode) });
+      } catch { /* a wrapping mode ELK cannot apply here */ }
     }
     const score = (t) => Math.min(avail.w / t.width, avail.h / t.height) / t.bias; // must beat unwrapped by its bias
     const best = tries.reduce((p, q) => (score(q) > score(p) ? q : p));
     const { p1, at, W, H, bx, by, pos } = best;
-    document.getElementById("diagram").dataset.layout = best.dir === "DOWN" ? "down" : best.wrapping ? `${best.wrapping} ${best.ratio}` : "unwrapped";
+    document.getElementById("diagram").dataset.layout = (best.dir === "DOWN" ? "down" : best.wrapping ? `${best.wrapping} ${best.ratio}` : "unwrapped") + " · " + best.mode;
 
     const dx = bx + OX, dy = by + OY;
     const shift = (p) => ({ x: p.x + dx, y: p.y + dy });
@@ -800,7 +812,13 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       const n = ns[0], lb = labelBox(e);
       const cy = box.y + box.h / 2, cx = box.x + box.w / 2;
       let pts, label;
-      if (best.below.has(o)) {
+      if (best.above.has(o)) {
+        // Above the boundary: rise from the inner box's column, then across to the box.
+        const sx = dx + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length, edgeY = by, laneY = edgeY - 22;
+        pts = [{ x: sx, y: edgeY }, { x: sx, y: laneY }, { x: cx, y: laneY }, { x: cx, y: box.y + box.h }];
+        if (incoming) pts.reverse();
+        label = { x: cx + 6, y: box.y + box.h + 4 };
+      } else if (best.below.has(o)) {
         // Below the boundary: drop from the inner box's column, then across to the box.
         const sx = dx + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length, edgeY = by + H, laneY = edgeY + 22;
         pts = [{ x: sx, y: edgeY }, { x: sx, y: laneY }, { x: cx, y: laneY }, { x: cx, y: box.y }];
@@ -892,8 +910,9 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       if (pts.length > 1 && !near) {
         let best = 1, len = -1;
         for (let i = 1; i < pts.length; i++) { const d = dist(pts[i - 1], pts[i]); if (d > len) { len = d; best = i; } }
-        l.x = (pts[best - 1].x + pts[best].x) / 2 + 4;
-        l.y = (pts[best - 1].y + pts[best].y) / 2 - l.height - 2;
+        const vertical = pts[best - 1].x === pts[best].x;
+        l.x = (pts[best - 1].x + pts[best].x) / 2 + (vertical ? 6 : 4);
+        l.y = (pts[best - 1].y + pts[best].y) / 2 - (vertical ? l.height / 2 : l.height + 2);
       }
       m.lines.forEach((line, i) => {
         const t = svgEl("text", { x: l.x + 3, y: l.y + 11 + i * 13 });
@@ -1204,7 +1223,7 @@ function legendFromDiagram(svg) {
     const pill = el("button", "key-pill", "Key");
     pill.type = "button";
     pill.title = "Show the key";
-    pill.onclick = () => { setKeyCollapsed(false); legendFromDiagram(svg); };
+    pill.onclick = () => { setKeyCollapsed(false); legendFromDiagram(svg); refit = true; route(); };
     lg.append(pill);
     return;
   }
@@ -1213,7 +1232,7 @@ function legendFromDiagram(svg) {
   fold.type = "button";
   fold.title = "Hide the key";
   fold.setAttribute("aria-label", "Hide the key");
-  fold.onclick = () => { setKeyCollapsed(true); legendFromDiagram(svg); };
+  fold.onclick = () => { setKeyCollapsed(true); legendFromDiagram(svg); refit = true; route(); };
   head.append(el("strong", "", "Key"), fold);
   for (const [title, rows] of sections) {
     grid.append(el("div", "key-title", title));
