@@ -17,6 +17,7 @@ let last = null; // the previous view, null before the first render
 let lateralHash = null; // where the last lateral jump landed, so Back can use browser history
 let glow = false; // highlight where we jumped from, until the next click in the stage
 let restore = null; // camera to reuse instead of fitting
+let glowTimer = null;
 const camByHash = {};
 let camBeforeZoom = null; // the camera before a drill-in animation, which is what Back should restore
 
@@ -45,7 +46,8 @@ function go(focus, sel, extra = {}) {
   if (focus) h.set("c", focus);
   if (sel) h.set("s", sel);
   // Keep the way back while moving around inside the concept a lateral jump landed on.
-  if (view.from && (focus || null) === view.focus && !("from" in extra)) {
+  const within = (focus || null) === view.focus || (focus && view.focus && ancestors(focus).includes(view.focus));
+  if (view.from && within && !("from" in extra)) {
     h.set("from", view.from);
     h.set("bh", view.backHash);
   }
@@ -89,6 +91,7 @@ function route() {
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
   };
   if (first) glow = !!view.from;
+  if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
   restore = !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   crumbs();
@@ -117,7 +120,7 @@ function onKey(ev) {
   if (ev.key === "Escape") up();
   else if (ev.key === "Backspace" && view.from) { back(); ev.preventDefault(); }
   else if (ev.key === "/") { document.getElementById("q").focus(); ev.preventDefault(); }
-  else if (ev.key === "0" || ev.key === "f") fit(true);
+  else if (ev.key === "0" || ev.key === "f") fit(true, true);
   else if (ev.key === "+" || ev.key === "=") zoomBy(1 / 1.25);
   else if (ev.key === "-") zoomBy(1.25);
   else if (ev.key === "?") { debug = !debug; const b = document.getElementById("debug"); b.hidden = !debug; b.textContent = "wheel readout on: scroll or swipe over the map"; }
@@ -231,11 +234,37 @@ function drawConcepts(f, enter) {
   for (const e of edges) for (const x of [e.a, e.b]) if (!shown.has(x)) outside.add(x);
 
   const boundary = {
-    id: "boundary", cls: "boundary", label: f ? f.name : M.workspace, children: kids.map((c) => box(c, "")),
+    id: "boundary", cls: "boundary" + (f ? ` role-${f.role}` : ""), label: f ? f.name : M.workspace, children: kids.map((c) => box(c, "")),
   };
-  const nodes = [boundary, ...[...outside].map((id) => box(byId[id], f ? "ctx" : "ext"))];
+  const outsideNodes = [...outside].map((id) => box(byId[id], f ? "ctx" : "ext"));
+  const nodes = [boundary, ...outsideNodes];
   const kind = (e) => byId[e.a].ext || byId[e.b].ext ? "integration" : shown.has(e.a) && shown.has(e.b) ? "" : "port";
-  const elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) }));
+  let elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) }));
+  if (f) {
+    // An outside concept linked to several inner boxes the same way gets one line, with its labels
+    // on its own box so each label stays attached; hovering the box lights up the inner boxes.
+    const bundles = {};
+    for (const e of elkEdges) {
+      if (e.cls !== "port") continue;
+      const incoming = shown.has(e.b), other = incoming ? e.a : e.b;
+      (bundles[other + (incoming ? ">in" : ">out")] ||= []).push(e);
+    }
+    for (const [key, es] of Object.entries(bundles)) {
+      if (es.length < 2) continue;
+      const incoming = key.endsWith(">in"), other = key.split(">")[0];
+      const node = outsideNodes.find((n) => n.id === other);
+      const labels = [...new Set(es.flatMap((e) => e.title.split("\n")))];
+      const text = labels.slice(0, 3).join(", ") + (labels.length > 3 ? ` +${labels.length - 3}` : "");
+      node.lines = wrap(text, 200, 12, 3);
+      node.w = Math.max(node.w, 232);
+      node.h = 40 + node.lines.length * 16;
+      node.touches = [...(node.touches || []), ...es.map((e) => (incoming ? e.b : e.a))];
+      node.cls = node.cls.replace("ctx", "ctx bundled");
+      const inner = es.map((e) => (incoming ? e.b : e.a));
+      elkEdges = elkEdges.filter((e) => !es.includes(e));
+      elkEdges.push({ id: "b" + key, a: incoming ? other : inner[0], b: incoming ? inner[0] : other, cls: "port bundle", bundle: inner, title: labels.join("\n") });
+    }
+  }
   const onClick = (id) => {
     const c = byId[id];
     if (!c) return;
@@ -246,7 +275,7 @@ function drawConcepts(f, enter) {
   // Top level reads top to bottom with externals around it; inside a concept, outside links run left to right.
   if (f) layoutBridged(boundary, nodes.slice(1), elkEdges, onClick, enter);
   else layout(nodes, elkEdges, { dir: "DOWN", layer: 52, gap: 40 }, onClick, enter);
-  legend([...kids, ...[...outside].map((id) => byId[id])], edges.some((e) => kind(e) === "integration"), false);
+  legend([...kids, ...[...outside].map((id) => byId[id])], edges.some((e) => kind(e) === "integration"), false, false, f);
 }
 
 function box(c, cls) {
@@ -366,7 +395,7 @@ function drawLeaf(c, enter) {
     if (byId[id] && byId[id].ext) return go(view.focus, id, { v: view.mode });
     if (byId[id]) return jump(id, null, { force: true });
   }, enter, (id) => { if (ghostById[id] && !own.has(id)) jump(ghostById[id].concept, id, { force: true }); });
-  legend([c, ...ext.map((id) => byId[id])], ext.length > 0, groupNodes.length > 0, c.symbols.some((s) => s.env));
+  legend([c, ...ext.map((id) => byId[id])], ext.length > 0, groupNodes.length > 0, c.symbols.some((s) => s.env), c);
 }
 
 // ---------- UI sketch view ----------
@@ -416,11 +445,24 @@ function drawSketch(c) {
   }
   const frame = el("div", "frame " + screen.device);
   frame.append(region(screen.root, hl, false));
+  const bar = el("div", "sketch-bar");
+  const parent = parentOf[c.id];
+  const upBtn = el("button", "up", `↑ ${parent ? byId[parent].name : M.workspace}`);
+  upBtn.title = "Up one level (Esc)";
+  upBtn.onclick = up;
+  bar.append(upBtn, picker);
   const left = el("div", "sketch-main");
-  left.append(picker, frame);
+  left.append(bar, frame);
   pane.append(left, componentPanel(symById[focusComp]));
+  // Keep the frame's top in view when the highlight fits below it; otherwise bring the highlight
+  // up under the bar. The bar stays put either way, so other screens stay discoverable.
   const target = frame.querySelector(".hl");
-  if (target) requestAnimationFrame(() => target.scrollIntoView({ block: "center", inline: "nearest" }));
+  if (target) requestAnimationFrame(() => {
+    const barH = bar.offsetHeight + 16;
+    const top = target.getBoundingClientRect().top - left.getBoundingClientRect().top + left.scrollTop;
+    const bottom = top + target.offsetHeight;
+    left.scrollTop = bottom + 24 <= left.clientHeight ? 0 : top - barH - 24;
+  });
 }
 
 function region(r, hl, inside) {
@@ -526,7 +568,8 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     const ports = crossing.map((e, i) => {
       const incoming = inner.has(e.b), n = at[incoming ? e.b : e.a];
       const key = (incoming ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
-      const y = OY + n.y + n.height / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
+      const mid = e.bundle ? e.bundle.reduce((t, id) => t + at[id].y + at[id].height / 2, 0) / e.bundle.length : n.y + n.height / 2;
+      const y = OY + mid + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
       return { id: "port" + i, width: 1, height: 1, x: incoming ? 0 : W - 1, y, layoutOptions: { "elk.port.side": incoming ? "WEST" : "EAST" } };
     });
     p2 = await elk.layout({
@@ -550,7 +593,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
         // then it stops at the boundary (hovering the box still highlights it).
         const y = incoming ? s.endPoint.y - dy : s.startPoint.y - dy;
         const [x0, x1] = incoming ? [0, n.x] : [n.x + n.width, p1.width + OX];
-        const blocked = p1.children.some((k) => k !== n && y > k.y - 4 && y < k.y + k.height + 4 && k.x < x1 && k.x + k.width > x0);
+        const blocked = ce.bundle || p1.children.some((k) => k !== n && y > k.y - 4 && y < k.y + k.height + 4 && k.x < x1 && k.x + k.width > x0);
         const sections = blocked ? e.sections : [incoming
           ? { startPoint: s.startPoint, bendPoints: [...(s.bendPoints || []), s.endPoint], endPoint: { x: dx + n.x, y: s.endPoint.y } }
           : { startPoint: { x: dx + n.x + n.width, y: s.startPoint.y }, bendPoints: [s.startPoint, ...(s.bendPoints || [])], endPoint: s.endPoint }];
@@ -570,6 +613,7 @@ const labelW = (e) => textW(e.text, 400, 11.5) + 6 + (e.via ? textW(e.via, 600, 
 
 function render(out, nodes, edges, onClick, enter, onDbl) {
   setStage("diagram");
+  minScale = nodes.some((n) => n.children && n.children.some((k) => k.sym)) ? 0.7 : 0; // leaf views: 13px names stay >= 9px
   const svg = document.getElementById("diagram");
   svg.replaceChildren(defs());
   const meta = {};
@@ -617,15 +661,25 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     edgeEls.push({ g, a: m.a, b: m.b });
   }
 
-  // Where a lateral jump came from: its box, or its ghost group and ghosts.
+  // Where a lateral jump came from: its box or group frame, the jumped-to symbol and the edges between
+  // them only, fading after a moment so it marks the way without flooding a dense view.
   const glowing = new Set();
   if (glow && view.from && view.from !== "~") {
     const box = project(view.from, view.focus);
+    const member = new Set();
     for (const { n } of placed) {
       const m = meta[n.id];
-      if (n.id === view.from || n.id === box || m.concept === view.from || m.more === view.from || (m.sym && m.sym.concept === view.from)) glowing.add(n.id);
+      if (n.id === view.from || n.id === box || m.concept === view.from) glowing.add(n.id);
+      if (m.more === view.from || (m.sym && m.sym.concept === view.from)) member.add(n.id);
     }
-    for (const x of edgeEls) if (glowing.has(x.a) || glowing.has(x.b)) x.g.classList.add("glow");
+    if (sel && rects[sel]) glowing.add(sel);
+    for (const x of edgeEls) {
+      const toBox = glowing.has(x.a) && !meta[x.a].children || glowing.has(x.b) && !meta[x.b].children;
+      const link = sel && ((x.a === sel && member.has(x.b)) || (x.b === sel && member.has(x.a)));
+      if (link || (toBox && !sel)) x.g.classList.add("glow");
+    }
+    clearTimeout(glowTimer);
+    glowTimer = setTimeout(() => { glow = false; for (const x of document.querySelectorAll("#diagram .glow")) x.classList.remove("glow"); }, 2500);
   }
 
   const near = new Set();
@@ -665,8 +719,9 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     g.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
     g.ondblclick = (ev) => { ev.stopPropagation(); if (onDbl) onDbl(n.id); };
     g.onkeydown = (ev) => { if (ev.key === "Enter") onClick(n.id); };
-    g.onmouseenter = () => hot(edgeEls, n.id, true);
-    g.onmouseleave = () => hot(edgeEls, n.id, false);
+    g.onmouseenter = () => { hot(edgeEls, n.id, true); touch(m.touches, true); };
+    g.onmouseleave = () => { hot(edgeEls, n.id, false); touch(m.touches, false); };
+    g.dataset.id = n.id;
     nodeG.append(g);
   }
   if (sel && symById[sel]) hot(edgeEls, sel, true);
@@ -716,6 +771,14 @@ function drawSym(g, m, n) {
     title.textContent = `${m.sym.tests.length} linked test case${m.sym.tests.length > 1 ? "s" : ""}`;
     b.append(svgEl("rect", { width: m.badge, height: 18, rx: 9 }), t, title);
     g.append(b);
+  }
+}
+
+// A bundled stub stands for links to several inner boxes; hovering its source box lights them up.
+function touch(ids, on) {
+  for (const id of ids || []) {
+    const g = document.querySelector(`#diagram [data-id="${CSS.escape(id)}"]`);
+    if (g) g.classList.toggle("touched", on);
   }
 }
 
@@ -774,9 +837,13 @@ function setStage(mode) {
 
 // ---------- legend ----------
 
-function legend(items, integration, ghosts, env) {
+function legend(items, integration, ghosts, env, inside) {
   const lg = document.getElementById("legend");
   lg.replaceChildren();
+  if (inside) {
+    lg.append(swatch(`area role-${inside.role}`, `Inside ${inside.name}`), swatch("area outside", "Outside"));
+    lg.append(el("div", "rule"));
+  }
   const roles = new Set(items.filter((c) => !c.ext).map((c) => c.role));
   const kinds = new Set(items.filter((c) => c.ext).map((c) => c.kind));
   for (const [k, label] of Object.entries(ROLES)) if (roles.has(k)) lg.append(swatch("role-" + k, label));
@@ -818,16 +885,27 @@ function stageSize() {
 }
 
 // Fit the content into the stage, keeping clear of the legend on the left.
-function fitCam() {
+// Fit the content into the stage, keeping clear of the legend (left when it is a column, top when a row).
+// With minK, a map too big to fit stays readable and opens on the selection or its top-left corner instead.
+function fitCam(minK = 0) {
   const s = stageSize(), pad = 48;
   const lg = document.getElementById("legend");
-  const left = lg.hidden ? 0 : lg.offsetWidth + 16;
-  const k = Math.min(1.4, (s.w - left - pad) / content.w, (s.h - pad) / content.h);
+  const row = !lg.hidden && lg.offsetWidth > lg.offsetHeight * 2;
+  const left = lg.hidden || row ? 0 : lg.offsetWidth + 16, top = row ? lg.offsetHeight + 16 : 0;
+  let k = Math.min(1.4, (s.w - left - pad) / content.w, (s.h - top - pad) / content.h);
+  if (k < minK) {
+    k = minK;
+    const w = s.w / k, h = s.h / k, r = rects[view.sel];
+    if (r) return { x: r.x + r.w / 2 - w / 2, y: r.y + r.h / 2 - h / 2, w, h };
+    const b = rects.boundary || { x: 0, y: 0 };
+    return { x: -(left + pad / 2) / k, y: Math.max(0, b.y - pad / k) - top / k, w, h };
+  }
   const w = s.w / k, h = s.h / k;
-  return { x: content.w / 2 - w / 2 - left / 2 / k, y: content.h / 2 - h / 2, w, h };
+  return { x: content.w / 2 - w / 2 - left / 2 / k, y: content.h / 2 - h / 2 - top / 2 / k, w, h };
 }
 
-function fit(animated) { animated ? animate(fitCam(), 250) : setCam(fitCam()); }
+let minScale = 0;
+function fit(animated, full) { const c = fitCam(full ? 0 : minScale); animated ? animate(c, 250) : setCam(c); }
 
 // A camera that frames rect r with some margin, at the stage's aspect ratio.
 function around(r, margin) {
@@ -841,7 +919,9 @@ function zoomBy(f, px, py) {
   const s = stageSize();
   const cx = px == null ? cam.x + cam.w / 2 : cam.x + (px / s.w) * cam.w;
   const cy = py == null ? cam.y + cam.h / 2 : cam.y + (py / s.h) * cam.h;
-  const w = Math.min(Math.max(cam.w * f, 120), content.w * 8);
+  const s0 = stageSize();
+  const most = Math.max(content.w, content.h * s0.w / s0.h) * 2.5; // whole map well inside the view
+  const w = Math.min(Math.max(cam.w * f, 300), most);
   const k = w / cam.w;
   setCam({ x: cx - (cx - cam.x) * k, y: cy - (cy - cam.y) * k, w, h: cam.h * k });
 }
@@ -883,7 +963,7 @@ function initCamera() {
     ev.preventDefault();
     const r = svg.getBoundingClientRect();
     // Figma convention: scroll pans both axes; pinch (arrives as ctrl+wheel) or Cmd/Ctrl+wheel zooms at the cursor.
-    if (ev.ctrlKey || ev.metaKey) return zoomBy(Math.exp(ev.deltaY * 0.01), ev.clientX - r.left, ev.clientY - r.top);
+    if (ev.ctrlKey || ev.metaKey) return zoomBy(Math.min(1.25, Math.max(0.8, Math.exp(ev.deltaY * 0.01))), ev.clientX - r.left, ev.clientY - r.top);
     const s = stageSize();
     const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? s.h : 1; // some mice report lines or pages
     let dx = ev.deltaX, dy = ev.deltaY;
@@ -906,14 +986,18 @@ function initCamera() {
   const end = () => { start = null; svg.classList.remove("panning"); setTimeout(() => (moved = false), 0); };
   svg.addEventListener("pointerup", end);
   svg.addEventListener("pointercancel", end);
-  svg.addEventListener("dblclick", (ev) => { if (ev.target === svg || ev.target.closest(".boundary, .group")) fit(true); });
+  svg.addEventListener("dblclick", (ev) => { if (ev.target === svg || ev.target.closest(".boundary, .group")) fit(true, true); });
   document.getElementById("stage").addEventListener("click", () => {
     glow = false;
     for (const x of document.querySelectorAll("#diagram .glow")) x.classList.remove("glow");
   }, true);
+  document.getElementById("details").onclick = () => {
+    document.body.classList.toggle("no-drawer");
+    requestAnimationFrame(() => fit(true));
+  };
   document.getElementById("zin").onclick = () => zoomBy(1 / 1.25);
   document.getElementById("zout").onclick = () => zoomBy(1.25);
-  document.getElementById("zfit").onclick = () => fit(true);
+  document.getElementById("zfit").onclick = () => fit(true, true);
   addEventListener("resize", () => { if (!location.search.includes("zoom")) fit(false); });
 }
 
@@ -992,7 +1076,7 @@ function drawer() {
     const other = byId[r.from === c.id ? r.to : r.from];
     const b = link(other.name, () => (other.ext ? go(view.focus, other.id) : jump(other.id, null, { force: true })));
     if (r.from === c.id) li.append(r.label + " ", b);
-    else li.append(b, " " + r.label);
+    else li.append(b, ` ${r.label} `, el("span", "self", c.name));
     return li;
   }));
   if (c.ext) return;
@@ -1120,7 +1204,7 @@ function initSearch() {
   for (const c of Object.values(byId)) entries.push({ name: c.name, text: (c.name + " " + c.summary).toLowerCase(), kind: c.ext ? "outside" : "concept", c });
   for (const s of Object.values(symById)) entries.push({ name: s.name, text: s.name.toLowerCase(), kind: `${s.kind} · ${s.leaf.name}`, s });
   for (const l of Object.values(byId).filter((c) => c.env)) for (const e of l.env) {
-    if (e.name !== "*") entries.push({ name: e.name, text: e.name.toLowerCase(), kind: `env var · ${l.name}`, c: l });
+    if (e.name !== "*") entries.push({ name: e.name, text: e.name.toLowerCase(), kind: `env var · ${l.name}`, c: l, envSym: e.symbols[0] });
   }
   const q = document.getElementById("q"), hits = document.getElementById("hits");
   let shown = [], on = 0;
@@ -1129,6 +1213,7 @@ function initSearch() {
     q.value = "";
     q.blur();
     if (h.s) jump(h.s.leaf.id, h.s.id, { force: true });
+    else if (h.envSym) jump(h.c.id, h.envSym, { force: true });
     else if (h.c.ext) jump(null, h.c.id, { force: true });
     else jump(h.c.id, null, { force: true });
   };

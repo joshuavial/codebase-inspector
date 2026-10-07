@@ -870,7 +870,7 @@
     {
       "from": "service.tailscale",
       "to": "x.tailscale",
-      "label": "plans Serve with",
+      "label": "plans the Serve setup for",
       "basis": "reading",
       "via": "tailscale CLI",
       "at": "service/tailscale.ts:tailscaleReadCommands"
@@ -1197,7 +1197,7 @@
     {
       "from": "service",
       "to": "x.tailscale",
-      "label": "plans Serve with",
+      "label": "plans the Serve setup for",
       "basis": "reading"
     },
     {
