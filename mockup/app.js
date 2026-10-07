@@ -119,6 +119,7 @@ function onKey(ev) {
   else if (ev.key === "0" || ev.key === "f") fit(true);
   else if (ev.key === "+" || ev.key === "=") zoomBy(1 / 1.25);
   else if (ev.key === "-") zoomBy(1.25);
+  else if (ev.key === "?") { debug = !debug; const b = document.getElementById("debug"); b.hidden = !debug; b.textContent = "wheel readout on: scroll or swipe over the map"; }
 }
 
 function ancestors(id) {
@@ -713,16 +714,30 @@ function zoomInto(id, done) {
   animate(around(rects[id], 1.3), 220, done);
 }
 
+// Hidden wheel readout: #debug in the URL or press ? to toggle.
+let debug = /(^|[#&])debug\b/.test(location.hash);
+function showWheel(ev) {
+  const box = document.getElementById("debug");
+  box.hidden = false;
+  box.textContent = `deltaX ${ev.deltaX.toFixed(1)}  deltaY ${ev.deltaY.toFixed(1)}  deltaMode ${ev.deltaMode}  ctrl ${ev.ctrlKey}  meta ${ev.metaKey}  shift ${ev.shiftKey}`;
+}
+
 function initCamera() {
   const svg = document.getElementById("diagram");
-  svg.addEventListener("wheel", (ev) => {
+  // On the whole stage (legend and empty space included), so no horizontal swipe reaches the browser.
+  const stage = document.getElementById("stage");
+  stage.addEventListener("wheel", (ev) => {
+    if (debug) showWheel(ev);
+    if (stage.dataset.mode !== "diagram") return; // the sketch scrolls natively
     ev.preventDefault();
     const r = svg.getBoundingClientRect();
     // Figma convention: scroll pans both axes; pinch (arrives as ctrl+wheel) or Cmd/Ctrl+wheel zooms at the cursor.
     if (ev.ctrlKey || ev.metaKey) return zoomBy(Math.exp(ev.deltaY * 0.01), ev.clientX - r.left, ev.clientY - r.top);
-    const line = ev.deltaMode === 1 ? 16 : 1; // some mice report lines, not pixels
     const s = stageSize();
-    setCam({ ...cam, x: cam.x + ev.deltaX * line * cam.w / s.w, y: cam.y + ev.deltaY * line * cam.h / s.h });
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? s.h : 1; // some mice report lines or pages
+    let dx = ev.deltaX, dy = ev.deltaY;
+    if (ev.shiftKey && !dx) [dx, dy] = [dy, 0]; // Shift+wheel scrolls sideways on mice without a horizontal axis
+    setCam({ ...cam, x: cam.x + dx * unit * cam.w / s.w, y: cam.y + dy * unit * cam.h / s.h });
   }, { passive: false });
   let start = null;
   svg.addEventListener("pointerdown", (ev) => {
