@@ -14,6 +14,11 @@ const ghostById = {}; // foreign symbol id -> { name, kind, concept }
 let M = null;
 let view = { focus: null, sel: null, mode: null, screen: null };
 let last = null; // the previous view, null before the first render
+let lateralHash = null; // where the last lateral jump landed, so Back can use browser history
+let glow = false; // highlight where we jumped from, until the next click in the stage
+let restore = null; // camera to reuse instead of fitting
+const camByHash = {};
+let camBeforeZoom = null; // the camera before a drill-in animation, which is what Back should restore
 
 function loadConcepts(data) {
   M = data;
@@ -39,18 +44,57 @@ function go(focus, sel, extra = {}) {
   const h = new URLSearchParams();
   if (focus) h.set("c", focus);
   if (sel) h.set("s", sel);
+  // Keep the way back while moving around inside the concept a lateral jump landed on.
+  if (view.from && (focus || null) === view.focus && !("from" in extra)) {
+    h.set("from", view.from);
+    h.set("bh", view.backHash);
+  }
   for (const [k, v] of Object.entries(extra)) if (v) h.set(k, v);
   location.hash = h.toString();
 }
 
+// A jump that is neither into a child nor up to an ancestor.
+function lateral(target) {
+  if (target === view.focus || !view.focus || !target) return false;
+  return !ancestors(target).includes(view.focus) && !ancestors(view.focus).includes(target);
+}
+
+// Every way into a view except drilling into a child or going up leaves a "Back to <origin>" chip.
+// `force` marks entries that always count as a jump: search, drawer links, grey nodes, sketch regions.
+// The origin's full hash rides along in the URL so Back restores its exact zoom and selection.
+function jump(target, sel, { force = false, extra = {} } = {}) {
+  target = target || null;
+  if (target === view.focus || (!force && !lateral(target))) return go(target, sel, extra);
+  glow = true;
+  go(target, sel, { ...extra, from: view.focus || "~", bh: location.hash.slice(1) || "-" });
+  lateralHash = location.hash;
+}
+
+function back() {
+  if (!view.from) return;
+  if (location.hash === lateralHash) history.back();
+  else location.hash = view.backHash === "-" ? "" : view.backHash;
+}
+
+const originName = (id) => (id === "~" ? M.workspace : byId[id].name);
+
 function route() {
   const h = new URLSearchParams(location.hash.slice(1));
-  view = { focus: byId[h.get("c")] ? h.get("c") : null, sel: h.get("s"), mode: h.get("v"), screen: h.get("w") };
+  const first = !last;
+  if (!first) camByHash[last.hash] = camBeforeZoom || { ...cam };
+  camBeforeZoom = null;
+  const prev = view;
+  view = {
+    focus: byId[h.get("c")] ? h.get("c") : null, sel: h.get("s"), mode: h.get("v"), screen: h.get("w"),
+    from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
+  };
+  if (first) glow = !!view.from;
+  // Same diagram: keep the camera. A view seen before (Back): restore its camera.
+  restore = !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   crumbs();
   const f = view.focus && byId[view.focus];
-  const first = !last;
   const from = first ? null : last.focus;
-  last = { focus: view.focus };
+  last = { focus: view.focus, hash: location.hash };
   // Going up: start zoomed on the box we came out of. Going down: start from further away.
   const up = from && from !== view.focus && ancestors(from).includes(view.focus) || (from && !view.focus);
   const down = view.focus && view.focus !== from && (!from || ancestors(view.focus).includes(from));
@@ -70,6 +114,7 @@ function onKey(ev) {
   const typing = ev.target.closest && ev.target.closest("input, textarea");
   if (typing) return;
   if (ev.key === "Escape") up();
+  else if (ev.key === "Backspace" && view.from) { back(); ev.preventDefault(); }
   else if (ev.key === "/") { document.getElementById("q").focus(); ev.preventDefault(); }
   else if (ev.key === "0" || ev.key === "f") fit(true);
   else if (ev.key === "+" || ev.key === "=") zoomBy(1 / 1.25);
@@ -93,6 +138,12 @@ function crumbs() {
     if (!lastCrumb) a.onclick = () => go(id);
     nav.append(a);
   });
+  if (view.from) {
+    const b = el("button", "back", `← Back to ${originName(view.from)}`);
+    b.title = "Back (Backspace)";
+    b.onclick = back;
+    nav.append(b);
+  }
 }
 
 // ---------- concept diagrams ----------
@@ -146,6 +197,7 @@ function drawConcepts(f, enter) {
     const c = byId[id];
     if (!c) return;
     if (c.ext) go(view.focus, id);
+    else if (lateral(id)) jump(id);
     else zoomInto(id, () => go(id));
   }, enter);
   legend([...kids, ...[...outside].map((id) => byId[id])], edges.some((e) => kind(e) === "integration"), false);
@@ -214,11 +266,11 @@ function drawLeaf(c, enter) {
   const nodes = [boundary, ...groupNodes, ...ext.map((id) => box(byId[id], "ctx"))];
   layout(nodes, edges, { dir: "RIGHT", layer: 56, gap: 14 }, (id) => {
     if (own.has(id)) return go(view.focus, id, { v: view.mode });
-    if (ghostById[id]) return go(ghostById[id].concept, id);
-    if (id.startsWith("more:")) return go(id.slice(5));
-    if (id.startsWith("group:")) return go(id.slice(6));
+    if (ghostById[id]) return go(view.focus, id, { v: view.mode }); // select; double-click jumps
+    if (id.startsWith("more:")) return jump(id.slice(5), null, { force: true });
+    if (id.startsWith("group:")) return jump(id.slice(6), null, { force: true });
     if (byId[id] && byId[id].ext) return go(view.focus, id, { v: view.mode });
-  }, enter);
+  }, enter, (id) => { if (ghostById[id] && !own.has(id)) jump(ghostById[id].concept, id, { force: true }); });
   legend([c, ...ext.map((id) => byId[id])], ext.length > 0, groupNodes.length > 0, c.symbols.some((s) => s.env));
 }
 
@@ -285,7 +337,7 @@ function region(r, hl, inside) {
   if (r.component && symById[r.component]) {
     const s = symById[r.component];
     d.title = s.name;
-    d.onclick = (ev) => { ev.stopPropagation(); go(s.leaf.id, s.id, { w: view.screen }); };
+    d.onclick = (ev) => { ev.stopPropagation(); jump(s.leaf.id, s.id, { force: true, extra: { w: view.screen } }); };
     if (on && r.layout === "column") d.append(el("span", "tag", s.name));
   }
   if (r.text != null) {
@@ -316,7 +368,7 @@ function componentPanel(s) {
   };
   chips("Props", s.props || [], "mono");
   const renders = s.leaf.calls.filter(([a, , v]) => a === s.id && v === "renders").map(([, b]) => symById[b]).filter(Boolean);
-  chips("Renders", renders, "link", (x) => go(x.leaf.id, x.id));
+  chips("Renders", renders, "link", (x) => jump(x.leaf.id, x.id, { force: true }));
   chips("Reads", s.reads || [], "mono");
   const n = s.tests.length;
   p.append(el("p", "tests", n ? `✓ ${n} linked test case${n > 1 ? "s" : ""}` : "No test links found"));
@@ -325,7 +377,7 @@ function componentPanel(s) {
 
 // ---------- layout and render ----------
 
-async function layout(nodes, edges, opt, onClick, enter) {
+async function layout(nodes, edges, opt, onClick, enter, onDbl) {
   const toElk = (n) => ({
     id: n.id,
     ...(n.children ? {}: { width: n.w, height: n.h }),
@@ -359,12 +411,12 @@ async function layout(nodes, edges, opt, onClick, enter) {
   };
   let out;
   try { out = await elk.layout(graph); } catch (err) { return empty("Layout failed: " + err.message); }
-  render(out, nodes, edges, onClick, enter);
+  render(out, nodes, edges, onClick, enter, onDbl);
 }
 
 const labelW = (e) => textW(e.text, 400, 11.5) + 6 + (e.via ? textW(e.via, 600, 10.5, true) + 18 : 0);
 
-function render(out, nodes, edges, onClick, enter) {
+function render(out, nodes, edges, onClick, enter, onDbl) {
   setStage("diagram");
   const svg = document.getElementById("diagram");
   svg.replaceChildren(defs());
@@ -413,13 +465,24 @@ function render(out, nodes, edges, onClick, enter) {
     edgeEls.push({ g, a: m.a, b: m.b });
   }
 
+  // Where a lateral jump came from: its box, or its ghost group and ghosts.
+  const glowing = new Set();
+  if (glow && view.from && view.from !== "~") {
+    const box = project(view.from, view.focus);
+    for (const { n } of placed) {
+      const m = meta[n.id];
+      if (n.id === view.from || n.id === box || m.concept === view.from || m.more === view.from || (m.sym && m.sym.concept === view.from)) glowing.add(n.id);
+    }
+    for (const x of edgeEls) if (glowing.has(x.a) || glowing.has(x.b)) x.g.classList.add("glow");
+  }
+
   const near = new Set();
   if (sel && symById[sel]) for (const x of edgeEls) if (x.a === sel || x.b === sel) near.add(x.a).add(x.b);
 
   for (const { n, x, y } of placed) {
     const m = meta[n.id];
     if (m.children) {
-      const g = svgEl("g", { class: m.cls, transform: `translate(${x},${y})` });
+      const g = svgEl("g", { class: m.cls + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})` });
       g.append(svgEl("rect", { class: "frame", width: n.width, height: n.height, rx: 14 }));
       const t = svgEl("text", { class: "label", x: 16, y: 25 });
       t.textContent = m.label;
@@ -428,7 +491,7 @@ function render(out, nodes, edges, onClick, enter) {
       boxG.append(g);
       continue;
     }
-    const g = svgEl("g", { class: m.cls + (n.id === sel ? " sel" : ""), transform: `translate(${x},${y})`, tabindex: 0 });
+    const g = svgEl("g", { class: m.cls + (n.id === sel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0 });
     if (m.stack) g.append(svgEl("rect", { class: "stack", x: 4, y: 4, width: n.width, height: n.height, rx: 10 }));
     g.append(svgEl("rect", { class: "body", width: n.width, height: n.height, rx: m.sym ? 8 : 10 }));
     if (!m.sym && !m.cls.includes("ctx") && !m.cls.includes("ext")) g.append(svgEl("rect", { class: "stripe", width: 4, height: n.height - 16, x: 0, y: 8, rx: 2 }));
@@ -446,8 +509,9 @@ function render(out, nodes, edges, onClick, enter) {
         g.append(t);
       });
     }
-    if (sel && symById[sel] && !near.has(n.id) && n.id !== sel) g.classList.add("dim");
+    if (sel && rects[sel] && symById[sel] && !near.has(n.id) && n.id !== sel) g.classList.add("dim");
     g.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
+    g.ondblclick = (ev) => { ev.stopPropagation(); if (onDbl) onDbl(n.id); };
     g.onkeydown = (ev) => { if (ev.key === "Enter") onClick(n.id); };
     g.onmouseenter = () => hot(edgeEls, n.id, true);
     g.onmouseleave = () => hot(edgeEls, n.id, false);
@@ -460,7 +524,8 @@ function render(out, nodes, edges, onClick, enter) {
   fit(false);
   const z = Number(new URLSearchParams(location.search).get("zoom")); // ?zoom=2 opens zoomed in, for screenshots
   if (z && !enter) zoomBy(1 / z);
-  if (enter && enter.from && rects[enter.from]) {
+  if (restore) setCam(restore);
+  else if (enter && enter.from && rects[enter.from]) {
     const target = { ...cam };
     setCam(around(rects[enter.from], 1.6));
     animate(target, 320);
@@ -644,6 +709,7 @@ function animate(to, ms, done) {
 
 function zoomInto(id, done) {
   if (!rects[id]) return done();
+  camBeforeZoom = { ...cam };
   animate(around(rects[id], 1.3), 220, done);
 }
 
@@ -675,6 +741,10 @@ function initCamera() {
   svg.addEventListener("pointerup", end);
   svg.addEventListener("pointercancel", end);
   svg.addEventListener("dblclick", (ev) => { if (ev.target === svg || ev.target.closest(".boundary, .group")) fit(true); });
+  document.getElementById("stage").addEventListener("click", () => {
+    glow = false;
+    for (const x of document.querySelectorAll("#diagram .glow")) x.classList.remove("glow");
+  }, true);
   document.getElementById("zin").onclick = () => zoomBy(1 / 1.25);
   document.getElementById("zout").onclick = () => zoomBy(1.25);
   document.getElementById("zfit").onclick = () => fit(true);
@@ -696,7 +766,7 @@ function integrationList(d, points) {
     const li = el("li");
     const head = el("div", "rel");
     const a = byId[r.from], b = byId[r.to];
-    const nav = (x) => link(x.name, () => (x.ext ? go(view.focus, x.id) : go(x.id)));
+    const nav = (x) => link(x.name, () => (x.ext ? go(view.focus, x.id) : jump(x.id, null, { force: true })));
     head.append(nav(a), " → ", nav(b));
     const [file, fn] = r.at.split(":");
     const foot = el("div", "where");
@@ -720,8 +790,8 @@ function envList(d, c) {
     if (e.default != null) head.append(el("span", "path", `default ${e.default || '""'}`));
     const who = el("div", "rel");
     const syms = [...new Set(e.symbols)].map((id) => symById[id]);
-    if (syms.length) syms.forEach((x, i) => { if (i) who.append(", "); who.append(link(x.name, () => go(x.leaf.id, x.id))); });
-    else who.append("read at module level in ", link(e.leaf.name, () => go(e.leaf.id)));
+    if (syms.length) syms.forEach((x, i) => { if (i) who.append(", "); who.append(link(x.name, () => jump(x.leaf.id, x.id, { force: true }))); });
+    else who.append("read at module level in ", link(e.leaf.name, () => jump(e.leaf.id, null, { force: true })));
     li.append(head, who);
     ul.append(li);
   }
@@ -732,6 +802,8 @@ function drawer() {
   const d = document.getElementById("drawer");
   d.replaceChildren();
   const s = view.sel && symById[view.sel];
+  const here = view.focus && byId[view.focus];
+  if (s && here && !here.children && s.leaf !== here) return linkDrawer(d, here, s);
   if (s) return symbolDrawer(d, s);
   const g = view.sel && ghostById[view.sel];
   const c = byId[view.sel] || byId[view.focus];
@@ -752,7 +824,7 @@ function drawer() {
   if (rels.length) list(d, "Relationships", rels.map((r) => {
     const li = el("span", "rel");
     const other = byId[r.from === c.id ? r.to : r.from];
-    const b = link(other.name, () => go(other.ext ? view.focus : other.id, other.ext ? other.id : null));
+    const b = link(other.name, () => (other.ext ? go(view.focus, other.id) : jump(other.id, null, { force: true })));
     if (r.from === c.id) li.append(r.label + " ", b);
     else li.append(b, " " + r.label);
     return li;
@@ -777,17 +849,36 @@ function drawer() {
   }), !c.children);
 }
 
+// A ghost is selected: show every call between its concept and this one, both ways.
+function linkDrawer(d, here, s) {
+  const there = s.leaf;
+  d.append(el("h2", "", s.name), el("p", "", `${s.kind} in ${there.name}`));
+  const go2 = el("button", "action", `Go to ${there.name}`);
+  go2.onclick = () => jump(there.id, s.id, { force: true });
+  d.append(go2);
+  const name = (id) => link(`${symById[id].name} (${symById[id].leaf.name})`, () => go(view.focus, id, { v: view.mode }));
+  for (const [a, b] of [[there, here], [here, there]]) {
+    const rows = here.calls.filter(([x, y]) => symById[x] && symById[y] && symById[x].leaf === a && symById[y].leaf === b);
+    if (!rows.length) continue;
+    list(d, `${a.name} → ${b.name}`, rows.map(([x, y, verb]) => {
+      const li = el("span", "rel" + (x === s.id || y === s.id ? " on" : ""));
+      li.append(name(x), ` ${verb} `, name(y));
+      return li;
+    }));
+  }
+}
+
 function symbolDrawer(d, s) {
   d.append(el("h2", "", s.name), el("p", "", `${s.kind} in ${s.leaf.name}`));
   if (s.sig) d.append(el("div", "sig", s.sig));
   if (s.env) list(d, "Environment", s.env.map((n) => el("span", "envname", envName(n))));
   d.append(el("h3", "", "Where"), el("div", "path", `${s.file}:${s.line}`));
   const name = (id) => (symById[id] || ghostById[id]).name;
-  const jump = (id) => (symById[id] ? go(symById[id].leaf.id, id) : go(ghostById[id].concept, id));
+  const open = (id) => jump(symById[id] ? symById[id].leaf.id : ghostById[id].concept, id, { force: true });
   const calls = s.leaf.calls.filter(([a]) => a === s.id).map(([, b]) => b);
   const by = s.leaf.calls.filter(([, b]) => b === s.id).map(([a]) => a);
-  if (calls.length) list(d, "Calls", calls.map((x) => link(name(x), () => jump(x))));
-  if (by.length) list(d, "Called by", by.map((x) => link(name(x), () => jump(x))));
+  if (calls.length) list(d, "Calls", calls.map((x) => link(name(x), () => open(x))));
+  if (by.length) list(d, "Called by", by.map((x) => link(name(x), () => open(x))));
   list(d, `Tests (${s.tests.length})`, s.tests.length ? s.tests.slice(0, 12).map((t) => el("span", "", t)) : [el("span", "rel", "No test links found by static analysis.")]);
   if (s.tests.length > 12) d.append(el("p", "", `and ${s.tests.length - 12} more`));
 }
@@ -843,9 +934,9 @@ function initSearch() {
     hits.hidden = true;
     q.value = "";
     q.blur();
-    if (h.s) go(h.s.leaf.id, h.s.id);
-    else if (h.c.ext) go(null, h.c.id);
-    else go(h.c.id);
+    if (h.s) jump(h.s.leaf.id, h.s.id, { force: true });
+    else if (h.c.ext) jump(null, h.c.id, { force: true });
+    else jump(h.c.id, null, { force: true });
   };
   const paint = () => {
     hits.replaceChildren(...shown.map((h, i) => {
