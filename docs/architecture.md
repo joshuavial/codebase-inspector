@@ -24,6 +24,8 @@ Covers PRD-01 (`docs/prd-01-orientation-map.md`). Living document: update it whe
 | Viewer: plain JS, no build step | | One static folder. The only vendored library is MiniSearch. |
 | MiniSearch | 7.2 | Small client-side full-text index that can be prebuilt and loaded with `loadJSON`. |
 
+Packaging (deliverable 1): build backend is `uv_build`, pytest sits in the `dev` dependency group, and runtime dependencies are floored at the versions above (`>=`), not pinned; `uv.lock` pins them for development.
+
 Alternatives rejected: SCIP indexers (need each repo's dependencies installed); a TypeScript mapper on web-tree-sitter (WASM grammar management, nothing else in the skill stack uses Node); a served viewer (no PRD-01 need). Treemap (d3-hierarchy) and graph (Cytoscape) views are deferred until the list view has been used.
 
 ## Repository layout
