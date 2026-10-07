@@ -34,7 +34,7 @@ The map is one tree. Each node has a kind, and a kind can be absent from a repo 
 | test file, test case | Tests, in the tree where they sit | `registry.test.ts` > "revokes a device" |
 | doc | Markdown and doc-site pages, searchable, not parsed for symbols | `docs/mobile-preview-activation.md` |
 
-Outside the tree: resources (databases, queues, caches found in compose files) and external dependencies, shown on request.
+External dependencies sit outside the tree and are shown on request.
 
 Relationships: imports, calls, tests (test case to the code it exercises), part-of (a file belongs to a deployable; a file can belong to several), depends-on (between packages and deployables, from manifests), mentions (a doc to the code it names), and pins (a workspace to the submodule commit it records). Relationships between deep nodes also show at every level above them.
 
@@ -53,20 +53,20 @@ Relationships: imports, calls, tests (test case to the code it exercises), part-
 ### Mapping
 
 - R1. Enumerate files from git for the repo and every initialised submodule; never walk the filesystem or follow tracked symlinks.
-- R2. Model submodules as nested workspaces identified by remote URL and commit. Record when the checked-out commit differs from the pinned one, and show uninitialised submodules as empty nodes.
-- R3. Detect deployables and packages from manifests: `package.json`, `vite.config.*`, `pyproject.toml` (including `[project.scripts]` and uv path sources), `Dockerfile*`, `Containerfile`, compose files, `wrangler.toml`, `Cargo.toml`. Ignore template files such as `*.tmpl`.
+- R2. Model submodules as nested workspaces identified by their normalised remote URL. Record the pinned and checked-out commits, flag when they differ, and show uninitialised submodules as empty nodes.
+- R3. Detect deployables and packages from manifests: `package.json`, `vite.config.*`, `pyproject.toml` (including `[project.scripts]` and uv path sources), `Dockerfile*`, `Containerfile`, compose files, `wrangler.toml`, `Cargo.toml`. Map entry points that name build output (`dist-*/…/main.js`) or HTML script tags back to source files. Ignore template files such as `*.tmpl`.
 - R4. Parse TypeScript, TSX, JavaScript and Python into classes, functions, methods, React components and interfaces, with signatures, docstrings and line ranges. Other languages appear as file nodes.
 - R5. Resolve import edges between files and packages. Resolve call edges where the callee name can be bound (same file, explicitly imported name, method on the same class); mark each edge with its source and confidence.
 - R6. Detect test files and test cases for node:test, vitest, jest and pytest. Link test cases to the code they import and call, and boost links where file names match.
 - R7. Treat skills, repertoires and other agent assets as packages and parse them like code. Treat markdown as doc nodes, collapse large doc-only directories to one node, and exclude data, fixtures, eval snapshots, generated and tracked build output through an ignore file that `init` writes and the user can edit.
 - R8. Give every node a stable ID derived from its workspace, path and qualified name, so the same code keeps the same ID across scans.
-- R9. Re-scan incrementally by file content hash.
+- R9. Re-scan incrementally by the content of files on disk, including unstaged edits, deletions and changes to the ignore file.
 
 ### Judgement tasks
 
-- R10. Generate tasks for work that needs judgement: naming and summarising files, folders, packages, deployables and the workspace, and confirming or correcting the detected deployables. Symbols keep their signature and docstring and get no AI summary in this increment.
-- R11. Give each task its inputs and the exact JSON shape expected. Validate answers and report errors precisely enough for an agent to fix them.
-- R12. Cache accepted answers by the content hash of their inputs, in a cache shared across repos, so identical code is never summarised twice.
+- R10. Generate tasks for work that needs judgement: naming and summarising files, folders, packages, deployables and the workspace, and confirming or correcting the detected structure (deployables, their entry points, and packages that have no manifest). Structure corrections persist and apply to every later scan. Symbols keep their signature and docstring and get no AI summary in this increment.
+- R11. Give each task its inputs and the exact JSON shape expected. Validate answers and report errors precisely enough for an agent to fix them. Reject answers to a task whose inputs changed since it was issued. Accepting an answer opens the tasks that were waiting on it.
+- R12. Cache accepted file summaries per file content hash, in a cache shared across repos, so identical code is never summarised twice. A parent summary reopens only when a child's summary text changes.
 
 ### Agent interface
 
@@ -76,15 +76,15 @@ Relationships: imports, calls, tests (test case to the code it exercises), part-
 
 ### Tests
 
-- R16. Ingest lcov, coverage.py JSON (including per-test contexts) and JUnit XML, mapping coverage to nodes and results to test cases.
+- R16. Ingest lcov, coverage.py JSON (including per-test contexts) and JUnit XML, mapping coverage to source nodes (through source maps when the tests ran on compiled output) and results to test cases. Several artifacts for one repo merge; a later artifact from the same source file replaces the earlier one.
 - R17. For each repo, `cbi prime` or `cbi ingest --help` shows the command that produces those files with output outside tracked paths.
 
 ### Viewer
 
 - R18. `cbi build` writes a static viewer that opens from disk with no server.
-- R19. Drill down from the workspace to methods with a breadcrumb, showing each node's children, summary, signature, relationships rolled up to the visible level, and linked tests.
+- R19. Drill down from the workspace to methods with a breadcrumb, showing each node's children as a list, summary, signature, relationships rolled up to the visible level, and linked tests. Chains of single-child folders collapse into one step. A deployable lists the files that are part of it.
 - R20. Search across every kind from one box, with results grouped by kind, and jump to any result with its ancestors expanded.
-- R21. Show a test overlay: nodes coloured by static test links, or by measured coverage and pass/fail when ingested.
+- R21. Show a test overlay on the children list and detail pane: static test links, or measured coverage and pass/fail when ingested.
 - R22. Show the concrete kind (class, method, module, folder) everywhere; internal schema names never appear in the UI.
 
 ### Storage
@@ -93,9 +93,9 @@ Relationships: imports, calls, tests (test case to the code it exercises), part-
 
 ## Acceptance criteria
 
-- A1. On orchestra: init, scan, all judgement tasks completed by an agent, build and query work end to end. The model has the four deployables (Electron main, renderer, service, mobile PWA), `orchestra-core` and `shared` as packages, and all 32 test files linked to code.
+- A1. On orchestra: init, scan, all judgement tasks completed by an agent, build and query work end to end. The model has the four deployables (Electron main, renderer, service, mobile PWA) each with member files, `orchestra-core` and `shared` as packages (through the structure task, since they have no manifest), and all 32 test files detected, each either linked to code or listed as unmatched with a reason.
 - A2. On orchestra, an agent given only "run `cbi prime`" completes the task loop without reading the inspector's source or docs.
-- A3. On orchestra with lcov and JUnit from `node --test`, the viewer shows per-file coverage and per-test pass/fail.
+- A3. On orchestra, with lcov and JUnit from all three test suites (electron, renderer, service), the viewer shows per-file coverage on the TypeScript sources and per-test pass/fail.
 - A4. On lms: scan, build and query work with no judgement tasks done. The apps, `shared` and the submodule appear as separate nodes.
 - A5. On xenota: scan, build and query work with no judgement tasks done. xenon appears as a nested workspace with its uv packages as packages, `docs/research` collapses to one doc node, and the `.agent/skills` symlinks are not double-counted.
 - A6. On xenota, a cold scan finishes in under 60 seconds and a re-scan with no changes in under 10 seconds on JV's Mac. The viewer's first paint is under 2 seconds and search and drill-down respond in under 200 ms.
@@ -108,6 +108,8 @@ Relationships: imports, calls, tests (test case to the code it exercises), part-
 - Precise, type-resolved call graphs (SCIP) are a later upgrade.
 - AI summaries for individual symbols, and AI regrouping of files into components that cut across folders.
 - Istanbul and Playwright result formats. They follow once a target needs them.
+- A treemap or node-link graph view. The list and detail views come first; a picture is added once they have been used.
+- Resources from compose files (databases, queues, caches).
 - Change review, snapshot diffing and the quiz (PRD-02 and later).
 - Parsers for Rust, Go, shell and other languages beyond file nodes.
 
