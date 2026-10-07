@@ -122,22 +122,7 @@ main { flex: 1; display: flex; min-height: 0; }
 #stage[data-mode="sketch"] #sketch { display: flex; }
 
 /* overlays */
-#legend {
-  position: absolute; top: 16px; left: 16px;
-  display: flex; flex-direction: column; gap: 5px;
-  padding: 10px 12px; border-radius: 10px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  border: 1px solid var(--line);
-  font-size: 12px; color: var(--muted);
-  backdrop-filter: blur(6px);
-}
-#legend .key { display: flex; align-items: center; gap: 8px; }
-#legend .sw { width: 14px; height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--c) 18%, var(--box)); border-left: 3px solid var(--c); }
-#legend .sw.ext { border: 1.5px dashed var(--c); background: color-mix(in srgb, var(--c) 10%, var(--box)); }
-#legend .sw.ghost { border: 1px dashed var(--faint); background: transparent; }
-#legend .ln { width: 18px; border-top: 1.5px solid var(--muted); }
-#legend .ln.integration { border-top: 2px dashed var(--integ); }
-#legend .envkey, .envname { font: 600 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.envname { font: 600 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
 
 #zoom, #toggle {
   position: absolute; display: flex; border-radius: 8px; overflow: hidden;
@@ -281,7 +266,7 @@ main { flex: 1; display: flex; min-height: 0; }
 #drawer .callrow .module, #drawer .callrow .dot { color: var(--faint); font-size: 12px; }
 #drawer .callrow > b:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 #drawer .callrow .here { color: var(--muted); font-size: 12.5px; }
-#debug { position: absolute; left: 16px; bottom: 16px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 4px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
+#debug { position: absolute; left: 16px; top: 16px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 4px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
 #debug[hidden] { display: none; }
 #sketch .sketch-main { overscroll-behavior: none; }
 .sym.reexport rect.body { fill: var(--box); stroke: var(--faint); stroke-dasharray: 2 2; }
@@ -293,9 +278,6 @@ main { flex: 1; display: flex; min-height: 0; }
 #stage { background: var(--canvas); }
 .boundary rect.frame { fill: color-mix(in srgb, var(--c, var(--faint)) 7%, var(--panel)); stroke: color-mix(in srgb, var(--c, var(--faint)) 45%, var(--line)); stroke-width: 1.5; }
 .boundary .label { fill: color-mix(in srgb, var(--c, var(--muted)) 60%, var(--text)); }
-#legend .sw.area { border: 1px solid color-mix(in srgb, var(--c) 45%, var(--line)); background: color-mix(in srgb, var(--c) 7%, var(--panel)); border-left-width: 1px; }
-#legend .sw.outside { --c: var(--faint); background: var(--canvas); border: 1px solid var(--line); }
-#legend .rule { border-top: 1px solid var(--line); margin: 2px 0; }
 .edge text { stroke: var(--canvas); }
 .node.bundled .sum { font-size: 11.5px; }
 .node.touched rect.body { stroke: var(--accent); stroke-width: 1.8; }
@@ -309,13 +291,11 @@ main { flex: 1; display: flex; min-height: 0; }
 .sketch-bar .up { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .sketch-bar .up:hover { border-color: var(--accent); }
 
-/* narrow windows: slimmer drawer that can be hidden, legend as one row */
+/* narrow windows: slimmer drawer that can be hidden */
 #details { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; color: var(--muted); }
 body.no-drawer #drawer { display: none; }
 @media (max-width: 1100px) {
   #drawer { width: 240px; padding: 16px 14px 24px; }
-  #legend { flex-direction: row; flex-wrap: wrap; gap: 4px 12px; right: 140px; padding: 6px 10px; }
-  #legend .rule { display: none; }
   #find { width: 220px; }
 }
 
@@ -339,23 +319,12 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 .comp-panel .tests.none { color: var(--muted); }
 
 /* key: line styles and test badges */
-#legend .ln.solid { border-top: 1.5px solid var(--muted); }
-#legend .ln.dotted { border-top: 1.5px dotted var(--muted); }
-#legend .ln.both { border-top: 1.5px solid var(--muted); position: relative; }
-#legend .ln.both::before, #legend .ln.both::after { content: ""; position: absolute; top: -4px; border: 3px solid transparent; }
-#legend .ln.both::before { left: -2px; border-right-color: var(--muted); }
-#legend .ln.both::after { right: -2px; border-left-color: var(--muted); }
-#legend .ln.reexport { border-top: 1.5px dotted var(--faint); }
-#legend .testkey { font-size: 10.5px; font-weight: 600; color: var(--ok); background: var(--ok-soft); border-radius: 8px; padding: 0 6px; }
 
 /* sketch: stronger text so labels do not look disabled */
 .frame { color: color-mix(in srgb, var(--text) 78%, var(--wire)); }
 .wf.s-muted { color: var(--muted); }
 .wf .ph { color: color-mix(in srgb, var(--text) 70%, var(--ph)); }
 
-/* left-to-right maps are wide and short: the key runs as one row along the top */
-#legend { flex-direction: row; flex-wrap: wrap; gap: 4px 14px; right: 150px; padding: 6px 10px; align-items: center; }
-#legend .rule { display: block; border-top: 0; border-left: 1px solid var(--line); height: 14px; margin: 0; }
 .sym.cluster rect.body { fill: color-mix(in srgb, var(--c, var(--faint)) 10%, var(--box)); stroke: var(--muted); stroke-width: 1.2; }
 .sym.cluster .kind { fill: var(--link); }
 .group.cluster-open rect.frame { fill: none; stroke: var(--muted); stroke-dasharray: none; stroke-opacity: .5; }
@@ -372,3 +341,22 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 #drawer ul.usage .tag { font-size: 11px; color: var(--muted); }
 #drawer ul.usage button.more { color: var(--muted); font-weight: 400; }
 #diagram .linked rect.body, #diagram .linked rect.frame { stroke: var(--accent); stroke-width: 2; stroke-dasharray: none; }
+
+/* key: a floating card bottom-left, sections of miniatures of the real marks; folds to a pill */
+#legend { position: absolute; left: 16px; bottom: 16px; z-index: 3; font-size: 12px; color: var(--text); }
+#legend .key-card { width: 236px; max-height: calc(100% - 32px); overflow: auto; padding: 10px 12px 12px; border-radius: 12px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(6px); box-shadow: 0 4px 16px rgb(0 0 0 / 10%); }
+#legend .key-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+#legend .key-head strong { font-size: 12px; font-weight: 600; }
+#legend .key-head button, #legend .key-pill { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 12px; cursor: pointer; font-size: 12px; }
+#legend .key-head button { width: 22px; height: 22px; padding: 0; line-height: 1; }
+#legend .key-pill { padding: 4px 12px; box-shadow: 0 2px 8px rgb(0 0 0 / 10%); }
+#legend .key-head button:hover, #legend .key-pill:hover { color: var(--text); border-color: var(--accent); }
+#legend .key-head button:focus-visible, #legend .key-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#legend .key-grid { display: grid; grid-template-columns: 40px 1fr; column-gap: 10px; row-gap: 5px; align-items: center; }
+#legend .key-title { grid-column: 1 / -1; margin-top: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+#legend .key-sw { display: flex; align-items: center; }
+#legend .key-sw svg { display: block; overflow: visible; }
+#legend .key-label { line-height: 1.3; }
+#legend .outside-area rect.frame { fill: var(--canvas); stroke: var(--line); }
+#legend .node rect.body { filter: none; }

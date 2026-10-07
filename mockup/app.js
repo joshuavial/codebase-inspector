@@ -323,7 +323,7 @@ function drawLeaf(c, enter) {
     return { id: s.id, sym: s, cls: `sym ${cls}`, w: Math.max(textW(s.name, 500, 13, true) + 28 + (badge && badge + 8), envW, 110), h: 46, name: s.name, badge, envText };
   };
   const typesOnly = !c.symbols.length;
-  if (typesOnly && !c.importsIn.length && !c.reexports.length) { empty("No classes or functions here, only types."); legend([], false, false); return; }
+  if (typesOnly && !c.importsIn.length && !c.reexports.length) { empty("No classes or functions here, only types."); clearKey(); return; }
   const pseudo = (id, name, cls = "") => ({ id, cls: `sym ghost more ${cls}`, w: textW(name, 400, 12) + 28, h: 32, name, more: id.split(":").slice(1).join(":") });
   const edges = [];
   const edge = (a, b, cls, text) => edges.push({ id: "e" + edges.length, a, b, cls, text });
@@ -531,7 +531,7 @@ function sketchable(c) {
 
 function drawSketch(c) {
   setStage("sketch");
-  legend([], false, false);
+  clearKey();
   const pane = document.getElementById("sketch");
   pane.replaceChildren();
   const ids = componentIds(c);
@@ -994,60 +994,107 @@ function setStage(mode) {
 
 // ---------- legend ----------
 
-// The key lists exactly what the current diagram draws: read back from the SVG after rendering.
+// The key lists exactly what the current diagram draws, read back from the SVG after rendering, as
+// miniatures of the real marks in short sections. It floats bottom-left and folds to a "Key" pill.
 let legendInside = null;
+let lastDiagram = null;
+const KEY_STORE = "cbi.keyCollapsed";
+function keyCollapsed() {
+  try { const v = localStorage.getItem(KEY_STORE); if (v !== null) return v === "1"; } catch {}
+  return innerWidth <= 1100; // narrow windows start folded
+}
+function setKeyCollapsed(v) { try { localStorage.setItem(KEY_STORE, v ? "1" : "0"); } catch {} }
+
+function mini(w, h, build) {
+  const s = svgEl("svg", { width: w, height: h, viewBox: `0 0 ${w} ${h}`, "aria-hidden": "true" });
+  build(s);
+  return s;
+}
+const miniBox = (cls, stripe) => mini(26, 16, (s) => {
+  const g = svgEl("g", { class: cls });
+  g.append(svgEl("rect", { class: "body", x: 1, y: 1, width: 24, height: 14, rx: 3 }));
+  if (stripe) g.append(svgEl("rect", { class: "stripe", x: 1, y: 3.5, width: 2.5, height: 9, rx: 1 }));
+  s.append(g);
+});
+const miniArea = (cls) => mini(26, 16, (s) => {
+  const g = svgEl("g", { class: cls });
+  g.append(svgEl("rect", { class: "frame", x: 1, y: 1, width: 24, height: 14, rx: 4 }));
+  s.append(g);
+});
+let keyMarker = 0;
+const miniLine = (cls) => mini(32, 12, (s) => {
+  const id = "keyarrow" + keyMarker++;
+  const m = svgEl("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+  m.append(svgEl("path", { d: "M0,1 L9,5 L0,9 z", fill: "context-stroke" }));
+  const defsEl = svgEl("defs");
+  defsEl.append(m);
+  const g = svgEl("g", { class: "edge " + cls });
+  g.append(svgEl("path", { d: "M3,6 H29", "marker-end": `url(#${id})`, ...(cls.includes("both") ? { "marker-start": `url(#${id})` } : {}) }));
+  s.append(defsEl, g);
+});
+const miniEnv = () => mini(34, 18, (s) => s.append(envPill("env", 1, 0.5, "")));
+const miniBadge = () => mini(34, 18, (s) => {
+  const g = svgEl("g", { class: "sym" }), b = svgEl("g", { class: "badge" }), t = svgEl("text", { x: 6, y: 13 });
+  t.textContent = "✓ 3";
+  b.append(svgEl("rect", { width: textW("✓ 3", 600, 11) + 12, height: 18, rx: 9 }), t);
+  g.append(b);
+  s.append(g);
+});
+
 function legendFromDiagram(svg) {
+  lastDiagram = svg;
   const lg = document.getElementById("legend");
   lg.replaceChildren();
   const has = (sel) => !!svg.querySelector(sel);
-  if (legendInside) {
-    lg.append(swatch(`area role-${legendInside.role}`, `Inside ${legendInside.name}`), swatch("area outside", "Outside"));
-    lg.append(el("div", "rule"));
+  const sections = [];
+  const sec = (title, rows) => { if (rows.length) sections.push([title, rows]); };
+  sec("Area", legendInside ? [[miniArea(`boundary role-${legendInside.role}`), `Inside ${legendInside.name}`], [miniArea("outside-area"), "Outside"]] : []);
+  sec("Parts", [
+    ...Object.entries(ROLES).filter(([k]) => has(`.node.role-${k}, .group.role-${k}, .boundary.role-${k} .sym:not(.ghost)`)).map(([k, label]) => [miniBox(`node role-${k}`, true), label]),
+    ...(has(".sym.ghost, .group") ? [[miniBox("sym ghost"), "In another concept"]] : []),
+  ]);
+  sec("Outside systems", Object.entries(KINDS).filter(([k]) => has(`.kind-${k}`)).map(([k, label]) => [miniBox(`node ext kind-${k}`), label]));
+  sec("Lines", [
+    has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)") && [miniLine(""), "Uses or calls"],
+    has(".edge.port, .edge.ghosted") && [miniLine("port"), "Crosses the boundary"],
+    has(".edge.integration") && [miniLine("integration"), "Integration point"],
+    has(".edge.both") && [miniLine("both"), "Both directions"],
+    has(".edge.reexport") && [miniLine("call ghosted reexport"), "Re-export"],
+  ].filter(Boolean));
+  sec("Markers", [
+    has(".env") && [miniEnv(), "Env vars read"],
+    has(".badge") && [miniBadge(), "Linked tests (static links, not results)"],
+  ].filter(Boolean));
+  lg.hidden = !sections.length;
+  if (!sections.length) return;
+  if (keyCollapsed()) {
+    const pill = el("button", "key-pill", "Key");
+    pill.type = "button";
+    pill.title = "Show the key";
+    pill.onclick = () => { setKeyCollapsed(false); legendFromDiagram(svg); };
+    lg.append(pill);
+    return;
   }
-  for (const [k, label] of Object.entries(ROLES)) if (has(`.node.role-${k}, .group.role-${k}, .boundary.role-${k} .sym:not(.ghost)`)) lg.append(swatch("role-" + k, label));
-  for (const [k, label] of Object.entries(KINDS)) if (has(`.kind-${k}`)) lg.append(swatch("ext kind-" + k, label));
-  if (has(".sym.ghost, .group")) lg.append(swatch("ghost", "In another concept"));
-  const lines = [];
-  if (has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)")) lines.push(["solid", "Uses or calls"]);
-  if (has(".edge.port, .edge.ghosted")) lines.push(["dotted", "Crosses the boundary"]);
-  if (has(".edge.integration")) lines.push(["integration", "Integration point"]);
-  if (has(".edge.both")) lines.push(["both", "Both directions"]);
-  if (has(".edge.reexport")) lines.push(["reexport", "Re-export"]);
-  if (lines.length) lg.append(el("div", "rule"));
-  for (const [cls, label] of lines) lg.append(lineKey(cls, label));
-  if (has(".badge")) { const k = el("div", "key"); k.append(el("span", "testkey", "✓ 3"), el("span", "", "Linked tests (static links, not results)")); lg.append(k); }
-  if (has(".env")) { const k = el("div", "key"); k.append(el("span", "envkey", "env"), el("span", "", "Env vars read")); lg.append(k); }
-  lg.hidden = !lg.childElementCount;
-}
-
-function legend(items, integration, ghosts, env, inside) {
-  const lg = document.getElementById("legend");
-  lg.replaceChildren();
-  if (inside) {
-    lg.append(swatch(`area role-${inside.role}`, `Inside ${inside.name}`), swatch("area outside", "Outside"));
-    lg.append(el("div", "rule"));
+  const card = el("div", "key-card"), head = el("div", "key-head"), grid = el("div", "key-grid");
+  const fold = el("button", "", "–");
+  fold.type = "button";
+  fold.title = "Hide the key";
+  fold.setAttribute("aria-label", "Hide the key");
+  fold.onclick = () => { setKeyCollapsed(true); legendFromDiagram(svg); };
+  head.append(el("strong", "", "Key"), fold);
+  for (const [title, rows] of sections) {
+    grid.append(el("div", "key-title", title));
+    for (const [sw, label] of rows) {
+      const cell = el("div", "key-sw");
+      cell.append(sw);
+      grid.append(cell, el("div", "key-label", label));
+    }
   }
-  const roles = new Set(items.filter((c) => !c.ext).map((c) => c.role));
-  const kinds = new Set(items.filter((c) => c.ext).map((c) => c.kind));
-  for (const [k, label] of Object.entries(ROLES)) if (roles.has(k)) lg.append(swatch("role-" + k, label));
-  for (const [k, label] of Object.entries(KINDS)) if (kinds.has(k)) lg.append(swatch("ext kind-" + k, label));
-  if (integration) lg.append(lineKey("integration", "Integration point"));
-  if (ghosts) lg.append(swatch("ghost", "In another concept"));
-  if (env || items.some((c) => envOf(c).length)) { const k = el("div", "key"); k.append(el("span", "envkey", "env"), el("span", "", "Env vars read")); lg.append(k); }
-  lg.hidden = !lg.childElementCount;
+  card.append(head, grid);
+  lg.append(card);
 }
 
-function swatch(cls, label) {
-  const li = el("div", "key");
-  li.append(el("span", "sw " + cls), el("span", "", label));
-  return li;
-}
-
-function lineKey(cls, label) {
-  const li = el("div", "key");
-  li.append(el("span", "ln " + cls), el("span", "", label));
-  return li;
-}
+function clearKey() { document.getElementById("legend").hidden = true; }
 
 // ---------- camera: zoom and pan by moving the SVG viewBox, so text stays vector-crisp ----------
 
@@ -1067,14 +1114,13 @@ function stageSize() {
   return { w: s.width || 800, h: s.height || 600 };
 }
 
-// Fit the content into the stage, keeping clear of the legend on the left.
-// Fit the content into the stage, keeping clear of the legend (left when it is a column, top when a row).
+// Fit the content into the stage, keeping clear of the key card.
 // With minK, a map too big to fit stays readable and opens on the selection or its top-left corner instead.
 function fitCam(minK = 0) {
   const s = stageSize(), pad = 48;
+  // The key card sits bottom-left over the canvas: keep the map clear of it while it is open.
   const lg = document.getElementById("legend");
-  const row = !lg.hidden && lg.offsetWidth > lg.offsetHeight * 2;
-  const left = lg.hidden || row ? 0 : lg.offsetWidth + 16, top = row ? lg.offsetHeight + 16 : 0;
+  const left = lg.hidden || !lg.querySelector(".key-card") ? 0 : lg.offsetWidth + 16, top = 0;
   let k = Math.min(1.4, (s.w - left - pad) / content.w, (s.h - top - pad) / content.h);
   if (k < minK) {
     k = minK;
