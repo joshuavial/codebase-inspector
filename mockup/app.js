@@ -264,12 +264,12 @@ function drawConcepts(f, enter) {
       title: `${first.title}\n${second.title}`,
     });
   }
-  if (f) {
-    // An outside concept linked to several inner boxes the same way gets one line, with its labels
-    // on its own box so each label stays attached; hovering the box lights up the inner boxes.
+  {
+    // An outside concept or system linked to several inner boxes the same way gets one line, with its
+    // labels on its own box so each label stays attached; hovering the box lights up the inner boxes.
     const bundles = {};
     for (const e of elkEdges) {
-      if (e.cls !== "port") continue;
+      if (e.cls !== "port" && e.cls !== "integration") continue;
       const incoming = shown.has(e.b), other = incoming ? e.a : e.b;
       (bundles[other + (incoming ? ">in" : ">out")] ||= []).push(e);
     }
@@ -277,16 +277,20 @@ function drawConcepts(f, enter) {
       if (es.length < 2) continue;
       const incoming = key.endsWith(">in"), other = key.split(">")[0];
       const node = outsideNodes.find((n) => n.id === other);
+      const integration = es[0].cls === "integration";
       const labels = [...new Set(es.flatMap((e) => e.title.split("\n")))];
-      const text = labels.slice(0, 3).join(", ") + (labels.length > 3 ? ` +${labels.length - 3}` : "");
-      node.lines = wrap(text, 200, 12, 3);
+      const vias = [...new Set(es.flatMap((e) => (e.via || "").split(" · ")).filter(Boolean))];
+      const text = labels.slice(0, 3).join(", ") + (labels.length > 3 ? ` +${labels.length - 3}` : "") + (vias.length ? ` (${vias.join(", ")})` : "");
+      const ctx = node.cls.includes("ctx");
       node.w = Math.max(node.w, 232);
-      node.h = 40 + node.lines.length * 16;
+      const summary = ctx ? [] : wrap(byId[other].summary, node.w - 32, 12, 1);
+      node.lines = [...summary, ...wrap(text, node.w - 32, 12, 3)];
+      node.h = (ctx ? 40 : 46) + node.lines.length * 16;
       node.touches = [...(node.touches || []), ...es.map((e) => (incoming ? e.b : e.a))];
-      node.cls = node.cls.replace("ctx", "ctx bundled");
+      node.cls = node.cls.replace(ctx ? "ctx" : "node", ctx ? "ctx bundled" : "node bundled");
       const inner = es.map((e) => (incoming ? e.b : e.a));
       elkEdges = elkEdges.filter((e) => !es.includes(e));
-      elkEdges.push({ id: "b" + key, a: incoming ? other : inner[0], b: incoming ? inner[0] : other, cls: "port bundle", bundle: inner, title: labels.join("\n") });
+      elkEdges.push({ id: "b" + key, a: incoming ? other : inner[0], b: incoming ? inner[0] : other, cls: (integration ? "integration" : "port") + " bundle", bundle: inner, title: labels.join("\n") });
     }
   }
   const onClick = (id) => {
@@ -651,7 +655,8 @@ async function layout(nodes, edges, opt, onClick, enter, onDbl) {
       layoutOptions: { "elk.padding": "[top=40,left=20,bottom=20,right=20]" },
     } : {}),
   });
-  const graph = { id: "root", layoutOptions: elkOptions(opt), children: nodes.map(toElk), edges: edges.map(elkEdge) };
+  const a = availSize();
+  const graph = { id: "root", layoutOptions: { ...elkOptions(opt), "elk.aspectRatio": String(a.w / a.h) }, children: nodes.map(toElk), edges: edges.map(elkEdge) };
   let out;
   try { out = await elk.layout(graph); } catch (err) { return empty("Layout failed: " + err.message); }
   render(out, nodes, edges, onClick, enter, onDbl);
@@ -684,61 +689,133 @@ function labelBox(e) {
 }
 const elkEdge = (e) => ({ id: e.id, sources: [e.a], targets: [e.b], labels: e.text || e.via ? [{ text: e.text || "", ...labelBox(e) }] : [] });
 
-// Two passes, so the inside of a concept lays out on its own while its connections to the outside
-// enter on the left (incoming) and leave on the right (outgoing). Pass 1 lays out the inside; pass 2
-// places the outside around the boundary as one fixed box with a port at the height of each inner box.
+// ELK lays out the inside of a concept; the outside is placed here around it. Dependencies read left to
+// right: whatever calls in sits on the left, whatever is called on the right, each box level with the
+// inner boxes it connects to, and anything that does not fit beside the boundary goes in a row below
+// it. Labels sit next to the box their line ends at. The inside is tried unwrapped, wrapped into rows
+// (ELK wrapping at several aspect targets) and top to bottom; whichever scales largest into the stage
+// wins, with a preference for unwrapped left to right.
 async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   const inner = new Set(boundary.children.map((n) => n.id));
   const insideEdges = edges.filter((e) => inner.has(e.a) && inner.has(e.b));
   const crossing = edges.filter((e) => inner.has(e.a) !== inner.has(e.b));
-  let p1, p2;
-  try {
-    p1 = await elk.layout({
-      id: "inner", layoutOptions: elkOptions({ dir: "RIGHT", layer: 30, gap: 24 }),
-      children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h })), edges: insideEdges.map(elkEdge),
-    });
-    const OX = 8, OY = 28, W = p1.width + 2 * OX, H = p1.height + OY + 8;
+  const OX = 8, OY = 28, GAP = 18, LANE = 18;
+  const avail = availSize();
+  const size = Object.fromEntries(outside.map((n) => [n.id, n]));
+  const otherEnd = (e) => (inner.has(e.b) ? e.a : e.b);
+  const side = {};
+  for (const e of crossing) if (inner.has(e.b)) side[e.a] = "left"; else side[e.b] ||= "right";
+  for (const n of outside) side[n.id] ||= "right";
+  const labelOf = (o) => Math.max(0, ...crossing.filter((e) => otherEnd(e) === o).map((e) => labelBox(e).width));
+
+  const place = (p1) => {
     const at = Object.fromEntries(p1.children.map((n) => [n.id, n]));
-    const used = {};
-    const ports = crossing.map((e, i) => {
-      const incoming = inner.has(e.b), n = at[incoming ? e.b : e.a];
-      const key = (incoming ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
-      const mid = e.bundle ? e.bundle.reduce((t, id) => t + at[id].y + at[id].height / 2, 0) / e.bundle.length : n.y + n.height / 2;
-      const y = OY + mid + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
-      return { id: "port" + i, width: 1, height: 1, x: incoming ? 0 : W - 1, y, layoutOptions: { "elk.port.side": incoming ? "WEST" : "EAST" } };
-    });
-    p2 = await elk.layout({
-      id: "root", layoutOptions: { ...elkOptions({ dir: "RIGHT", layer: 36, gap: 20 }), "elk.hierarchyHandling": "SEPARATE_CHILDREN" },
-      children: [
-        { id: "boundary", width: W, height: H, ports, layoutOptions: { "elk.portConstraints": "FIXED_POS" } },
-        ...outside.map((n) => ({ id: n.id, width: n.w, height: n.h })),
-      ],
-      edges: crossing.map((e, i) => elkEdge({ ...e, a: inner.has(e.a) ? "port" + i : e.a, b: inner.has(e.b) ? "port" + i : e.b })),
-    });
-    // Stitch into one result in root coordinates, as render() expects.
-    const b = p2.children.find((n) => n.id === "boundary");
-    const dx = b.x + OX, dy = b.y + OY;
+    const W = p1.width + 2 * OX, H = p1.height + OY + 8;
+    const ends = (e) => (e.bundle || [inner.has(e.b) ? e.b : e.a]).map((id) => at[id]);
+    const want = {};
+    for (const n of outside) {
+      const ns = crossing.filter((e) => otherEnd(e) === n.id).flatMap(ends);
+      want[n.id] = ns.length
+        ? { x: OX + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length, y: OY + ns.reduce((t, k) => t + k.y + k.height / 2, 0) / ns.length }
+        : { x: W / 2, y: H / 2 };
+    }
+    const below = [];
+    const column = (ids) => {
+      ids.sort((p, q) => want[p].y - want[q].y);
+      const out = [];
+      let y = 0;
+      for (const id of ids) {
+        const top = Math.max(want[id].y - size[id].h / 2, y);
+        if (top + size[id].h > H + 40 && out.length) { below.push(id); continue; }
+        out.push([id, top]);
+        y = top + size[id].h + GAP;
+      }
+      return out;
+    };
+    const left = column(outside.filter((n) => side[n.id] === "left").map((n) => n.id));
+    const right = column(outside.filter((n) => side[n.id] === "right").map((n) => n.id));
+    const colW = (list) => Math.max(0, ...list.map(([id]) => size[id].w));
+    const labW = (list) => Math.max(0, ...list.map(([id]) => labelOf(id)));
+    const bx = left.length ? colW(left) + labW(left) + 2 * LANE + 8 : 0, by = 0;
+    const pos = {};
+    for (const [id, top] of left) pos[id] = { x: bx - 2 * LANE - 8 - labW(left) - size[id].w, y: top };
+    const rx = bx + W + (right.length ? labW(right) + 2 * LANE + 8 : 0);
+    for (const [id, top] of right) pos[id] = { x: rx, y: top };
+    below.sort((p, q) => want[p].x - want[q].x);
+    let x = bx;
+    const rowY = by + H + 70;
+    for (const id of below) {
+      const lx = Math.max(bx + want[id].x - size[id].w / 2, x);
+      pos[id] = { x: lx, y: rowY };
+      x = lx + Math.max(size[id].w, labelOf(id) + 12) + GAP;
+    }
+    const all = outside.map((n) => [pos[n.id].x + size[n.id].w, pos[n.id].y + size[n.id].h]);
+    const width = Math.max(bx + W, ...all.map((p) => p[0])), height = Math.max(by + H, ...all.map((p) => p[1]));
+    return { p1, at, W, H, bx, by, pos, below: new Set(below), width, height };
+  };
+
+  const layoutInside = (dir, wrapping, ratio) => elk.layout({
+    id: "inner",
+    layoutOptions: { ...elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
+    children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h })), edges: insideEdges.map(elkEdge),
+  });
+
+  try {
+    const tries = [];
+    // Bias: unwrapped left to right is preferred; top to bottom must scale 10% better and wrapping
+    // (which adds long return loops between rows) 25% better before either is chosen.
+    const modes = [["RIGHT", null, 1, 1], ...["MULTI_EDGE", "SINGLE_EDGE"].flatMap((w) => [0.5, 0.8, 1.1].map((r) => ["RIGHT", w, r, 1.25])), ["DOWN", null, 1, 1.1]];
+    for (const [dir, w, r, bias] of modes) {
+      try { tries.push({ dir, wrapping: w, ratio: r, bias, ...place(await layoutInside(dir, w, r)) }); } catch { /* a wrapping mode ELK cannot apply here */ }
+    }
+    const score = (t) => Math.min(avail.w / t.width, avail.h / t.height) / t.bias; // must beat unwrapped by its bias
+    const best = tries.reduce((p, q) => (score(q) > score(p) ? q : p));
+    const { p1, at, W, H, bx, by, pos } = best;
+    document.getElementById("diagram").dataset.layout = best.dir === "DOWN" ? "down" : best.wrapping ? `${best.wrapping} ${best.ratio}` : "unwrapped";
+
+    const dx = bx + OX, dy = by + OY;
     const shift = (p) => ({ x: p.x + dx, y: p.y + dy });
-    const outEdges = [
-      ...p1.edges.map((e) => ({ ...e, sections: (e.sections || []).map((s) => ({ startPoint: shift(s.startPoint), endPoint: shift(s.endPoint), bendPoints: (s.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) })),
-      ...p2.edges.map((e, i) => {
-        const ce = crossing[i], incoming = inner.has(ce.b), n = at[incoming ? ce.b : ce.a];
-        const s = e.sections[0];
-        // Carry the stub from the port on to the inner box's side, unless another box is in the way;
-        // then it stops at the boundary (hovering the box still highlights it).
-        const y = incoming ? s.endPoint.y - dy : s.startPoint.y - dy;
-        const [x0, x1] = incoming ? [0, n.x] : [n.x + n.width, p1.width + OX];
-        const blocked = ce.bundle || p1.children.some((k) => k !== n && y > k.y - 4 && y < k.y + k.height + 4 && k.x < x1 && k.x + k.width > x0);
-        const sections = blocked ? e.sections : [incoming
-          ? { startPoint: s.startPoint, bendPoints: [...(s.bendPoints || []), s.endPoint], endPoint: { x: dx + n.x, y: s.endPoint.y } }
-          : { startPoint: { x: dx + n.x + n.width, y: s.startPoint.y }, bendPoints: [s.startPoint, ...(s.bendPoints || [])], endPoint: s.endPoint }];
-        return { ...e, id: ce.id, sections };
-      }),
-    ];
+    const used = {};
+    const crossEdges = crossing.map((e) => {
+      const o = otherEnd(e), incoming = inner.has(e.b), box = { ...pos[o], w: size[o].w, h: size[o].h };
+      const ns = (e.bundle || [incoming ? e.b : e.a]).map((id) => at[id]);
+      const n = ns[0], lb = labelBox(e);
+      const cy = box.y + box.h / 2, cx = box.x + box.w / 2;
+      let pts, label;
+      if (best.below.has(o)) {
+        // Below the boundary: drop from the inner box's column, then across to the box.
+        const sx = dx + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length, edgeY = by + H, laneY = edgeY + 22;
+        pts = [{ x: sx, y: edgeY }, { x: sx, y: laneY }, { x: cx, y: laneY }, { x: cx, y: box.y }];
+        if (incoming) pts.reverse();
+        label = { x: cx + 6, y: box.y - lb.height - 4 };
+      } else {
+        const key = (incoming ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
+        const py = dy + ns.reduce((t, q) => t + q.y + q.height / 2, 0) / ns.length + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
+        const edgeX = incoming ? bx : bx + W, laneX = incoming ? bx - LANE : bx + W + LANE;
+        // Run on into the inner box when nothing else is in the way.
+        const y0 = py - dy, [x0, x1] = incoming ? [0, n.x] : [n.x + n.width, p1.width + OX];
+        const blocked = e.bundle || p1.children.some((q) => q !== n && y0 > q.y - 4 && y0 < q.y + q.height + 4 && q.x < x1 && q.x + q.width > x0);
+        const innerX = incoming ? dx + n.x : dx + n.x + n.width, boxX = incoming ? box.x + box.w : box.x;
+        pts = [...(blocked ? [] : [{ x: innerX, y: py }]), { x: edgeX, y: py }, { x: laneX, y: py }, { x: laneX, y: cy }, { x: boxX, y: cy }];
+        if (incoming) pts.reverse();
+        label = { x: incoming ? box.x + box.w + 4 : box.x - lb.width - 4, y: cy - lb.height - 2 };
+      }
+      pts = pts.filter((p, i) => i === 0 || p.x !== pts[i - 1].x || p.y !== pts[i - 1].y);
+      return {
+        id: e.id, sections: [{ startPoint: pts[0], endPoint: pts[pts.length - 1], bendPoints: pts.slice(1, -1) }],
+        labels: e.text || e.via ? [{ text: e.text || "", ...label, ...lb }] : [],
+      };
+    });
     const out = {
-      width: p2.width, height: p2.height, edges: outEdges,
-      children: p2.children.map((n) => n.id !== "boundary" ? n
-        : { ...n, children: p1.children.map((k) => ({ ...k, x: k.x + OX, y: k.y + OY })) }),
+      width: best.width, height: best.height,
+      edges: [
+        ...p1.edges.map((e) => ({ ...e, sections: (e.sections || []).map((q) => ({ startPoint: shift(q.startPoint), endPoint: shift(q.endPoint), bendPoints: (q.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) })),
+        ...crossEdges,
+      ],
+      children: [
+        { id: "boundary", x: bx, y: by, width: W, height: H, children: p1.children.map((k) => ({ ...k, x: k.x + OX, y: k.y + OY })) },
+        ...outside.map((n) => ({ id: n.id, x: pos[n.id].x, y: pos[n.id].y, width: n.w, height: n.h })),
+      ],
     };
     render(out, [boundary, ...outside], edges, onClick, enter, onDbl);
   } catch (err) { return empty("Layout failed: " + err.message); }
@@ -1107,6 +1184,12 @@ let anim = null;
 function setCam(c) {
   cam = c;
   document.getElementById("diagram").setAttribute("viewBox", `${c.x} ${c.y} ${c.w} ${c.h}`);
+}
+
+// The space a fitted map gets: the stage less padding and the open key card.
+function availSize() {
+  const s = stageSize();
+  return { w: s.w - 48 - (keyCollapsed() ? 0 : 252), h: s.h - 48 };
 }
 
 function stageSize() {
