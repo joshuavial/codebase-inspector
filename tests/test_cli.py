@@ -25,7 +25,7 @@ def test_prime_prints_not_initialised_guide(make_repo, monkeypatch, capsys):
 
 
 def test_stub_exits_2(capsys):
-    assert main(["scan"]) == 2
+    assert main(["build"]) == 2
     assert "not implemented yet" in capsys.readouterr().err
 
 

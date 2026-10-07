@@ -78,13 +78,21 @@ One SQLite file per mapped repo at `.cbi/model.db`.
 
 **search**: FTS5 table over `name`, `display_kind`, `path`, `signature`, `doc`, `summary`.
 
+Enumeration details settled in deliverable 2:
+
+- File nodes have `display_kind` `source file`, `test file`, `doc`, `file` (anything else) or `symlink`, and `attrs.role` (`code`, `test`, `doc`, `other`). Markdown gets `kind` `doc`.
+- A workspace node's `workspace_id` and `path` refer to its parent workspace (the mount path). `attrs.root` is its path from the top repo, and `attrs.remote` is the normalised remote, never the raw URL, so credentials in a URL are not stored.
+- `file_state.path` is relative to the top repo. A `meta` table holds the no-change fingerprint (ignore file, `structure.json`, parser version, every workspace's pinned and checked-out commit).
+- The schema version is SQLite's `user_version`. On a mismatch the model is dropped and rebuilt, since it is derived from the repo and answers live in the shared cache.
+- `.cbi/ignore` patterns match paths from the top repo root, so they reach into submodules. An ignored submodule path skips the whole submodule.
+
 **Structure overrides**: `.cbi/structure.json`, written only by accepted `confirm-structure` answers and editable by hand. It lists deployables (name, display kind, source entry points) and packages (name, directory) to add, rename or remove. It is applied at the start of manifest detection on every scan, so a correction outlives rescans.
 
 ### Node IDs
 
 IDs are stable across scans and machines, which PRD-02 needs for diffing.
 
-- workspace: the normalised remote, `host/owner/repo` lowercased, with scheme, user, port and `.git` removed. `git@github.com:xenota-collective/xenon.git` and `https://github.com/xenota-collective/xenon` both become `github.com/xenota-collective/xenon`. With no remote: `local:<dirname>`. Commits are data on the workspace node, never part of the ID, so the same submodule in two superprojects shares IDs.
+- workspace: the normalised remote, `host/owner/repo` lowercased, with scheme, user, port and `.git` removed. `git@github.com:xenota-collective/xenon.git` and `https://github.com/xenota-collective/xenon` both become `github.com/xenota-collective/xenon`. With no remote: `local:<dirname>`. A local path or `file://` remote also gives `local:<repo dir name>`, so IDs do not depend on the machine. A relative `.gitmodules` URL (`../lib.git`) is resolved against the parent's `origin` first. Commits are data on the workspace node, never part of the ID, so the same submodule in two superprojects shares IDs.
 - file / doc: `<workspace>:<repo-relative path>`.
 - symbol / test case: `<file id>#<qualified name>` (`#DeviceRegistry.revoke`). Two definitions with the same qualified name get a suffix from the first 8 hex characters of a hash of their signature text; only definitions with identical signatures fall back to `~2`, `~3` by source order.
 - group: `<workspace>:<dir>/`. deployable and package: `<workspace>:deployable:<name>` / `:package:<name>`. A renamed deployable keeps its old ID in `structure.json` as `id`, so the agent's rename does not change it.
@@ -93,7 +101,7 @@ IDs are stable across scans and machines, which PRD-02 needs for diffing.
 
 1. **Enumerate** (`files.py`). `git ls-files` per workspace gives the tracked path list; `git submodule status` gives submodules, pinned commit and drift. Content identity comes from the working tree, not the index: each file is `stat`ed, and only when `mtime_ns` or `size` differ from `file_state` is it read and hashed (sha1 of bytes). This catches unstaged edits. Tracked symlinks are recorded as file nodes and never followed. `.cbi/ignore` (gitignore syntax) filters paths.
 2. **No-change shortcut.** If no file was added, removed or rehashed to a new value, the ignore file and `structure.json` are unchanged, every workspace's checked-out commit is unchanged, and the parser version is unchanged, the scan stops here.
-3. **Classify.** By extension and path: code (Python, TS, TSX, JS), doc (markdown), test (by name pattern and framework), other (file node only). `init` writes `.cbi/ignore` from heuristics: directories named `fixtures`, `evals`, `test-data`, `dist*`, `build`; files with minified-looking lines; directories over 200 files that are more than 90% data (json, txt, csv, jsonl). Doc collapse is presentation only: a directory over 100 files that is at least 90% markdown becomes a `doc collection` node. Everything inside is still enumerated, parsed if code, and searchable; the viewer loads its children on demand.
+3. **Classify.** By extension and path: code (Python, TS, TSX, JS), doc (markdown), test (by name pattern and framework), other (file node only). `init` writes `.cbi/ignore` from heuristics: directories named `fixtures`, `evals`, `test-data`, `dist*`, `build`; files with minified-looking lines; directories over 200 files that are more than 90% data (json, txt, csv, jsonl). Doc collapse is presentation only: a directory over 100 files where at most 10% are code and at least half are markdown becomes a `doc collection` node (the outermost such directory wins). The first rule, at least 90% markdown, missed xenota's `docs/research` at 89.9%, because research artefacts (`.out`, `.log`, `.jsonl`) fill the rest. Everything inside is still enumerated, parsed if code, and searchable; the viewer loads its children on demand.
 4. **Manifests** (`manifests.py`). Apply `structure.json`, then one rule per manifest type returns deployables, packages and `depends_on` edges. Entry points are mapped back to source:
    - Build output: a path under a tsconfig `outDir` maps to the matching `.ts`/`.tsx` under its `rootDir`. `package.json` `main`, `bin` and script commands that run `node <path>` go through this map.
    - Vite: the `index.html` at the config's `root` (default the config's directory) is read and its `<script type="module" src>` entries become the entry points.
