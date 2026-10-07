@@ -97,7 +97,6 @@ function route() {
   restore = refit ? null : !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   refit = false;
   crumbs();
-  context();
   const f = view.focus && byId[view.focus];
   const from = first ? null : last.focus;
   last = { focus: view.focus, hash: location.hash };
@@ -152,13 +151,8 @@ function crumbs() {
   }
 }
 
-// The line under the breadcrumb: where this concept sits, who uses it, what it uses. Every name is a jump.
-function context() {
-  const bar = document.getElementById("context");
-  bar.replaceChildren();
-  const c = view.focus && byId[view.focus];
-  bar.hidden = !c;
-  if (!c) return;
+// Who uses the concept in view and what it uses, at the most specific level known.
+function usage(c) {
   const within = (id) => id === c.id || ancestors(id).includes(c.id);
   const level = (id) => project(id, parentOf[c.id]) || id; // the sibling-level box for an outside concept
   const usedBy = new Set(), uses = new Set();
@@ -178,26 +172,38 @@ function context() {
   }
   // Prefer the most specific name: drop a concept when one of its descendants is listed.
   const tidy = (set) => [...set].filter((id) => ![...set].some((o) => o !== id && ancestors(o).includes(id)));
-  const names = (ids) => {
-    const span = el("span");
-    const add = (list) => list.forEach((id) => {
-      if (span.childElementCount) span.append(", ");
-      const x = byId[id];
-      span.append(link(x.name, () => (x.ext ? go(view.focus, id) : jump(id, null, { force: true }))));
-    });
-    add(ids.slice(0, 4));
-    if (ids.length > 4) {
-      const more = link(`+${ids.length - 4} more`, () => { more.remove(); add(ids.slice(4)); bar.classList.add("open"); });
-      more.classList.add("more");
-      span.append(" ", more);
-    }
-    return span;
-  };
-  const parent = parentOf[c.id];
-  bar.append("Inside ", link(parent ? byId[parent].name : M.workspace, () => go(parent)));
-  const by = tidy(usedBy), to = tidy(uses);
-  if (by.length) bar.append(el("span", "sep", " · "), "used by ", names(by));
-  if (to.length) bar.append(el("span", "sep", " · "), "uses ", names(to));
+  return { by: tidy(usedBy), to: tidy(uses) };
+}
+
+// Two concepts match for hover linking when one contains the other.
+const related = (a, b) => a === b || ancestors(a).includes(b) || ancestors(b).includes(a);
+
+function linkHover(concept, on) {
+  for (const x of document.querySelectorAll("#diagram [data-concept], #drawer [data-concept]")) {
+    if (related(x.dataset.concept, concept)) x.classList.toggle("linked", on);
+  }
+}
+
+function usageList(d, title, ids) {
+  if (!ids.length) return;
+  d.append(el("h3", "", `${title} (${ids.length})`));
+  const ul = el("ul", "usage");
+  const add = (list) => list.forEach((id) => {
+    const x = byId[id], li = el("li");
+    li.dataset.concept = id;
+    li.append(el("span", "dot " + (x.ext ? `ext kind-${x.kind}` : `role-${x.role}`)));
+    li.append(link(x.name, () => (x.ext ? go(view.focus, id) : jump(id, null, { force: true }))));
+    if (x.ext) li.append(el("span", "tag", "external"));
+    li.onmouseenter = () => linkHover(id, true);
+    li.onmouseleave = () => linkHover(id, false);
+    ul.insertBefore(li, moreLi.isConnected ? moreLi : null);
+  });
+  const moreLi = el("li");
+  const more = link(`+${ids.length - 5} more`, () => { moreLi.remove(); add(ids.slice(5)); });
+  more.classList.add("more");
+  d.append(ul);
+  add(ids.slice(0, 5));
+  if (ids.length > 5) { moreLi.append(more); ul.append(moreLi); }
 }
 
 // ---------- concept diagrams ----------
@@ -822,6 +828,11 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     const m = meta[n.id];
     if (m.children) {
       const g = svgEl("g", { class: m.cls + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})` });
+      if (m.concept) {
+        g.dataset.concept = m.concept;
+        g.onmouseenter = () => linkHover(m.concept, true);
+        g.onmouseleave = () => linkHover(m.concept, false);
+      }
       g.append(svgEl("rect", { class: "frame", width: n.width, height: n.height, rx: 14 }));
       const t = svgEl("text", { class: "label", x: 16, y: 25 });
       t.textContent = m.label;
@@ -861,6 +872,12 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     g.onmouseenter = () => { hot(edgeEls, n.id, true); touch(m.touches, true); };
     g.onmouseleave = () => { hot(edgeEls, n.id, false); touch(m.touches, false); };
     g.dataset.id = n.id;
+    const concept = byId[n.id] ? n.id : m.cls.includes("ghost") && m.sym ? m.sym.concept : null;
+    if (concept && n.id !== view.focus) {
+      g.dataset.concept = concept;
+      g.addEventListener("mouseenter", () => linkHover(concept, true));
+      g.addEventListener("mouseleave", () => linkHover(concept, false));
+    }
     nodeG.append(g);
   }
   if (sel && symById[sel]) hot(edgeEls, sel, true);
@@ -1250,6 +1267,11 @@ function drawer() {
     return;
   }
   d.append(el("h2", "", c.name), el("p", "", c.summary));
+  if (!view.sel && c.id === view.focus) {
+    const u = usage(c);
+    usageList(d, "Used by", u.by);
+    usageList(d, "Uses", u.to);
+  }
   if (c.children) list(d, "Parts", c.children.map((k) => link(k.name, () => go(k.id))));
   integrationList(d, integrationPoints(c));
   if (!c.ext) envList(d, c);

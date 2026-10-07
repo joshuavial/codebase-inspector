@@ -284,9 +284,6 @@ main { flex: 1; display: flex; min-height: 0; }
 #debug { position: absolute; left: 16px; bottom: 16px; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 4px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--text); }
 #debug[hidden] { display: none; }
 #sketch .sketch-main { overscroll-behavior: none; }
-#context { padding: 6px 24px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--panel); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#context[hidden] { display: none; }
-#context .sep { color: var(--faint); }
 .sym.reexport rect.body { fill: var(--box); stroke: var(--faint); stroke-dasharray: 2 2; }
 .edge.reexport path { stroke-dasharray: 1 3; }
 
@@ -338,9 +335,6 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 #drawer .path button.link, #drawer button.link.path { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 #drawer button.overview { display: block; margin: -4px 0 14px; font-size: 12.5px; font-weight: 500; }
 #drawer p.hint { margin-top: 10px; font-size: 12.5px; }
-#context button.link { font-weight: 500; }
-#context button.more { color: var(--muted); font-weight: 400; }
-#context.open { white-space: normal; }
 .comp-panel .chip.link-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--link); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; background: var(--panel); }
 .comp-panel .tests.none { color: var(--muted); }
 
@@ -369,3 +363,12 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 #drawer button.link.path { color: var(--link); }
 .comp-panel summary { list-style: none; cursor: pointer; }
 .comp-panel summary h5 { display: inline-block; }
+
+/* drawer: used by / uses, hover-linked to the diagram */
+#drawer ul.usage li { display: flex; align-items: center; gap: 8px; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+#drawer ul.usage li.linked { background: var(--accent-soft); }
+#drawer ul.usage .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
+#drawer ul.usage .dot.ext { background: none; border: 1.5px dashed var(--c); }
+#drawer ul.usage .tag { font-size: 11px; color: var(--muted); }
+#drawer ul.usage button.more { color: var(--muted); font-weight: 400; }
+#diagram .linked rect.body, #diagram .linked rect.frame { stroke: var(--accent); stroke-width: 2; stroke-dasharray: none; }
