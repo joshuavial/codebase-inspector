@@ -18,6 +18,7 @@ let lateralHash = null; // where the last lateral jump landed, so Back can use b
 let glow = false; // highlight where we jumped from, until the next click in the stage
 let restore = null; // camera to reuse instead of fitting
 let glowTimer = null;
+let refit = false; // the same view changed shape (a group opened or closed): fit again instead of keeping the camera
 const camByHash = {};
 let camBeforeZoom = null; // the camera before a drill-in animation, which is what Back should restore
 
@@ -93,7 +94,8 @@ function route() {
   if (first) glow = !!view.from;
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
-  restore = !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  restore = refit ? null : !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  refit = false;
   crumbs();
   context();
   const f = view.focus && byId[view.focus];
@@ -139,9 +141,8 @@ function crumbs() {
   trail.forEach((id, i) => {
     if (i) nav.append(el("span", "sep", "›"));
     const lastCrumb = i === trail.length - 1;
-    const a = el(lastCrumb ? "span" : "a", lastCrumb ? "here" : "", id ? byId[id].name : M.workspace);
-    if (!lastCrumb) a.onclick = () => go(id);
-    nav.append(a);
+    const name = id ? byId[id].name : M.workspace;
+    nav.append(lastCrumb ? el("span", "here", name) : link(name, () => go(id)));
   });
   if (view.from) {
     const b = el("button", "back", `← Back to ${originName(view.from)}`);
@@ -179,11 +180,17 @@ function context() {
   const tidy = (set) => [...set].filter((id) => ![...set].some((o) => o !== id && ancestors(o).includes(id)));
   const names = (ids) => {
     const span = el("span");
-    ids.forEach((id, i) => {
-      if (i) span.append(", ");
+    const add = (list) => list.forEach((id) => {
+      if (span.childElementCount) span.append(", ");
       const x = byId[id];
       span.append(link(x.name, () => (x.ext ? go(view.focus, id) : jump(id, null, { force: true }))));
     });
+    add(ids.slice(0, 4));
+    if (ids.length > 4) {
+      const more = link(`+${ids.length - 4} more`, () => { more.remove(); add(ids.slice(4)); bar.classList.add("open"); });
+      more.classList.add("more");
+      span.append(" ", more);
+    }
     return span;
   };
   const parent = parentOf[c.id];
@@ -220,7 +227,7 @@ function conceptEdges(focus, shown) {
     const labels = [...new Set(p.exact.length ? p.exact : p.rolled)];
     const via = [...new Set(p.via)];
     return {
-      a: p.a, b: p.b, all: labels, via: via.length > 1 ? via[0] + " +" + (via.length - 1) : via[0],
+      a: p.a, b: p.b, all: labels, via: via.length ? via.join(" · ") : undefined,
       text: labels[0] + (labels.length > 1 ? `  +${labels.length - 1}` : ""),
     };
   });
@@ -240,6 +247,17 @@ function drawConcepts(f, enter) {
   const nodes = [boundary, ...outsideNodes];
   const kind = (e) => byId[e.a].ext || byId[e.b].ext ? "integration" : shown.has(e.a) && shown.has(e.b) ? "" : "port";
   let elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) }));
+  for (const e of [...elkEdges]) {
+    const twin = elkEdges.find((x) => x !== e && x.a === e.b && x.b === e.a);
+    if (!twin || !elkEdges.includes(e)) continue;
+    const [first, second] = shown.has(e.b) && !shown.has(e.a) ? [e, twin] : [twin, e];
+    elkEdges = elkEdges.filter((x) => x !== twin && x !== e);
+    elkEdges.push({
+      ...first, cls: first.cls + " both", text: `${first.text} / ${second.text}`,
+      via: [...new Set([first.via, second.via].filter(Boolean).join(" · ").split(" · "))].join(" · ") || undefined,
+      title: `${first.title}\n${second.title}`,
+    });
+  }
   if (f) {
     // An outside concept linked to several inner boxes the same way gets one line, with its labels
     // on its own box so each label stays attached; hovering the box lights up the inner boxes.
@@ -272,16 +290,15 @@ function drawConcepts(f, enter) {
     else if (lateral(id)) jump(id);
     else zoomInto(id, () => go(id));
   };
-  // Top level reads top to bottom with externals around it; inside a concept, outside links run left to right.
-  if (f) layoutBridged(boundary, nodes.slice(1), elkEdges, onClick, enter);
-  else layout(nodes, elkEdges, { dir: "DOWN", layer: 52, gap: 40 }, onClick, enter);
-  legend([...kids, ...[...outside].map((id) => byId[id])], edges.some((e) => kind(e) === "integration"), false, false, f);
+  // Every level reads left to right: callers on the left, callees on the right.
+  layoutBridged(boundary, nodes.slice(1), elkEdges, onClick, enter);
+  legendInside = f;
 }
 
 function box(c, cls) {
   const tone = c.ext ? "kind-" + c.kind : "role-" + c.role;
   if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}`, w: textW(c.name, 500, 14) + 36, h: 38, name: c.name, lines: [] };
-  const w = Math.max(cls === "ext" ? 190 : 230, textW(c.name, 600, 14) + 32);
+  const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
   const lines = wrap(c.summary, w - 32, 12, 3);
   const env = envOf(c).length;
   return { id: c.id, cls: `node ${cls} ${tone}`, w: w + (env ? 44 : 0), h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env };
@@ -383,11 +400,66 @@ function drawLeaf(c, enter) {
     edge(incoming ? other : "boundary", incoming ? "boundary" : other, "port", r.label);
   }
 
-  const inside = c.symbols.map((s) => symNode(s, ""));
+  // Big leaves open on their responsibilities rather than every helper (see clusterLeaf).
+  let inside = c.symbols.map((s) => symNode(s, ""));
+  const cl = clusterLeaf(c);
+  if (cl) {
+    const opened = (openClusters[c.id] ||= new Set());
+    const sel = view.sel && own.has(view.sel) ? view.sel : null;
+    const bucketOf = {};
+    for (const [b, v] of Object.entries(cl.buckets)) for (const id of v.members) bucketOf[id] = b;
+    const entryOf = {};
+    for (const [e, hs] of Object.entries(cl.helpers)) for (const h of hs) entryOf[h] = e;
+    // Whatever holds the selection opens, so a search hit or Back always lands on a visible node.
+    if (sel) {
+      const e = cl.entries.includes(sel) ? sel : entryOf[sel];
+      if (e && bucketOf[e]) opened.add(bucketOf[e]);
+      if (cl.shared.includes(sel)) opened.add("cluster:shared");
+      if (cl.lone.includes(sel)) opened.add("cluster:lone");
+    }
+    const repOf = {}, loose = [], boxes = {};
+    const put = (id, where) => (where ? (boxes[where] ||= []).push(id) : loose.push(id));
+    for (const e of cl.entries) {
+      const b = bucketOf[e];
+      if (b && !opened.has(b)) { repOf[e] = b; for (const h of cl.helpers[e] || []) repOf[h] = b; continue; }
+      put(e, b && "open:" + b);
+      const hs = cl.helpers[e] || [];
+      const show = sel === e || hs.includes(sel) || opened.has(e);
+      for (const h of hs) show ? put(h, b && "open:" + b) : (repOf[h] = e);
+    }
+    for (const id of Object.keys(repOf)) if (repOf[repOf[id]]) repOf[id] = repOf[repOf[id]];
+    for (const [key, ids, label] of [["cluster:shared", cl.shared, "shared helpers"], ["cluster:lone", cl.lone, "standalone"]]) {
+      if (!ids.length) continue;
+      if (opened.has(key)) ids.forEach((id) => put(id, "open:" + key));
+      else ids.forEach((id) => (repOf[id] = key));
+    }
+    const node = (id) => {
+      const s0 = symById[id], n = symNode(s0, "");
+      const k = (cl.helpers[id] || []).filter((h) => repOf[h] === id).length;
+      if (k) { n.kindText = `${s0.kind} · +${k} helper${k > 1 ? "s" : ""}`; n.w = Math.max(n.w, textW(n.kindText, 400, 11) + 28); }
+      return n;
+    };
+    const closed = (id, label, count) => ({ id, cls: "sym cluster", w: Math.max(textW(label, 500, 13, true), textW(`${count} functions · open`, 400, 11)) + 32, h: 46, name: label, sym: { kind: "", tests: [] }, kindText: `${count} functions · open`, toggle: true });
+    const labelOf = (key) => key.startsWith("bucket:") ? cl.buckets[key].label : key === "cluster:shared" ? "shared helpers" : "standalone";
+    inside = loose.map(node);
+    for (const [where, ids] of Object.entries(boxes)) inside.push({ id: where, cls: "group cluster-open", label: `${labelOf(where.slice(5))}  ▾`, toggle: true, children: ids.map(node) });
+    const counts = {};
+    for (const [id, r] of Object.entries(repOf)) if (!own.has(r)) counts[r] = (counts[r] || 0) + 1;
+    for (const [key, n] of Object.entries(counts)) inside.push(closed(key, labelOf(key), n));
+    for (const e of edges) { e.a = repOf[e.a] || e.a; e.b = repOf[e.b] || e.b; }
+    const seenE = new Set();
+    for (let i = edges.length - 1; i >= 0; i--) {
+      const e = edges[i], key = e.a + ">" + e.b;
+      if (e.a === e.b || seenE.has(key)) edges.splice(i, 1);
+      else seenE.add(key);
+    }
+  }
   if (typesOnly) inside.push({ id: "types", cls: "sym ghost more", w: 120, h: 32, name: "types only", more: "-" });
   const boundary = { id: "boundary", cls: `boundary role-${c.role}`, label: c.name, children: [...inside, ...rx] };
   const nodes = [boundary, ...groupNodes, ...ext.map((id) => box(byId[id], "ctx")), ...stubs.map((id) => box(byId[id], "ctx"))];
   layout(nodes, edges, { dir: "RIGHT", layer: 56, gap: 14 }, (id) => {
+    if (/^(bucket|cluster):/.test(id)) { openClusters[c.id].add(id); refit = true; return route(); }
+    if (id.startsWith("open:")) { openClusters[c.id].delete(id.slice(5)); refit = true; return route(); }
     if (own.has(id)) return go(view.focus, id, { v: view.mode });
     if (ghostById[id]) return go(view.focus, id, { v: view.mode }); // select; double-click jumps
     if (/^(more|imp|all):/.test(id)) return jump(id.slice(id.indexOf(":") + 1), null, { force: true });
@@ -395,7 +467,45 @@ function drawLeaf(c, enter) {
     if (byId[id] && byId[id].ext) return go(view.focus, id, { v: view.mode });
     if (byId[id]) return jump(id, null, { force: true });
   }, enter, (id) => { if (ghostById[id] && !own.has(id)) jump(ghostById[id].concept, id, { force: true }); });
-  legend([c, ...ext.map((id) => byId[id])], ext.length > 0, groupNodes.length > 0, c.symbols.some((s) => s.env), c);
+  legendInside = c;
+}
+
+// Responsibility groups for big leaves (agent-defined groups come later): an entry point is a function
+// called from outside the leaf, or one that calls into the leaf without being called. Each entry owns
+// the helpers only it reaches; helpers reached from several entries are "shared helpers"; functions
+// with no calls in or out are "standalone". Over 14 entries, entries are bucketed by file.
+const openClusters = {}; // leaf id -> opened groups, for this session
+function clusterLeaf(c) {
+  if (c.symbols.length <= 24) return null;
+  const own = new Set(c.symbols.map((s) => s.id));
+  const inn = c.calls.filter(([a, b]) => own.has(a) && own.has(b) && a !== b);
+  const called = new Set(inn.map((x) => x[1])), calls = new Set(inn.map((x) => x[0]));
+  const fromOutside = new Set(c.calls.filter(([a, b]) => !own.has(a) && own.has(b)).map((x) => x[1]));
+  const entries = c.symbols.map((s) => s.id).filter((id) => fromOutside.has(id) || (!called.has(id) && calls.has(id)));
+  const isEntry = new Set(entries);
+  const reach = {};
+  for (const r of entries) {
+    const seen = new Set([r]), stack = [r];
+    while (stack.length) {
+      const x = stack.pop();
+      for (const [a, b] of inn) if (a === x && !seen.has(b) && !isEntry.has(b)) { seen.add(b); stack.push(b); }
+    }
+    for (const x of seen) if (x !== r) (reach[x] ||= []).push(r);
+  }
+  const helpers = {}, shared = [], lone = [];
+  for (const s of c.symbols) {
+    if (isEntry.has(s.id)) continue;
+    const rs = reach[s.id];
+    if (!rs) lone.push(s.id);
+    else if (rs.length === 1) (helpers[rs[0]] ||= []).push(s.id);
+    else shared.push(s.id);
+  }
+  const buckets = {};
+  if (entries.length > 14) for (const id of entries) {
+    const f = symById[id].file.split("/").pop().replace(/\.[jt]sx?$/, "");
+    (buckets["bucket:" + f] ||= { label: f, members: [] }).members.push(id);
+  }
+  return { entries, helpers, shared, lone, buckets };
 }
 
 // ---------- UI sketch view ----------
@@ -474,6 +584,10 @@ function region(r, hl, inside) {
   if (r.component && symById[r.component]) {
     const s = symById[r.component];
     d.title = s.name;
+    d.tabIndex = 0;
+    d.setAttribute("role", "button");
+    d.setAttribute("aria-label", `${s.name} in ${s.leaf.name}`);
+    d.onkeydown = (ev) => { if (ev.target === d && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); d.onclick(ev); } };
     d.onclick = (ev) => { ev.stopPropagation(); jump(s.leaf.id, s.id, { force: true, extra: { w: view.screen } }); };
     if (on && r.layout === "column") d.append(el("span", "tag", s.name));
   }
@@ -492,23 +606,31 @@ function componentPanel(s) {
   const p = el("div", "comp-panel");
   if (!s) return p;
   p.append(el("h4", "", s.name));
-  const chips = (title, items, cls, onClick) => {
+  const chips = (title, items, cls, onClick, folded) => {
     if (!items.length) return;
-    p.append(el("h5", "", title));
+    let into = p;
+    if (folded) {
+      // Detail on demand: the list stays closed until asked for.
+      into = el("details");
+      const sum = el("summary");
+      sum.append(el("h5", "", `${title} (${items.length})`));
+      into.append(sum);
+      p.append(into);
+    } else p.append(el("h5", "", title));
     const row = el("div", "chips");
     for (const it of items) {
-      const c = el("span", "chip " + cls, onClick ? it.name : it);
-      if (onClick) c.onclick = () => onClick(it);
+      const c = onClick ? link(it.name, () => onClick(it)) : el("span", "chip " + cls, it);
+      if (onClick) c.className = "chip link-chip";
       row.append(c);
     }
-    p.append(row);
+    into.append(row);
   };
   chips("Props", s.props || [], "mono");
   const renders = s.leaf.calls.filter(([a, , v]) => a === s.id && v === "renders").map(([, b]) => symById[b]).filter(Boolean);
   chips("Renders", renders, "link", (x) => jump(x.leaf.id, x.id, { force: true }));
-  chips("Reads", s.reads || [], "mono");
+  chips("Reads", s.reads || [], "mono", null, true);
   const n = s.tests.length;
-  p.append(el("p", "tests", n ? `✓ ${n} linked test case${n > 1 ? "s" : ""}` : "No test links found"));
+  p.append(el("p", n ? "tests" : "tests none", n ? `✓ ${n} linked test case${n > 1 ? "s" : ""}` : "No test links found"));
   return p;
 }
 
@@ -547,9 +669,16 @@ function elkOptions(opt) {
   };
 }
 
-const elkEdge = (e) => ({ id: e.id, sources: [e.a], targets: [e.b], labels: e.text ? [{ text: e.text, width: labelW(e), height: 16 }] : [] });
+// Edge labels wrap to a narrow column so left-to-right layers stay close; the mechanism pill sits below.
+const LABEL_MAX = 100;
+function labelBox(e) {
+  if (!e.lines) e.lines = e.text ? wrap(e.text, LABEL_MAX, 11.5, 3) : [];
+  const viaW = e.via ? textW(e.via, 600, 10.5, true) + 12 : 0;
+  return { width: Math.max(viaW, ...e.lines.map((l) => textW(l, 400, 11.5))) + 6, height: e.lines.length * 13 + (e.via ? 19 : 0) + 2 };
+}
+const elkEdge = (e) => ({ id: e.id, sources: [e.a], targets: [e.b], labels: e.text || e.via ? [{ text: e.text || "", ...labelBox(e) }] : [] });
 
-// Two passes, so the inside of a concept reads top to bottom while its connections to the outside
+// Two passes, so the inside of a concept lays out on its own while its connections to the outside
 // enter on the left (incoming) and leave on the right (outgoing). Pass 1 lays out the inside; pass 2
 // places the outside around the boundary as one fixed box with a port at the height of each inner box.
 async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
@@ -559,7 +688,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   let p1, p2;
   try {
     p1 = await elk.layout({
-      id: "inner", layoutOptions: elkOptions({ dir: "DOWN", layer: 52, gap: 40 }),
+      id: "inner", layoutOptions: elkOptions({ dir: "RIGHT", layer: 30, gap: 24 }),
       children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h })), edges: insideEdges.map(elkEdge),
     });
     const OX = 8, OY = 28, W = p1.width + 2 * OX, H = p1.height + OY + 8;
@@ -573,7 +702,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       return { id: "port" + i, width: 1, height: 1, x: incoming ? 0 : W - 1, y, layoutOptions: { "elk.port.side": incoming ? "WEST" : "EAST" } };
     });
     p2 = await elk.layout({
-      id: "root", layoutOptions: { ...elkOptions({ dir: "RIGHT", layer: 64, gap: 24 }), "elk.hierarchyHandling": "SEPARATE_CHILDREN" },
+      id: "root", layoutOptions: { ...elkOptions({ dir: "RIGHT", layer: 36, gap: 20 }), "elk.hierarchyHandling": "SEPARATE_CHILDREN" },
       children: [
         { id: "boundary", width: W, height: H, ports, layoutOptions: { "elk.portConstraints": "FIXED_POS" } },
         ...outside.map((n) => ({ id: n.id, width: n.w, height: n.h })),
@@ -641,15 +770,19 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     const g = svgEl("g", { class: "edge " + (m.cls || "") });
     for (const s of e.sections || []) {
       const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
-      g.append(svgEl("path", { d: rounded(pts), "marker-end": `url(#${m.cls && m.cls.includes("integration") ? "arrow-int" : "arrow"})` }));
+      const arrow = `url(#${m.cls && m.cls.includes("integration") ? "arrow-int" : "arrow"})`;
+      g.append(svgEl("path", { d: rounded(pts), "marker-end": arrow, ...(m.cls && m.cls.includes("both") ? { "marker-start": arrow } : {}) }));
     }
     for (const l of e.labels || []) {
-      const t = svgEl("text", { x: l.x + 3, y: l.y + 12 });
-      t.textContent = l.text;
-      g.append(t);
+      if (!m.lines) labelBox(m); // edges re-pointed at ports were measured on a copy
+      m.lines.forEach((line, i) => {
+        const t = svgEl("text", { x: l.x + 3, y: l.y + 11 + i * 13 });
+        t.textContent = line;
+        g.append(t);
+      });
       if (m.via) {
-        const x = l.x + textW(l.text, 400, 11.5) + 10, w = textW(m.via, 600, 10.5, true) + 12;
-        const pill = svgEl("g", { class: "via", transform: `translate(${x},${l.y})` });
+        const x = l.x + 3, w = textW(m.via, 600, 10.5, true) + 12;
+        const pill = svgEl("g", { class: "via", transform: `translate(${x},${l.y + (m.lines || []).length * 13 + 2})` });
         const vt = svgEl("text", { x: 6, y: 12 });
         vt.textContent = m.via;
         pill.append(svgEl("rect", { width: w, height: 16, rx: 8 }), vt);
@@ -693,11 +826,17 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       const t = svgEl("text", { class: "label", x: 16, y: 25 });
       t.textContent = m.label;
       g.append(t);
-      if (m.concept) { g.classList.add("clickable"); t.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); }; }
+      if (m.concept || m.toggle) {
+        g.classList.add("clickable");
+        t.setAttribute("tabindex", 0);
+        t.setAttribute("role", "button");
+        t.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
+        t.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
+      }
       boxG.append(g);
       continue;
     }
-    const g = svgEl("g", { class: m.cls + (n.id === sel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0 });
+    const g = svgEl("g", { class: m.cls + (n.id === sel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": m.name || n.id });
     if (m.stack) g.append(svgEl("rect", { class: "stack", x: 4, y: 4, width: n.width, height: n.height, rx: 10 }));
     g.append(svgEl("rect", { class: "body", width: n.width, height: n.height, rx: m.sym ? 8 : 10 }));
     if (!m.sym && !m.cls.includes("ctx") && !m.cls.includes("ext")) g.append(svgEl("rect", { class: "stripe", width: 4, height: n.height - 16, x: 0, y: 8, rx: 2 }));
@@ -718,7 +857,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     if (sel && rects[sel] && symById[sel] && !near.has(n.id) && n.id !== sel) g.classList.add("dim");
     g.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
     g.ondblclick = (ev) => { ev.stopPropagation(); if (onDbl) onDbl(n.id); };
-    g.onkeydown = (ev) => { if (ev.key === "Enter") onClick(n.id); };
+    g.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
     g.onmouseenter = () => { hot(edgeEls, n.id, true); touch(m.touches, true); };
     g.onmouseleave = () => { hot(edgeEls, n.id, false); touch(m.touches, false); };
     g.dataset.id = n.id;
@@ -727,6 +866,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
   if (sel && symById[sel]) hot(edgeEls, sel, true);
   svg.onclick = () => { if (!moved && view.sel) go(view.focus, null, { v: view.mode }); };
 
+  legendFromDiagram(svg);
   content = { w: out.width, h: out.height };
   fit(false);
   const z = Number(new URLSearchParams(location.search).get("zoom")); // ?zoom=2 opens zoomed in, for screenshots
@@ -760,9 +900,9 @@ function drawSym(g, m, n) {
   g.append(name);
   if (m.more) return;
   const kind = svgEl("text", { class: "kind", x: 12, y: 36 });
-  kind.textContent = m.sym.kind;
+  kind.textContent = m.kindText || m.sym.kind;
   g.append(kind);
-  if (m.envText) g.append(envPill(m.envText, 12 + textW(m.sym.kind, 400, 11) + 8, 24, (m.sym.env || []).map(envName).join(", ")));
+  if (m.envText) g.append(envPill(m.envText, 12 + textW(m.kindText || m.sym.kind, 400, 11) + 8, 24, (m.sym.env || []).map(envName).join(", ")));
   if (m.badge) {
     const b = svgEl("g", { class: "badge", transform: `translate(${n.width - m.badge - 8},8)` });
     const t = svgEl("text", { x: 6, y: 13 });
@@ -836,6 +976,32 @@ function setStage(mode) {
 }
 
 // ---------- legend ----------
+
+// The key lists exactly what the current diagram draws: read back from the SVG after rendering.
+let legendInside = null;
+function legendFromDiagram(svg) {
+  const lg = document.getElementById("legend");
+  lg.replaceChildren();
+  const has = (sel) => !!svg.querySelector(sel);
+  if (legendInside) {
+    lg.append(swatch(`area role-${legendInside.role}`, `Inside ${legendInside.name}`), swatch("area outside", "Outside"));
+    lg.append(el("div", "rule"));
+  }
+  for (const [k, label] of Object.entries(ROLES)) if (has(`.node.role-${k}, .group.role-${k}, .boundary.role-${k} .sym:not(.ghost)`)) lg.append(swatch("role-" + k, label));
+  for (const [k, label] of Object.entries(KINDS)) if (has(`.kind-${k}`)) lg.append(swatch("ext kind-" + k, label));
+  if (has(".sym.ghost, .group")) lg.append(swatch("ghost", "In another concept"));
+  const lines = [];
+  if (has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)")) lines.push(["solid", "Uses or calls"]);
+  if (has(".edge.port, .edge.ghosted")) lines.push(["dotted", "Crosses the boundary"]);
+  if (has(".edge.integration")) lines.push(["integration", "Integration point"]);
+  if (has(".edge.both")) lines.push(["both", "Both directions"]);
+  if (has(".edge.reexport")) lines.push(["reexport", "Re-export"]);
+  if (lines.length) lg.append(el("div", "rule"));
+  for (const [cls, label] of lines) lg.append(lineKey(cls, label));
+  if (has(".badge")) { const k = el("div", "key"); k.append(el("span", "testkey", "✓ 3"), el("span", "", "Linked tests (static links, not results)")); lg.append(k); }
+  if (has(".env")) { const k = el("div", "key"); k.append(el("span", "envkey", "env"), el("span", "", "Env vars read")); lg.append(k); }
+  lg.hidden = !lg.childElementCount;
+}
 
 function legend(items, integration, ghosts, env, inside) {
   const lg = document.getElementById("legend");
@@ -1008,9 +1174,14 @@ function integrationPoints(c) {
   return M.relationships.filter((r) => r.at && (c && c.ext ? r.from === c.id || r.to === c.id : inside(r.from.startsWith("x.") ? r.to : r.from)));
 }
 
-function integrationList(d, points) {
+function integrationList(d, points, open = true) {
   if (!points.length) return;
-  d.append(el("h3", "", "Integration points"));
+  const det = el("details");
+  det.open = open;
+  const sum = el("summary");
+  sum.append(el("h3", "", `Integration points (${points.length})`));
+  det.append(sum);
+  d.append(det);
   const ul = el("ul", "ints");
   for (const r of points) {
     const li = el("li");
@@ -1020,18 +1191,26 @@ function integrationList(d, points) {
     head.append(nav(a), " → ", nav(b));
     const [file, fn] = r.at.split(":");
     const foot = el("div", "where");
-    foot.append(el("span", "pill", r.via), el("span", "path", `${file.split("/").pop()} · ${fn}`));
+    const where = `${file.split("/").pop()} · ${fn}`;
+    const sym = Object.values(symById).find((x) => x.file === file && x.name === fn);
+    foot.append(el("span", "pill", r.via), sym ? link(where, () => jump(sym.leaf.id, sym.id, { force: true })) : el("span", "path", where));
+    foot.lastChild.classList.add("path");
     foot.title = r.at;
     li.append(head, foot);
     ul.append(li);
   }
-  d.append(ul);
+  det.append(ul);
 }
 
-function envList(d, c) {
+function envList(d, c, open = true) {
   const env = c ? envOf(c) : M.concepts.flatMap(envOf);
   if (!env.length) return;
-  d.append(el("h3", "", "Environment"));
+  const det = el("details");
+  det.open = open;
+  const sum = el("summary");
+  sum.append(el("h3", "", `Environment (${env.length})`));
+  det.append(sum);
+  d.append(det);
   const ul = el("ul", "ints");
   for (const e of env.sort((a, b) => a.name.localeCompare(b.name))) {
     const li = el("li");
@@ -1045,7 +1224,7 @@ function envList(d, c) {
     li.append(head, who);
     ul.append(li);
   }
-  d.append(ul);
+  det.append(ul);
 }
 
 function drawer() {
@@ -1053,16 +1232,21 @@ function drawer() {
   d.replaceChildren();
   const s = view.sel && symById[view.sel];
   const here = view.focus && byId[view.focus];
+  if (view.sel) {
+    // A selection replaces the concept's own overview; this is the explicit way back to it.
+    const b = link(`← ${here ? here.name : M.workspace} overview`, () => go(view.focus, null, { v: view.mode, w: view.screen }));
+    b.classList.add("overview");
+    d.append(b);
+  }
   if (s && here && !here.children && s.leaf !== here) return linkDrawer(d, here, s);
   if (s) return symbolDrawer(d, s);
   const g = view.sel && ghostById[view.sel];
   const c = byId[view.sel] || byId[view.focus];
   if (!c) {
     d.append(el("h2", "", M.workspace), el("p", "", M.summary));
-    d.append(el("h3", "", "Reading this map"));
-    d.append(el("p", "", "Coloured boxes are parts of the system, inside its boundary. Dashed boxes are outside it. Click to open. Scroll or drag to pan, pinch or Cmd+scroll to zoom. Esc goes up."));
-    integrationList(d, integrationPoints(null));
-    envList(d, null);
+    d.append(el("p", "hint", "Click a box to open it. Scroll to pan, pinch to zoom, Esc to go up."));
+    integrationList(d, integrationPoints(null), false);
+    envList(d, null, false);
     return;
   }
   d.append(el("h2", "", c.name), el("p", "", c.summary));
@@ -1091,12 +1275,12 @@ function drawer() {
     const line = Object.entries(counts).map(([k, n]) => `${n} ${k}${n > 1 ? (k === "class" ? "es" : "s") : ""}`).join(", ");
     if (line) list(d, "Code", [el("span", "", line), el("span", "", `${tested} of ${c.symbols.length} linked to a test`)]);
   }
-  fold(d, `Files (${files.length})`, files.map((f) => el("span", "path", f)), !c.children);
+  fold(d, `Files (${files.length})`, files.map((f) => el("span", "path", f)), false);
   fold(d, `Tests (${tests.length})`, tests.map((t) => {
     const li = el("span", "path", t.file);
     li.append(el("span", "n", t.cases + (t.cases === 1 ? " case" : " cases")));
     return li;
-  }), !c.children);
+  }), false);
 }
 
 // A ghost is selected: show every call between its concept and this one, both ways.
@@ -1195,7 +1379,12 @@ function fold(d, title, items, open) {
   d.append(det);
 }
 
-function link(text, fn) { const b = el("b", "", text); b.onclick = fn; return b; }
+function link(text, fn) {
+  const b = el("button", "link", text);
+  b.type = "button";
+  b.onclick = fn;
+  return b;
+}
 
 // ---------- search ----------
 

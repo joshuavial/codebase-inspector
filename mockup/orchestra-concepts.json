@@ -409,6 +409,12 @@
       "name": "Tailscale",
       "summary": "Serves the loopback service to the tailnet with caller identity.",
       "kind": "platform"
+    },
+    {
+      "id": "x.indexeddb",
+      "name": "Browser IndexedDB",
+      "summary": "The phone browser's local database, holding the device token.",
+      "kind": "platform"
     }
   ],
   "relationships": [
@@ -1241,6 +1247,21 @@
       "basis": "reading",
       "via": "HTTP headers",
       "at": "service/identity.ts:HeaderTailnetIdentityProvider"
+    },
+    {
+      "from": "phone.credentials",
+      "to": "x.indexeddb",
+      "label": "keeps the device token in",
+      "basis": "reading",
+      "via": "IndexedDB API",
+      "at": "src/mobile/credential-store.ts:createCredentialStore"
+    },
+    {
+      "from": "phone",
+      "to": "x.indexeddb",
+      "label": "keeps the device token in",
+      "basis": "reading",
+      "via": "IndexedDB API"
     }
   ],
   "screens": [
