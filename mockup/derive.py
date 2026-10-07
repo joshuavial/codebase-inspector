@@ -178,6 +178,7 @@ def main(db_path, root):
                         e["symbols"].append(sym["id"])
                         sym.setdefault("env", []).append(name)
         leaf["env"] = sorted(found.values(), key=lambda e: e["name"])
+    evidence(answer, owner, syms, calls, file_imports, source)
     for sym in syms.values():
         del sym["end"]
 
@@ -194,6 +195,82 @@ def main(db_path, root):
     (HERE / "orchestra-concepts.js").write_text("loadConcepts(" + json.dumps(answer, indent=1) + ");\n")
     n = sum(len(l["symbols"]) for l in leaves(answer["concepts"]))
     print(f"ok: {len(owner)} files owned, {n} symbols, {len(calls)} calls, {len(pairs)} import pairs")
+
+
+IMPORT = re.compile(r"""import\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+\w+|\w+)[^;'"]*from\s+["']([^"']+)["']""")
+INJECTED = re.compile(r"(?:private|public|protected)\s+(?:readonly\s+)?(\w+)\s*:\s*(\w+)")
+
+
+def evidence(answer, owner, syms, calls, file_imports, source):
+    """Say what backs each relationship: resolved calls, value imports, or only the concept map ("stated").
+
+    For stated ones, collect what the code does show: type-only imports, and calls through a
+    constructor-injected field whose type is a local interface (this.audit.append()).
+    """
+    leaves_of = {}
+    def collect(c):
+        kids = c.get("children") or []
+        leaves_of[c["id"]] = [c["id"]] if not kids else [l for k in kids for l in collect(k)]
+        return leaves_of[c["id"]]
+    for c in answer["concepts"]:
+        collect(c)
+
+    def resolve(f, spec):
+        base = os.path.normpath(os.path.join(os.path.dirname(f), spec))
+        return next((t for t in (base, base + ".ts", base + ".tsx", base + "/index.ts") if t in owner), None)
+
+    type_imports = []  # (src file, dst file, names, line)
+    for f in owner:
+        if re.search(r"\.test\.tsx?$", f):  # tests are not evidence of how the code is wired
+            continue
+        text = "\n".join(source(f))
+        for m in IMPORT.finditer(text):
+            dst = resolve(f, m.group(3))
+            if dst and m.group(1):
+                names = [n.strip() for n in (m.group(2) or "").split(",") if n.strip()]
+                type_imports.append((f, dst, names, text.count("\n", 0, m.start()) + 1))
+    type_only = {(a, b) for a, b, _, _ in type_imports}
+
+    def enclosing(f, line):
+        best = None
+        for x in syms.values():
+            if x["file"] == f and x["line"] <= line <= x["end"]:
+                best = x
+        return best and best["id"]
+
+    for r in answer["relationships"]:
+        if r["from"].startswith("x.") or r["to"].startswith("x."):
+            continue
+        lf, lt = set(leaves_of.get(r["from"], [])), set(leaves_of.get(r["to"], []))
+        if any(syms[a]["concept"] in lf and syms[b]["concept"] in lt for a, b in calls):
+            r["backing"] = "calls"
+            continue
+        if any(owner[a] in lf and owner[b] in lt and (a, b) not in type_only for a, b in file_imports):
+            r["backing"] = "imports"
+            continue
+        r["backing"] = "stated"
+        ev = []
+        for a, b, names, line in type_imports:
+            if owner[a] in lf and owner[b] in lt:
+                ev.append({"kind": "type import", "names": names, "file": a, "line": line, "symbol": None})
+                # Injected fields typed by a local interface that mentions one of those imported types.
+                lines = source(a)
+                text = "\n".join(lines)
+                for m in INJECTED.finditer(text):
+                    field, typ = m.groups()
+                    body = re.search(rf"interface\s+{typ}\s*\{{([^}}]*)\}}", text)
+                    if not body or not any(n in body.group(1) for n in names):
+                        continue
+                    found = 0
+                    for n, src_line in enumerate(lines, 1):
+                        if found == 3:  # a few call sites are enough to show the pattern
+                            break
+                        for c in re.finditer(rf"this\.{field}\.(\w+)\(", src_line):
+                            found += 1
+                            ev.append({"kind": "injected", "field": field, "type": typ, "method": c.group(1),
+                                       "file": a, "line": n, "symbol": enclosing(a, n)})
+                            break
+        r["evidence"] = ev
 
 
 if __name__ == "__main__":

@@ -157,7 +157,7 @@ function usage(c) {
   const level = (id) => project(id, parentOf[c.id]) || id; // the sibling-level box for an outside concept
   const usedBy = new Set(), uses = new Set();
   for (const r of M.relationships) {
-    if (r.minor || r.label === TYPES) continue;
+    if (r.label === TYPES) continue;
     if (within(r.to) && !within(r.from)) usedBy.add(level(r.from));
     if (within(r.from) && !within(r.to)) uses.add(level(r.to));
   }
@@ -220,12 +220,13 @@ function project(id, focus) {
 function conceptEdges(focus, shown) {
   const pairs = new Map();
   for (const r of M.relationships) {
-    if (r.minor || r.label === TYPES) continue; // listed in the drawer, kept out of the picture
+    if (r.label === TYPES) continue; // type-only links stay out of both the drawer and the picture
     const a = project(r.from, focus), b = project(r.to, focus);
     if (!a || !b || a === b || (!shown.has(a) && !shown.has(b))) continue;
     const key = a + ">" + b;
-    if (!pairs.has(key)) pairs.set(key, { a, b, exact: [], rolled: [], via: [] });
+    if (!pairs.has(key)) pairs.set(key, { a, b, exact: [], rolled: [], via: [], rels: [] });
     const p = pairs.get(key);
+    p.rels.push(r);
     p[a === r.from && b === r.to ? "exact" : "rolled"].push(r.label);
     if (r.via) p.via.push(r.via);
   }
@@ -235,6 +236,7 @@ function conceptEdges(focus, shown) {
     return {
       a: p.a, b: p.b, all: labels, via: via.length ? via.join(" · ") : undefined,
       text: labels[0] + (labels.length > 1 ? `  +${labels.length - 1}` : ""),
+      rels: p.rels, stated: p.rels.every((r) => r.backing === "stated"),
     };
   });
 }
@@ -252,7 +254,7 @@ function drawConcepts(f, enter) {
   const outsideNodes = [...outside].map((id) => box(byId[id], f ? "ctx" : "ext"));
   const nodes = [boundary, ...outsideNodes];
   const kind = (e) => byId[e.a].ext || byId[e.b].ext ? "integration" : shown.has(e.a) && shown.has(e.b) ? "" : "port";
-  let elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) }));
+  let elkEdges = edges.map((e, i) => ({ id: "e" + i, a: e.a, b: e.b, text: e.text, via: e.via, title: e.all.join("\n"), cls: kind(e) + (e.stated ? " stated" : ""), rels: e.rels }));
   for (const e of [...elkEdges]) {
     const twin = elkEdges.find((x) => x !== e && x.a === e.b && x.b === e.a);
     if (!twin || !elkEdges.includes(e)) continue;
@@ -269,7 +271,7 @@ function drawConcepts(f, enter) {
     // labels on its own box so each label stays attached; hovering the box lights up the inner boxes.
     const bundles = {};
     for (const e of elkEdges) {
-      if (e.cls !== "port" && e.cls !== "integration") continue;
+      if (e.cls !== "port" && e.cls !== "integration") continue; // stated links keep their own line
       const incoming = shown.has(e.b), other = incoming ? e.a : e.b;
       (bundles[other + (incoming ? ">in" : ">out")] ||= []).push(e);
     }
@@ -393,7 +395,7 @@ function drawLeaf(c, enter) {
   // concept already shows, else as a stub entering from the left (incoming) or leaving right (outgoing).
   const ext = [], stubs = [];
   for (const r of M.relationships) {
-    if (r.minor || r.label === TYPES) continue;
+    if (r.label === TYPES) continue;
     const incoming = r.to === c.id, other = incoming ? r.from : r.to;
     if (!incoming && r.from !== c.id) continue;
     if (byId[other].ext) {
@@ -407,7 +409,8 @@ function drawLeaf(c, enter) {
     const g = groupNodes.find((n) => n.concept === other);
     if (g) { g.label += (g.labels ? ", " : " · ") + r.label; g.labels = true; continue; }
     if (!stubs.includes(other)) stubs.push(other);
-    edge(incoming ? other : "boundary", incoming ? "boundary" : other, "port", r.label);
+    edge(incoming ? other : "boundary", incoming ? "boundary" : other, r.backing === "stated" ? "port stated" : "port", r.label);
+    edges[edges.length - 1].rels = [r];
   }
 
   // Big leaves open on their responsibilities rather than every helper (see clusterLeaf).
@@ -825,7 +828,8 @@ const labelW = (e) => textW(e.text, 400, 11.5) + 6 + (e.via ? textW(e.via, 600, 
 
 function render(out, nodes, edges, onClick, enter, onDbl) {
   setStage("diagram");
-  minScale = nodes.some((n) => n.children && n.children.some((k) => k.sym)) ? 0.7 : 0; // leaf views: 13px names stay >= 9px
+  // Grouped (big) leaves keep 13px names at 9px or more and pan; everything else fits whole.
+  minScale = nodes.some((n) => n.children && n.children.some((k) => k.toggle || (k.children && k.toggle))) ? 0.7 : 0;
   const svg = document.getElementById("diagram");
   svg.replaceChildren(defs());
   const meta = {};
@@ -873,6 +877,14 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       }
     }
     if (m.title) { const t = svgEl("title"); t.textContent = m.title; g.append(t); }
+    const stated = (m.rels || []).find((r) => r.backing === "stated");
+    if (stated) {
+      // A wide invisible stroke makes the thin dash-dot line easy to click.
+      for (const p of [...g.querySelectorAll("path")]) g.prepend(svgEl("path", { d: p.getAttribute("d"), class: "hit" }));
+      const id = "rel:" + M.relationships.indexOf(stated);
+      if (view.sel === id) g.classList.add("hot", "picked");
+      g.onclick = (ev) => { ev.stopPropagation(); if (!moved) go(view.focus, id, { v: view.mode }); };
+    }
     edgeG.append(g);
     edgeEls.push({ g, a: m.a, b: m.b });
   }
@@ -1133,8 +1145,9 @@ function legendFromDiagram(svg) {
   sec("Outside systems", Object.entries(KINDS).filter(([k]) => has(`.kind-${k}`)).map(([k, label]) => [miniBox(`node ext kind-${k}`), label]));
   sec("Lines", [
     has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)") && [miniLine(""), "Uses or calls"],
-    has(".edge.port, .edge.ghosted") && [miniLine("port"), "Crosses the boundary"],
+    has(".edge.port:not(.stated), .edge.ghosted") && [miniLine("port"), "Crosses the boundary"],
     has(".edge.integration") && [miniLine("integration"), "Integration point"],
+    has(".edge.stated") && [miniLine("port stated"), "Stated by the concept map; no direct call resolved"],
     has(".edge.both") && [miniLine("both"), "Both directions"],
     has(".edge.reexport") && [miniLine("call ghosted reexport"), "Re-export"],
   ].filter(Boolean));
@@ -1385,6 +1398,7 @@ function drawer() {
     d.append(b);
   }
   if (s && here && !here.children && s.leaf !== here) return linkDrawer(d, here, s);
+  if (view.sel && view.sel.startsWith("rel:")) return relationDrawer(d, M.relationships[+view.sel.slice(4)]);
   if (s) return symbolDrawer(d, s);
   const g = view.sel && ghostById[view.sel];
   const c = byId[view.sel] || byId[view.focus];
@@ -1432,6 +1446,28 @@ function drawer() {
     li.append(el("span", "n", t.cases + (t.cases === 1 ? " case" : " cases")));
     return li;
   }), false);
+}
+
+// A relationship the concept map states but no resolved call backs: say what the code does show.
+function relationDrawer(d, r) {
+  if (!r) return;
+  const a = byId[r.from], b = byId[r.to];
+  const head = el("h2");
+  head.append(link(a.name, () => jump(a.id, null, { force: true })), ` ${r.label} `, link(b.name, () => jump(b.id, null, { force: true })));
+  d.append(head, el("p", "", "Stated by the concept map; no direct call between them was resolved."));
+  const ev = r.evidence || [];
+  if (!ev.length) { d.append(el("h3", "", "Evidence"), el("p", "", "Nothing in the scan links them yet.")); return; }
+  const items = ev.map((x) => {
+    const li = el("span", "rel");
+    const where = `${x.file.split("/").pop()}:${x.line}`;
+    const sym = x.symbol && symById[x.symbol];
+    const at = sym ? link(where, () => jump(sym.leaf.id, sym.id, { force: true })) : el("span", "path", where);
+    at.classList.add("path");
+    if (x.kind === "injected") li.append("via injected ", el("code", "", `${x.field}: ${x.type}`), " ", el("code", "", `this.${x.field}.${x.method}()`), " at ", at);
+    else li.append("type import ", el("code", "", x.names.join(", ")), " at ", at);
+    return li;
+  });
+  list(d, "Evidence", items);
 }
 
 // A ghost is selected: show every call between its concept and this one, both ways.

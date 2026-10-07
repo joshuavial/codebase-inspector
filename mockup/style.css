@@ -360,3 +360,10 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 #legend .key-label { line-height: 1.3; }
 #legend .outside-area rect.frame { fill: var(--canvas); stroke: var(--line); }
 #legend .node rect.body { filter: none; }
+
+/* relationships only the concept map states: lighter dash-dot, clickable for the evidence */
+.edge.stated path { stroke: var(--muted); stroke-dasharray: 7 3 1.5 3; opacity: .85; }
+.edge.stated { cursor: pointer; }
+.edge path.hit { stroke: transparent; stroke-width: 12; stroke-dasharray: none; opacity: 1; }
+.edge.stated:hover path:not(.hit), .edge.picked path:not(.hit) { stroke: var(--accent); opacity: 1; }
+#drawer code { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--accent-soft); padding: 0 4px; border-radius: 4px; color: var(--text); }
