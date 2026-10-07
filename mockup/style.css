@@ -277,3 +277,9 @@ main { flex: 1; display: flex; min-height: 0; }
 .group.glow rect.frame { stroke: var(--accent); stroke-dasharray: none; stroke-width: 1.5; }
 .group.glow .label { fill: var(--accent); }
 .sym.glow rect.body, .node.glow rect.body { stroke: var(--accent); }
+#drawer ul.calls li.group { margin-top: 6px; font-size: 12px; color: var(--muted); }
+#drawer ul.calls li.group b { font-weight: 600; }
+#drawer ul.calls li.indent { padding-left: 10px; }
+#drawer .callrow .module, #drawer .callrow .dot { color: var(--faint); font-size: 12px; }
+#drawer .callrow > b:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+#drawer .callrow .here { color: var(--muted); font-size: 12.5px; }

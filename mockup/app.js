@@ -868,17 +868,45 @@ function linkDrawer(d, here, s) {
   }
 }
 
+// Functions with their owning concept and module, grouped by concept (own concept first) when several appear.
+function callList(d, title, ids, home) {
+  const syms = [...new Set(ids)].map((id) => symById[id]).filter(Boolean);
+  if (!syms.length) return;
+  const groups = new Map([[home, []]]);
+  for (const x of syms) (groups.get(x.leaf) || groups.set(x.leaf, []).get(x.leaf)).push(x);
+  const used = [...groups].filter(([, xs]) => xs.length);
+  const conceptLink = (c) => link(c.name, () => jump(c.id, null, { force: true }));
+  const item = (x, withConcept) => {
+    const li = el("span", "callrow");
+    li.append(link(x.name, () => jump(x.leaf.id, x.id, { force: true })));
+    if (withConcept) li.append(el("span", "dot", " · "), x.leaf === home ? el("span", "here", x.leaf.name) : conceptLink(x.leaf));
+    li.append(el("span", "module", ` · ${x.file.split("/").pop()}`));
+    return li;
+  };
+  d.append(el("h3", "", `${title} (${syms.length})`));
+  const ul = el("ul", "calls");
+  for (const [c, xs] of used) {
+    if (used.length > 1) {
+      const head = el("li", "group");
+      head.append(c === home ? el("span", "", `${c.name} (here)`) : conceptLink(c));
+      ul.append(head);
+    }
+    for (const x of xs) { const li = el("li", used.length > 1 ? "indent" : ""); li.append(item(x, used.length === 1)); ul.append(li); }
+  }
+  d.append(ul);
+}
+
 function symbolDrawer(d, s) {
   d.append(el("h2", "", s.name), el("p", "", `${s.kind} in ${s.leaf.name}`));
   if (s.sig) d.append(el("div", "sig", s.sig));
   if (s.env) list(d, "Environment", s.env.map((n) => el("span", "envname", envName(n))));
   d.append(el("h3", "", "Where"), el("div", "path", `${s.file}:${s.line}`));
-  const name = (id) => (symById[id] || ghostById[id]).name;
-  const open = (id) => jump(symById[id] ? symById[id].leaf.id : ghostById[id].concept, id, { force: true });
-  const calls = s.leaf.calls.filter(([a]) => a === s.id).map(([, b]) => b);
-  const by = s.leaf.calls.filter(([, b]) => b === s.id).map(([a]) => a);
-  if (calls.length) list(d, "Calls", calls.map((x) => link(name(x), () => open(x))));
-  if (by.length) list(d, "Called by", by.map((x) => link(name(x), () => open(x))));
+  const out = s.leaf.calls.filter(([a]) => a === s.id), into = s.leaf.calls.filter(([, b]) => b === s.id);
+  const pick = (rows, verb, end) => rows.filter((r) => r[2] === verb).map((r) => r[end]);
+  callList(d, "Calls", pick(out, "calls", 1), s.leaf);
+  callList(d, "Renders", pick(out, "renders", 1), s.leaf);
+  callList(d, "Called by", pick(into, "calls", 0), s.leaf);
+  callList(d, "Rendered by", pick(into, "renders", 0), s.leaf);
   list(d, `Tests (${s.tests.length})`, s.tests.length ? s.tests.slice(0, 12).map((t) => el("span", "", t)) : [el("span", "rel", "No test links found by static analysis.")]);
   if (s.tests.length > 12) d.append(el("p", "", `and ${s.tests.length - 12} more`));
 }
