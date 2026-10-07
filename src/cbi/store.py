@@ -5,7 +5,7 @@ import sqlite3
 
 # Bump when the schema changes. The model is derived from the repo, so an old
 # database is dropped and rebuilt rather than migrated.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE nodes (
@@ -47,6 +47,13 @@ CREATE TABLE diagnostics (
     detail TEXT
 );
 CREATE INDEX diagnostics_node ON diagnostics(node_id);
+
+-- Per code file, the parser's imports, exports, call sites and reads as JSON, so
+-- resolution can rerun over every file without reparsing unchanged ones.
+CREATE TABLE facts (
+    file_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+);
 
 CREATE TABLE file_state (
     path TEXT PRIMARY KEY,
@@ -170,8 +177,9 @@ SYMBOL_COLUMNS = ("id", "parent_id", "kind", "display_kind", "name", "workspace_
                   "start_line", "end_line", "lang", "loc", "signature", "doc")
 
 
-def replace_file_symbols(conn, workspace_id, path, loc, nodes):
-    """Replace the symbol and test nodes parsed from one file and set the file's LOC."""
+def replace_file_symbols(conn, workspace_id, path, loc, nodes, file_node_id, facts):
+    """Replace the symbol and test nodes and the facts parsed from one file and set the file's LOC."""
+    conn.execute("INSERT OR REPLACE INTO facts (file_id, data) VALUES (?, ?)", (file_node_id, json.dumps(facts)))
     conn.execute(
         "DELETE FROM nodes WHERE kind IN ('symbol', 'test') AND workspace_id = ? AND path = ?",
         (workspace_id, path),
@@ -184,11 +192,12 @@ def replace_file_symbols(conn, workspace_id, path, loc, nodes):
 
 
 def drop_orphan_symbols(conn):
-    """Delete symbol and test nodes whose file is gone from the model, and diagnostics of missing nodes."""
+    """Delete symbol and test nodes whose file is gone from the model, and facts and diagnostics of missing nodes."""
     conn.execute(
         "DELETE FROM nodes WHERE kind IN ('symbol', 'test') AND NOT EXISTS ("
         "SELECT 1 FROM nodes f WHERE f.kind = 'file' AND f.workspace_id = nodes.workspace_id AND f.path = nodes.path)"
     )
+    conn.execute("DELETE FROM facts WHERE file_id NOT IN (SELECT id FROM nodes)")
     conn.execute("DELETE FROM diagnostics WHERE node_id NOT IN (SELECT id FROM nodes)")
 
 

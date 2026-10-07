@@ -95,6 +95,16 @@ Parsing and tasks, settled in deliverable 3:
 - `summarise-files` covers code and test files. A folder's files are split, in path order, into batches of 15; batch n is task `sf-<8 hex of sha1(folder ID)>-<n>` and lists only its uncached files. Files at a workspace root use the workspace as the task's node. `tasks.inputs` holds the node IDs a brief lists. `input_hash` is a hash of the protocol version, parser version and each listed file's ID and content hash. A file whose content changed loses its agent summary until it is answered again.
 - The answer cache is attached to the model connection (`ATTACH ... AS cache`), so a submit writes the cache, the summaries and the task state in one transaction. A task's files are given as paths from the top repo, which is also what the answer echoes.
 
+Resolution, settled in deliverable 4:
+
+- The parser stores each code file's facts (imports, exports, re-exports, top-level names, call sites, literal reads) as JSON in a `facts` table keyed by file ID, so resolution reruns over every file without reparsing unchanged ones.
+- JS uses the tree-sitter `javascript` grammar. `require("x")` counts as an import (whole module, or the destructured names), and a file with no ES exports offers all its top-level names to importers, which covers CommonJS.
+- Specifiers resolve inside their own workspace: relative paths with extensions and `index`, a `.js` import naming its `.ts` source, then the nearest `tsconfig.json` `paths` (longest prefix) and `baseUrl`, following relative `extends`. Package names, including workspace packages, are external until manifests exist (deliverable 5).
+- An import edge goes to the file that defines each imported name, after following re-exports; it goes to the imported module itself only when no name resolved (namespace, side-effect or unresolved default imports).
+- Calls are kept at parse time only when the callee could bind (`f()`, `new F()`, `<F />`, `ns.f()`, `Class.f()`, `this.f()`). `ambiguous_call` counts calls with more than one candidate, such as two same-name definitions in a file. Calls on other receivers (`registry.put()`) and functions passed as values (`createElement(Card)`) get neither an edge nor a diagnostic.
+- Test links come from the innermost test case, or from the test file for code outside any case (top level, helpers). Confidences: a call's own (1.0, or 0.6 through `this`), 1.0 for a literal read, 0.8 for a name match (beside the test, or one folder up from `__tests__`, `test` or `tests`), 0.5 for an imported code file. A read path is tried from the test's folder, then with leading `./` and `../` dropped from each folder above, because the working directory and a compiled `__dirname` are unknown.
+- `unmatched_test` covers parsed (TS and JS) test files only; Python test files are linked from deliverable 13. Its detail lists the external imports and any read paths missing from the model.
+
 **Structure overrides**: `.cbi/structure.json`, written only by accepted `confirm-structure` answers and editable by hand. It lists deployables (name, display kind, source entry points) and packages (name, directory) to add, rename or remove. It is applied at the start of manifest detection on every scan, so a correction outlives rescans.
 
 ### Node IDs

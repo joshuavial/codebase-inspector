@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import build, files, parse, prime, store, tasks
+from cbi import build, files, parse, prime, resolve, store, tasks
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -38,12 +38,13 @@ def build_parser():
         if name in ("init", "scan", *READERS):
             cmd.add_argument("--out", metavar="DIR", type=Path,
                              help="model directory to use instead of .cbi/ in the repo root")
-        if name in ("search", "show", "tasks", "task"):
+        if name in ("search", "show", "tests-for", "tasks", "task"):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds = sub.choices
     cmds["search"].add_argument("text", help="words to look for; each word also matches as a prefix")
     cmds["search"].add_argument("--limit", type=int, default=20, help="most results to print (default 20)")
     cmds["show"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
+    cmds["tests-for"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
     cmds["tasks"].add_argument("--kind", help="only tasks of this kind, such as summarise-files")
     cmds["tasks"].add_argument("--limit", type=int, help="most tasks to list")
     cmds["task"].add_argument("id", help="task ID from `cbi tasks`")
@@ -52,7 +53,7 @@ def build_parser():
     return parser
 
 
-READERS = ("search", "show", "tasks", "task", "submit", "build")
+READERS = ("search", "show", "tests-for", "tasks", "task", "submit", "build")
 
 
 DESCRIPTIONS = {
@@ -84,16 +85,36 @@ and line, then the node ID to pass to `cbi show`.
 
 Exit codes: 0 done (even with no hits), 1 no model (run `cbi scan`).""",
     "show": """\
-Show one node: its kind, path and lines, summary, signature, doc and
-children. NODE can be a node ID, a path from the repo root
-(service/registry.ts), a path with a qualified name
+Show one node: its kind, path and lines, summary, signature, doc,
+children and relationships. NODE can be a node ID, a path from the repo
+root (service/registry.ts), a path with a qualified name
 (service/registry.ts#DeviceRegistry.load), or a bare symbol name
 (DeviceRegistry) when only one symbol has it.
 
+Relationships are edges of this node only: outgoing (what it imports,
+calls or tests) and incoming (what imports, calls or tests it). Each has a
+kind (imports, calls, tests), a source (treesitter from the syntax tree,
+naming from file names) and a confidence from 0 to 1; text output prints
+the confidence when it is below 1 and lists at most 20 per direction.
+
 --json prints the node's columns plus `children`, a list of
-{id, display_kind, name}.
+{id, display_kind, name, start_line, end_line}, and `outgoing` and
+`incoming`, lists of {kind, source, confidence, weight, id, display_kind,
+name, path, start_line}.
 
 Exit codes: 0 found, 1 not found, ambiguous (candidates are listed) or no
+model.""",
+    "tests-for": """\
+List the tests linked to a node or to anything inside it (a file's
+symbols, a class's methods, a folder's files). NODE is resolved as in
+`cbi show`. One line per test case, test suite or test file, best
+confidence first, with how it was linked: treesitter (it calls the code,
+imports it, or reads the file) or naming (x.test.ts beside x.ts).
+
+--json prints a list of {id, display_kind, name, path, start_line,
+confidence, sources, targets}.
+
+Exit codes: 0 done (even with no tests), 1 not found, ambiguous or no
 model.""",
     "tasks": """\
 List open judgement tasks, one per line: task ID, kind, the node it covers
@@ -176,6 +197,7 @@ def scan(root, out):
                 store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states))
                 _parse_changed(conn, root, tracked, states, old, known)
                 store.drop_orphan_symbols(conn)
+                resolve.resolve(conn, root)
                 tasks.refresh(conn)
                 # ponytail: full search rebuild per scan; index only changed nodes if it gets slow.
                 store.reindex(conn)
@@ -197,8 +219,8 @@ def _parse_changed(conn, root, tracked, states, old, known):
         if lang not in parse.LANGS or (prev and prev[2:4] == state[2:4] and fid in known):
             continue
         source = (root / top).read_bytes()
-        nodes, has_error = parse.symbol_nodes(fid, ws["id"], rel, lang, source, role == "test")
-        store.replace_file_symbols(conn, ws["id"], rel, len(source.splitlines()), nodes)
+        nodes, facts, has_error = parse.symbol_nodes(fid, ws["id"], rel, lang, source, role == "test")
+        store.replace_file_symbols(conn, ws["id"], rel, len(source.splitlines()), nodes, fid, facts)
         store.set_diagnostic(conn, fid, "parse_error", "tree-sitter reported syntax errors" if has_error else None)
 
 
@@ -288,14 +310,37 @@ def _resolve(conn, ref):
         "SELECT id FROM nodes WHERE kind IN ('symbol', 'test') AND name = ? ORDER BY id", (ref,))]
 
 
-def cmd_show(args):
-    conn = _model(args)
-    ids = _resolve(conn, args.node)
+def _one(conn, ref):
+    """The single node ID ref names, or None after printing why not."""
+    ids = _resolve(conn, ref)
     if len(ids) != 1:
-        print(f"no node matches {args.node!r}" if not ids else f"{args.node!r} matches {len(ids)} nodes:", file=sys.stderr)
+        print(f"no node matches {ref!r}" if not ids else f"{ref!r} matches {len(ids)} nodes:", file=sys.stderr)
         for i in ids:
             print(f"  {i}", file=sys.stderr)
+        return None
+    return ids[0]
+
+
+EDGE_FIELDS = ("kind", "source", "confidence", "weight", "id", "display_kind", "name", "path", "start_line")
+
+
+def _edges(conn, node_id, here, there):
+    """Edges with node_id at the `here` end, joined to the node at the `there` end."""
+    return [dict(zip(EDGE_FIELDS, r)) for r in conn.execute(
+        f"SELECT e.kind, e.source, e.confidence, e.weight, n.id, n.display_kind, n.name, n.path, n.start_line "
+        f"FROM edges e JOIN nodes n ON n.id = e.{there} WHERE e.{here} = ? "
+        "ORDER BY e.kind, n.path, n.start_line, n.id", (node_id,))]
+
+
+SHOW_EDGE_LIMIT = 20
+
+
+def cmd_show(args):
+    conn = _model(args)
+    found = _one(conn, args.node)
+    if not found:
         return 1
+    ids = [found]
     node = dict(zip(SHOW_COLUMNS, conn.execute(f"SELECT {', '.join(SHOW_COLUMNS)} FROM nodes WHERE id = ?", ids).fetchone()))
     node["attrs"] = json.loads(node["attrs"]) if node["attrs"] else None
     node["children"] = [
@@ -304,6 +349,8 @@ def cmd_show(args):
             "SELECT id, display_kind, name, start_line, end_line FROM nodes WHERE parent_id = ? "
             "ORDER BY start_line, name", ids)
     ]
+    node["outgoing"] = _edges(conn, found, "src", "dst")
+    node["incoming"] = _edges(conn, found, "dst", "src")
     if args.json:
         _print_json(node)
         return 0
@@ -325,6 +372,48 @@ def cmd_show(args):
         for c in node["children"]:
             lines = f"  L{c['start_line']}-{c['end_line']}" if c["start_line"] else ""
             print(f"    {c['display_kind']:<12} {c['name']}{lines}")
+    for direction in ("outgoing", "incoming"):
+        edges = node[direction]
+        if edges:
+            print(f"  {direction} ({len(edges)}):")
+        for e in edges[:SHOW_EDGE_LIMIT]:
+            where = "" if e["path"] == node["path"] and e["display_kind"] not in ("source file", "test file") else f"  {e['path']}"
+            line = f":{e['start_line']}" if e["start_line"] and where else ""
+            confidence = f"  ({e['source']} {e['confidence']:g})" if e["confidence"] < 1 else ""
+            print(f"    {e['kind']:<8} {e['display_kind']:<12} {e['name']}{where}{line}{confidence}")
+        if len(edges) > SHOW_EDGE_LIMIT:
+            print(f"    ... {len(edges) - SHOW_EDGE_LIMIT} more; use --json for all")
+    return 0
+
+
+def cmd_tests_for(args):
+    conn = _model(args)
+    found = _one(conn, args.node)
+    if not found:
+        return 1
+    kind = conn.execute("SELECT kind FROM nodes WHERE id = ?", (found,)).fetchone()[0]
+    # Descendants share an ID prefix: file#name, class#name.member, folder/..., workspace:...
+    prefix = found + {"file": "#", "doc": "#", "symbol": ".", "workspace": ":"}.get(kind, "")
+    rows = conn.execute(
+        "SELECT n.id, n.display_kind, n.name, n.path, n.start_line, max(e.confidence), "
+        "group_concat(DISTINCT e.source), count(DISTINCT e.dst) "
+        "FROM edges e JOIN nodes n ON n.id = e.src WHERE e.kind = 'tests' AND "
+        "(e.dst = ? OR substr(e.dst, 1, length(?)) = ?) "
+        "GROUP BY n.id ORDER BY max(e.confidence) DESC, n.path, n.start_line, n.id",
+        (found, prefix, prefix),
+    ).fetchall()
+    tests = [dict(zip(("id", "display_kind", "name", "path", "start_line", "confidence", "sources", "targets"), r))
+             for r in rows]
+    for t in tests:
+        t["sources"] = sorted(t["sources"].split(","))
+    if args.json:
+        _print_json(tests)
+        return 0
+    for t in tests:
+        where = f"{t['path']}:{t['start_line']}" if t["start_line"] else t["path"]
+        print(f"{t['display_kind']:<12} {t['name']}  {where}  ({', '.join(t['sources'])} {t['confidence']:g})")
+    if not tests:
+        print(f"no tests linked to {found}")
     return 0
 
 
@@ -393,7 +482,7 @@ def cmd_build(args):
     return 0
 
 
-HANDLERS = {"init": cmd_init, "scan": cmd_scan, "search": cmd_search, "show": cmd_show,
+HANDLERS = {"init": cmd_init, "scan": cmd_scan, "search": cmd_search, "show": cmd_show, "tests-for": cmd_tests_for,
             "tasks": cmd_tasks, "task": cmd_task, "submit": cmd_submit, "build": cmd_build}
 
 
