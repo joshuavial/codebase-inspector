@@ -15,7 +15,8 @@
             "electron/main.ts",
             "electron/preload.ts",
             "src/types/preload.d.ts"
-          ]
+          ],
+          "role": "app"
         },
         {
           "id": "desktop.goto",
@@ -24,7 +25,8 @@
           "files": [
             "electron/goto.ts",
             "electron/goto.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "desktop.summaries",
@@ -33,7 +35,8 @@
           "files": [
             "electron/summarizer.ts",
             "electron/summarizer.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "desktop.messages",
@@ -42,7 +45,8 @@
           "files": [
             "electron/messages.ts",
             "electron/messages.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "desktop.adapters",
@@ -56,9 +60,11 @@
             "electron/snapshot.ts",
             "electron/mobile.ts",
             "electron/core-equivalence.test.ts"
-          ]
+          ],
+          "role": "core"
         }
-      ]
+      ],
+      "role": "app"
     },
     {
       "id": "ui",
@@ -74,7 +80,8 @@
             "src/App.tsx",
             "vite.config.ts",
             "src/styles.test.ts"
-          ]
+          ],
+          "role": "ui"
         },
         {
           "id": "ui.leads",
@@ -84,17 +91,19 @@
             "src/components/LeadCard.tsx",
             "src/components/LeadCard.test.ts",
             "src/components/LeadSummary.tsx",
-            "src/components/LeadSummary.test.ts",
-            "src/components/BackgroundTasks.tsx"
-          ]
+            "src/components/LeadSummary.test.ts"
+          ],
+          "role": "ui"
         },
         {
           "id": "ui.board",
           "name": "Orchestrator board",
-          "summary": "The orchestrator's own groups of delegated work.",
+          "summary": "The orchestrator's own work: background tasks, CLI calls, subagents and run history rows that lead cards reuse.",
           "files": [
-            "src/components/OrchestratorBoard.tsx"
-          ]
+            "src/components/OrchestratorBoard.tsx",
+            "src/components/BackgroundTasks.tsx"
+          ],
+          "role": "ui"
         },
         {
           "id": "ui.messages",
@@ -104,7 +113,8 @@
             "src/components/MessagesPanel.tsx",
             "src/messages.ts",
             "src/messages.test.ts"
-          ]
+          ],
+          "role": "ui"
         },
         {
           "id": "ui.quota",
@@ -113,7 +123,8 @@
           "files": [
             "src/components/QuotaBar.tsx",
             "src/components/QuotaBar.test.ts"
-          ]
+          ],
+          "role": "ui"
         },
         {
           "id": "ui.viewmodel",
@@ -125,7 +136,8 @@
             "src/format.ts",
             "src/format.test.ts",
             "src/components/StaleBadge.tsx"
-          ]
+          ],
+          "role": "data"
         },
         {
           "id": "ui.collapse",
@@ -136,9 +148,11 @@
             "src/collapse.test.ts",
             "src/useCollapsed.ts",
             "src/components/CollapsibleSection.tsx"
-          ]
+          ],
+          "role": "ui"
         }
-      ]
+      ],
+      "role": "ui"
     },
     {
       "id": "core",
@@ -152,7 +166,8 @@
           "files": [
             "orchestra-core/sources.ts",
             "electron/sources.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "core.poller",
@@ -161,7 +176,8 @@
           "files": [
             "orchestra-core/poller.ts",
             "electron/poller.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "core.snapshot",
@@ -170,7 +186,8 @@
           "files": [
             "orchestra-core/snapshot.ts",
             "electron/snapshot.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "core.messages",
@@ -179,7 +196,8 @@
           "files": [
             "orchestra-core/messages.ts",
             "orchestra-core/message-actions.ts"
-          ]
+          ],
+          "role": "data"
         },
         {
           "id": "core.safety",
@@ -189,7 +207,8 @@
             "orchestra-core/sanitize.ts",
             "orchestra-core/tmux.ts",
             "electron/sanitize.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "core.runtime",
@@ -198,7 +217,8 @@
           "files": [
             "orchestra-core/node.ts",
             "orchestra-core/index.ts"
-          ]
+          ],
+          "role": "app"
         },
         {
           "id": "core.contracts",
@@ -209,9 +229,11 @@
             "shared/mobile-api.ts",
             "orchestra-core/mobile.ts",
             "electron/mobile.test.ts"
-          ]
+          ],
+          "role": "data"
         }
-      ]
+      ],
+      "role": "core"
     },
     {
       "id": "service",
@@ -227,7 +249,8 @@
             "service/daemon.ts",
             "service/daemon.test.ts",
             "service/custody-race.test.ts"
-          ]
+          ],
+          "role": "app"
         },
         {
           "id": "service.api",
@@ -238,7 +261,8 @@
             "service/egress.ts",
             "service/rate-limit.ts",
             "service/server.test.ts"
-          ]
+          ],
+          "role": "service"
         },
         {
           "id": "service.pairing",
@@ -251,7 +275,8 @@
             "service/admin-socket.test.ts",
             "service/custody-counterexample.test.ts",
             "service/custody-replacement.test.ts"
-          ]
+          ],
+          "role": "service"
         },
         {
           "id": "service.registry",
@@ -261,7 +286,8 @@
             "service/registry.ts",
             "service/registry.test.ts",
             "service/registry-postrename.test.ts"
-          ]
+          ],
+          "role": "data"
         },
         {
           "id": "service.auth",
@@ -271,7 +297,8 @@
             "service/auth.ts",
             "service/keychain.ts",
             "service/auth.test.ts"
-          ]
+          ],
+          "role": "service"
         },
         {
           "id": "service.audit",
@@ -281,7 +308,8 @@
             "service/audit.ts",
             "service/identity.ts",
             "service/audit.test.ts"
-          ]
+          ],
+          "role": "data"
         },
         {
           "id": "service.tailscale",
@@ -290,9 +318,11 @@
           "files": [
             "service/tailscale.ts",
             "service/tailscale.test.ts"
-          ]
+          ],
+          "role": "core"
         }
-      ]
+      ],
+      "role": "service"
     },
     {
       "id": "phone",
@@ -306,7 +336,8 @@
           "files": [
             "src/mobile/credential-store.ts",
             "src/mobile/credential-store.test.ts"
-          ]
+          ],
+          "role": "data"
         },
         {
           "id": "phone.transport",
@@ -317,7 +348,8 @@
             "src/mobile/transport.ts",
             "src/mobile/validate.ts",
             "src/mobile/http-transport.test.ts"
-          ]
+          ],
+          "role": "core"
         },
         {
           "id": "phone.views",
@@ -330,7 +362,8 @@
             "src/mobile/state.ts",
             "src/mobile/vite.config.ts",
             "src/mobile/mobile.test.ts"
-          ]
+          ],
+          "role": "ui"
         },
         {
           "id": "phone.fixtures",
@@ -339,36 +372,43 @@
           "files": [
             "src/mobile/fixture-main.tsx",
             "src/mobile/fixtures.ts"
-          ]
+          ],
+          "role": "ui"
         }
-      ]
+      ],
+      "role": "ui"
     }
   ],
   "externals": [
     {
       "id": "x.aishared",
       "name": "ai-shared CLIs",
-      "summary": "subagent-status, lead-agents, ai-quota, msg and ai-route."
+      "summary": "subagent-status, lead-agents, ai-quota, msg and ai-route.",
+      "kind": "cli"
     },
     {
       "id": "x.terminal",
       "name": "tmux and iTerm2",
-      "summary": "Panes the leads run in, and the terminal app that shows them."
+      "summary": "Panes the leads run in, and the terminal app that shows them.",
+      "kind": "terminal"
     },
     {
       "id": "x.github",
       "name": "GitHub",
-      "summary": "Open pull requests through the gh CLI."
+      "summary": "Open pull requests through the gh CLI.",
+      "kind": "saas"
     },
     {
       "id": "x.keychain",
       "name": "macOS Keychain",
-      "summary": "Holds each paired device's token secret."
+      "summary": "Holds each paired device's token secret.",
+      "kind": "platform"
     },
     {
       "id": "x.tailscale",
       "name": "Tailscale",
-      "summary": "Serves the loopback service to the tailnet with caller identity."
+      "summary": "Serves the loopback service to the tailnet with caller identity.",
+      "kind": "platform"
     }
   ],
   "relationships": [
@@ -511,7 +551,8 @@
       "from": "ui.app",
       "to": "desktop.shell",
       "label": "reads snapshot over IPC",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "IPC"
     },
     {
       "from": "ui.app",
@@ -572,9 +613,9 @@
       "minor": true
     },
     {
-      "from": "ui.board",
-      "to": "ui.leads",
-      "label": "reuses task list",
+      "from": "ui.leads",
+      "to": "ui.board",
+      "label": "reuses task rows from",
       "basis": "imports"
     },
     {
@@ -595,37 +636,49 @@
       "from": "core.sources",
       "to": "x.aishared",
       "label": "polls",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "exec CLI",
+      "at": "orchestra-core/sources.ts:createSources"
     },
     {
       "from": "core.sources",
       "to": "x.github",
       "label": "lists PRs from",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "gh CLI",
+      "at": "orchestra-core/sources.ts:runPrs"
     },
     {
       "from": "core.sources",
       "to": "x.terminal",
       "label": "lists panes from",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "tmux CLI",
+      "at": "orchestra-core/sources.ts:runProcesses"
     },
     {
       "from": "desktop.goto",
       "to": "x.terminal",
       "label": "focuses",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "tmux + AppleScript",
+      "at": "electron/goto.ts:gotoTerminal"
     },
     {
       "from": "desktop.summaries",
       "to": "x.aishared",
       "label": "asks ai-route",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "exec CLI",
+      "at": "electron/summarizer.ts:realSummaryExec"
     },
     {
       "from": "core.messages",
       "to": "x.aishared",
       "label": "replies through msg",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "exec CLI",
+      "at": "orchestra-core/message-actions.ts:createMessageActions"
     },
     {
       "from": "core.sources",
@@ -803,7 +856,9 @@
       "from": "service.auth",
       "to": "x.keychain",
       "label": "verifies tokens with",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "security CLI",
+      "at": "service/keychain.ts:MacKeychainStore"
     },
     {
       "from": "service.audit",
@@ -816,19 +871,24 @@
       "from": "service.tailscale",
       "to": "x.tailscale",
       "label": "plans Serve with",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "tailscale CLI",
+      "at": "service/tailscale.ts:tailscaleReadCommands"
     },
     {
       "from": "x.tailscale",
       "to": "service.api",
       "label": "forwards phone requests to",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "HTTPS proxy",
+      "at": "service/server.ts:startReadService"
     },
     {
       "from": "phone.transport",
       "to": "service.api",
       "label": "fetches snapshot and events from",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "HTTP"
     },
     {
       "from": "phone.transport",
@@ -1077,7 +1137,8 @@
       "from": "ui",
       "to": "desktop",
       "label": "reads snapshot over IPC",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "IPC"
     },
     {
       "from": "desktop",
@@ -1143,13 +1204,15 @@
       "from": "x.tailscale",
       "to": "service",
       "label": "forwards phone requests to",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "HTTPS proxy"
     },
     {
       "from": "phone",
       "to": "service",
       "label": "fetches snapshot from",
-      "basis": "reading"
+      "basis": "reading",
+      "via": "HTTP"
     },
     {
       "from": "phone",
@@ -1162,6 +1225,2264 @@
       "to": "core",
       "label": "uses types from",
       "basis": "imports"
+    },
+    {
+      "from": "core.sources",
+      "to": "x.aishared",
+      "label": "reads quota snapshot",
+      "basis": "reading",
+      "via": "file read",
+      "at": "orchestra-core/sources.ts:createSources"
+    },
+    {
+      "from": "x.tailscale",
+      "to": "service.audit",
+      "label": "supplies caller identity to",
+      "basis": "reading",
+      "via": "HTTP headers",
+      "at": "service/identity.ts:HeaderTailnetIdentityProvider"
+    }
+  ],
+  "screens": [
+    {
+      "id": "desktop",
+      "name": "Overview window",
+      "device": "desktop",
+      "root": {
+        "id": "r141",
+        "layout": "column",
+        "component": "src/App.tsx#App",
+        "children": [
+          {
+            "id": "r4",
+            "layout": "row",
+            "children": [
+              {
+                "id": "r1",
+                "layout": "row",
+                "text": "Orchestra",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r2",
+                "layout": "row",
+                "text": "{updated}",
+                "style": [
+                  "muted"
+                ]
+              },
+              {
+                "id": "r3",
+                "layout": "row",
+                "text": "○ Keep on top",
+                "style": [
+                  "button"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r29",
+            "layout": "column",
+            "component": "src/components/MessagesPanel.tsx#MessagesPanel",
+            "children": [
+              {
+                "id": "r8",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r6",
+                    "layout": "row",
+                    "text": "Messages",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r5",
+                    "layout": "row",
+                    "text": "{unread} unread",
+                    "style": [
+                      "badge"
+                    ]
+                  },
+                  {
+                    "id": "r7",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r12",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r9",
+                    "layout": "row",
+                    "text": "All",
+                    "style": [
+                      "button"
+                    ]
+                  },
+                  {
+                    "id": "r10",
+                    "layout": "row",
+                    "text": "Needs you",
+                    "style": [
+                      "button"
+                    ]
+                  },
+                  {
+                    "id": "r11",
+                    "layout": "row",
+                    "text": "Search, including archived",
+                    "style": [
+                      "input"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r28",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r17",
+                    "layout": "column",
+                    "style": [
+                      "table"
+                    ],
+                    "children": [
+                      {
+                        "id": "r13",
+                        "layout": "row",
+                        "text": "{subject}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r14",
+                        "layout": "row",
+                        "text": "{sender} · {project} · {age}",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r15",
+                        "layout": "row",
+                        "text": "{subject}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r16",
+                        "layout": "row",
+                        "text": "{sender} · {age}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r27",
+                    "layout": "column",
+                    "component": "src/components/MessagesPanel.tsx#ThreadDetail",
+                    "children": [
+                      {
+                        "id": "r20",
+                        "layout": "column",
+                        "component": "src/components/MessagesPanel.tsx#MessageBody",
+                        "children": [
+                          {
+                            "id": "r18",
+                            "layout": "row",
+                            "text": "{author} {age}",
+                            "style": [
+                              "strong"
+                            ]
+                          },
+                          {
+                            "id": "r19",
+                            "layout": "row",
+                            "text": "{markdown body}"
+                          }
+                        ]
+                      },
+                      {
+                        "id": "r21",
+                        "layout": "row",
+                        "component": "src/components/MessagesPanel.tsx#LinkButton",
+                        "text": "{link}",
+                        "style": [
+                          "button"
+                        ]
+                      },
+                      {
+                        "id": "r22",
+                        "layout": "row",
+                        "text": "Reply…",
+                        "style": [
+                          "input"
+                        ]
+                      },
+                      {
+                        "id": "r26",
+                        "layout": "row",
+                        "children": [
+                          {
+                            "id": "r23",
+                            "layout": "row",
+                            "text": "Reply",
+                            "style": [
+                              "button"
+                            ]
+                          },
+                          {
+                            "id": "r24",
+                            "layout": "row",
+                            "text": "Archive",
+                            "style": [
+                              "button"
+                            ]
+                          },
+                          {
+                            "id": "r25",
+                            "layout": "row",
+                            "text": "Go to",
+                            "style": [
+                              "button"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r40",
+            "layout": "column",
+            "component": "src/components/QuotaBar.tsx#QuotaBar",
+            "children": [
+              {
+                "id": "r32",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r30",
+                    "layout": "row",
+                    "text": "Quota",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r31",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r39",
+                "layout": "grid",
+                "cols": 3,
+                "style": [
+                  "table"
+                ],
+                "children": [
+                  {
+                    "id": "r33",
+                    "layout": "row",
+                    "text": "Account",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r34",
+                    "layout": "row",
+                    "text": "5h",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r35",
+                    "layout": "row",
+                    "text": "7d",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r36",
+                    "layout": "row",
+                    "text": "{account} {chips}"
+                  },
+                  {
+                    "id": "r37",
+                    "layout": "row",
+                    "component": "src/components/QuotaBar.tsx#QuotaCell",
+                    "text": "{used}% · {reset}",
+                    "style": [
+                      "chip"
+                    ]
+                  },
+                  {
+                    "id": "r38",
+                    "layout": "row",
+                    "component": "src/components/QuotaBar.tsx#QuotaCell",
+                    "text": "▲ {used}% · {reset}",
+                    "style": [
+                      "chip"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r81",
+            "layout": "column",
+            "component": "src/components/OrchestratorBoard.tsx#OrchestratorBoard",
+            "style": [
+              "panel"
+            ],
+            "children": [
+              {
+                "id": "r43",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r41",
+                    "layout": "row",
+                    "text": "Orchestrator",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r42",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r44",
+                "layout": "row",
+                "text": "{tmux} · {tool} {account} · {status}",
+                "style": [
+                  "muted"
+                ]
+              },
+              {
+                "id": "r58",
+                "layout": "column",
+                "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                "children": [
+                  {
+                    "id": "r57",
+                    "layout": "row",
+                    "text": "Background ({count}) ▾",
+                    "style": [
+                      "strong"
+                    ]
+                  },
+                  {
+                    "id": "r52",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#TaskRow",
+                    "children": [
+                      {
+                        "id": "r51",
+                        "layout": "row",
+                        "text": "{kind} {age} · {cpu}% CPU",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r45",
+                        "layout": "row",
+                        "text": "{outputFile}",
+                        "style": [
+                          "button"
+                        ]
+                      },
+                      {
+                        "id": "r46",
+                        "layout": "row",
+                        "component": "src/components/BackgroundTasks.tsx#Label",
+                        "text": "{summary}"
+                      },
+                      {
+                        "id": "r50",
+                        "layout": "column",
+                        "children": [
+                          {
+                            "id": "r49",
+                            "layout": "column",
+                            "component": "src/components/BackgroundTasks.tsx#CliRow",
+                            "children": [
+                              {
+                                "id": "r48",
+                                "layout": "row",
+                                "text": "{tool} {account} · {model} {age}",
+                                "style": [
+                                  "muted"
+                                ]
+                              },
+                              {
+                                "id": "r47",
+                                "layout": "row",
+                                "component": "src/components/BackgroundTasks.tsx#Label",
+                                "text": "{summary}"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r56",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#TaskRow",
+                    "children": [
+                      {
+                        "id": "r55",
+                        "layout": "row",
+                        "text": "{kind} {age} · {cpu}% CPU",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r53",
+                        "layout": "row",
+                        "text": "{outputFile}",
+                        "style": [
+                          "button"
+                        ]
+                      },
+                      {
+                        "id": "r54",
+                        "layout": "row",
+                        "component": "src/components/BackgroundTasks.tsx#Label",
+                        "text": "{summary}"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r63",
+                "layout": "column",
+                "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                "children": [
+                  {
+                    "id": "r62",
+                    "layout": "row",
+                    "text": "Other CLI calls ({count}) ▾",
+                    "style": [
+                      "strong"
+                    ]
+                  },
+                  {
+                    "id": "r61",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#CliRow",
+                    "children": [
+                      {
+                        "id": "r60",
+                        "layout": "row",
+                        "text": "{tool} {account} · {model} {age}",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r59",
+                        "layout": "row",
+                        "component": "src/components/BackgroundTasks.tsx#Label",
+                        "text": "{summary}"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r69",
+                "layout": "column",
+                "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                "children": [
+                  {
+                    "id": "r68",
+                    "layout": "row",
+                    "text": "Subagents ({count}) ▾",
+                    "style": [
+                      "strong"
+                    ]
+                  },
+                  {
+                    "id": "r67",
+                    "layout": "column",
+                    "children": [
+                      {
+                        "id": "r64",
+                        "layout": "row",
+                        "text": "{state} · {type} · {account} {age} ago",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r65",
+                        "layout": "row",
+                        "text": "{description}"
+                      },
+                      {
+                        "id": "r66",
+                        "layout": "row",
+                        "text": "{n} tool calls",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r78",
+                "layout": "column",
+                "component": "src/components/BackgroundTasks.tsx#TaskHistoryLists",
+                "children": [
+                  {
+                    "id": "r71",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#RunList",
+                    "children": [
+                      {
+                        "id": "r70",
+                        "layout": "row",
+                        "text": "Done 24h ({count}) ▸",
+                        "style": [
+                          "strong"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r76",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#RunList",
+                    "children": [
+                      {
+                        "id": "r72",
+                        "layout": "row",
+                        "text": "Failed ({count}) ▾",
+                        "style": [
+                          "strong",
+                          "danger"
+                        ]
+                      },
+                      {
+                        "id": "r75",
+                        "layout": "column",
+                        "component": "src/components/BackgroundTasks.tsx#RunRow",
+                        "children": [
+                          {
+                            "id": "r74",
+                            "layout": "row",
+                            "text": "{tool} {account} · {duration} {age} ago",
+                            "style": [
+                              "muted"
+                            ]
+                          },
+                          {
+                            "id": "r73",
+                            "layout": "row",
+                            "text": "{why}"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r77",
+                    "layout": "row",
+                    "component": "src/components/BackgroundTasks.tsx#MoreRuns",
+                    "text": "+{hidden} more: {done} done, {failed} failed",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r80",
+                "layout": "column",
+                "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                "children": [
+                  {
+                    "id": "r79",
+                    "layout": "row",
+                    "text": "Unattributed (bug) ({count}) ▸",
+                    "style": [
+                      "strong"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r100",
+            "layout": "column",
+            "component": "src/components/LeadSummary.tsx#LeadSummary",
+            "style": [
+              "panel"
+            ],
+            "children": [
+              {
+                "id": "r84",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r82",
+                    "layout": "row",
+                    "text": "Leads",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r83",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r99",
+                "layout": "grid",
+                "cols": 7,
+                "style": [
+                  "table"
+                ],
+                "children": [
+                  {
+                    "id": "r85",
+                    "layout": "row",
+                    "text": "Lead",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r86",
+                    "layout": "row",
+                    "text": "Repo",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r87",
+                    "layout": "row",
+                    "text": "Mode",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r88",
+                    "layout": "row",
+                    "text": "State",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r89",
+                    "layout": "row",
+                    "text": "W/I/B",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r90",
+                    "layout": "row",
+                    "text": "JV",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r91",
+                    "layout": "row",
+                    "text": "Age",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r92",
+                    "layout": "row",
+                    "text": "{tmux}",
+                    "style": [
+                      "strong"
+                    ]
+                  },
+                  {
+                    "id": "r93",
+                    "layout": "row",
+                    "text": "{repo}@{branch}"
+                  },
+                  {
+                    "id": "r94",
+                    "layout": "row",
+                    "text": "auto"
+                  },
+                  {
+                    "id": "r95",
+                    "layout": "row",
+                    "text": "{state}",
+                    "style": [
+                      "badge"
+                    ]
+                  },
+                  {
+                    "id": "r96",
+                    "layout": "row",
+                    "text": "{w}/{i}/{b}"
+                  },
+                  {
+                    "id": "r97",
+                    "layout": "row",
+                    "text": "{needs}"
+                  },
+                  {
+                    "id": "r98",
+                    "layout": "row",
+                    "text": "{age}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r140",
+            "layout": "column",
+            "component": "src/components/LeadCard.tsx#LeadList",
+            "style": [
+              "panel"
+            ],
+            "children": [
+              {
+                "id": "r105",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r103",
+                    "layout": "row",
+                    "text": "Lead agents",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r101",
+                    "layout": "row",
+                    "text": "{shown} of {total}",
+                    "style": [
+                      "badge"
+                    ]
+                  },
+                  {
+                    "id": "r102",
+                    "layout": "row",
+                    "text": "Show all",
+                    "style": [
+                      "button"
+                    ]
+                  },
+                  {
+                    "id": "r104",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r139",
+                "layout": "column",
+                "component": "src/components/LeadCard.tsx#LeadCard",
+                "style": [
+                  "card"
+                ],
+                "children": [
+                  {
+                    "id": "r110",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r106",
+                        "layout": "row",
+                        "text": "{tmuxTarget}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r107",
+                        "layout": "row",
+                        "text": "{state}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r108",
+                        "layout": "row",
+                        "component": "src/components/LeadCard.tsx#GotoButton",
+                        "text": "Go to terminal",
+                        "style": [
+                          "button"
+                        ]
+                      },
+                      {
+                        "id": "r109",
+                        "layout": "row",
+                        "text": "{liveness}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r111",
+                    "layout": "row",
+                    "text": "{repo}@{branch}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r112",
+                    "layout": "row",
+                    "text": "{purpose}"
+                  },
+                  {
+                    "id": "r118",
+                    "layout": "row",
+                    "component": "src/components/LeadCard.tsx#MissionView",
+                    "children": [
+                      {
+                        "id": "r113",
+                        "layout": "row",
+                        "text": "{mission}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r114",
+                        "layout": "row",
+                        "text": "{owner}",
+                        "style": [
+                          "muted"
+                        ]
+                      },
+                      {
+                        "id": "r115",
+                        "layout": "row",
+                        "text": "{priority}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r116",
+                        "layout": "row",
+                        "style": [
+                          "bar"
+                        ]
+                      },
+                      {
+                        "id": "r117",
+                        "layout": "row",
+                        "text": "{eta}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r119",
+                    "layout": "row",
+                    "text": "{latest note} · {age} ago",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r126",
+                    "layout": "column",
+                    "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                    "children": [
+                      {
+                        "id": "r125",
+                        "layout": "row",
+                        "text": "Lanes ({count}) ▾",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r124",
+                        "layout": "row",
+                        "children": [
+                          {
+                            "id": "r120",
+                            "layout": "row",
+                            "component": "src/components/LeadCard.tsx#GotoButton",
+                            "text": "{lane}",
+                            "style": [
+                              "button"
+                            ]
+                          },
+                          {
+                            "id": "r121",
+                            "layout": "row",
+                            "component": "src/components/LeadCard.tsx#PrLink",
+                            "text": "#{number}",
+                            "style": [
+                              "button"
+                            ]
+                          },
+                          {
+                            "id": "r122",
+                            "layout": "row",
+                            "text": "{state}",
+                            "style": [
+                              "badge"
+                            ]
+                          },
+                          {
+                            "id": "r123",
+                            "layout": "row",
+                            "text": "{doing}",
+                            "style": [
+                              "muted"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r131",
+                    "layout": "column",
+                    "component": "src/components/CollapsibleSection.tsx#CollapsibleSection",
+                    "children": [
+                      {
+                        "id": "r130",
+                        "layout": "row",
+                        "text": "PRs ({count}) ▸",
+                        "style": [
+                          "strong"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r137",
+                    "layout": "column",
+                    "component": "src/components/BackgroundTasks.tsx#LeadTasks",
+                    "children": [
+                      {
+                        "id": "r132",
+                        "layout": "row",
+                        "text": "Background ({count}) ▾ {counts}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r136",
+                        "layout": "column",
+                        "component": "src/components/BackgroundTasks.tsx#TaskRow",
+                        "children": [
+                          {
+                            "id": "r135",
+                            "layout": "row",
+                            "text": "{kind} {age} · {cpu}% CPU",
+                            "style": [
+                              "muted"
+                            ]
+                          },
+                          {
+                            "id": "r133",
+                            "layout": "row",
+                            "text": "{outputFile}",
+                            "style": [
+                              "button"
+                            ]
+                          },
+                          {
+                            "id": "r134",
+                            "layout": "row",
+                            "component": "src/components/BackgroundTasks.tsx#Label",
+                            "text": "{summary}"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r138",
+                    "layout": "row",
+                    "text": "seen {age} ago",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-now",
+      "name": "Phone: Now",
+      "device": "phone",
+      "root": {
+        "id": "r261",
+        "layout": "column",
+        "component": "src/mobile/views.tsx#MobileView",
+        "children": [
+          {
+            "id": "r258",
+            "layout": "row",
+            "children": [
+              {
+                "id": "r256",
+                "layout": "row",
+                "text": "Orchestra",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r257",
+                "layout": "row",
+                "component": "src/mobile/views.tsx#ConnectionLine",
+                "text": "{connection} · {age}",
+                "style": [
+                  "muted"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r259",
+            "layout": "row",
+            "component": "src/mobile/views.tsx#ConnectionBanner",
+            "text": "{banner when stale or offline}",
+            "style": [
+              "banner"
+            ]
+          },
+          {
+            "id": "r260",
+            "layout": "row",
+            "style": [
+              "tabs"
+            ],
+            "children": [
+              {
+                "id": "r252",
+                "layout": "row",
+                "text": "Now",
+                "style": [
+                  "button",
+                  "strong"
+                ]
+              },
+              {
+                "id": "r253",
+                "layout": "row",
+                "text": "Messages",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r254",
+                "layout": "row",
+                "text": "Leads",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r255",
+                "layout": "row",
+                "text": "Activity",
+                "style": [
+                  "button"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r172",
+            "layout": "column",
+            "component": "src/mobile/views.tsx#NowView",
+            "children": [
+              {
+                "id": "r150",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#Section",
+                "children": [
+                  {
+                    "id": "r149",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r146",
+                        "layout": "row",
+                        "text": "Needs you",
+                        "style": [
+                          "heading"
+                        ]
+                      },
+                      {
+                        "id": "r147",
+                        "layout": "row",
+                        "text": "{count}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r148",
+                        "layout": "row",
+                        "component": "src/components/StaleBadge.tsx#StaleBadge",
+                        "text": "{updated}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r142",
+                    "layout": "row",
+                    "text": "{kind} · {from}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r143",
+                    "layout": "row",
+                    "text": "{subject}",
+                    "style": [
+                      "strong"
+                    ]
+                  },
+                  {
+                    "id": "r144",
+                    "layout": "row",
+                    "text": "{kind} · {from}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r145",
+                    "layout": "row",
+                    "text": "{subject}",
+                    "style": [
+                      "strong"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r163",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#Section",
+                "children": [
+                  {
+                    "id": "r162",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r159",
+                        "layout": "row",
+                        "text": "Missions",
+                        "style": [
+                          "heading"
+                        ]
+                      },
+                      {
+                        "id": "r160",
+                        "layout": "row",
+                        "text": "{count}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r161",
+                        "layout": "row",
+                        "component": "src/components/StaleBadge.tsx#StaleBadge",
+                        "text": "{updated}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r151",
+                    "layout": "row",
+                    "text": "{lead}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r155",
+                    "layout": "column",
+                    "component": "src/mobile/views.tsx#GoalView",
+                    "children": [
+                      {
+                        "id": "r152",
+                        "layout": "row",
+                        "text": "{title}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r153",
+                        "layout": "row",
+                        "text": "{goal}"
+                      },
+                      {
+                        "id": "r154",
+                        "layout": "row",
+                        "style": [
+                          "bar"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r158",
+                    "layout": "row",
+                    "component": "src/mobile/views.tsx#MissionView",
+                    "children": [
+                      {
+                        "id": "r156",
+                        "layout": "row",
+                        "text": "{mission}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r157",
+                        "layout": "row",
+                        "text": "{done} / {total}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r171",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#QuotaSection",
+                "children": [
+                  {
+                    "id": "r166",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r164",
+                        "layout": "row",
+                        "text": "Quota",
+                        "style": [
+                          "heading"
+                        ]
+                      },
+                      {
+                        "id": "r165",
+                        "layout": "row",
+                        "component": "src/components/StaleBadge.tsx#StaleBadge",
+                        "text": "{updated}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r170",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r167",
+                        "layout": "row",
+                        "text": "{account}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r168",
+                        "layout": "row",
+                        "component": "src/mobile/views.tsx#QuotaWindowCell",
+                        "text": "5h {used}%",
+                        "style": [
+                          "chip"
+                        ]
+                      },
+                      {
+                        "id": "r169",
+                        "layout": "row",
+                        "component": "src/mobile/views.tsx#QuotaWindowCell",
+                        "text": "7d {used}%",
+                        "style": [
+                          "chip"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-messages",
+      "name": "Phone: Inbox",
+      "device": "phone",
+      "root": {
+        "id": "r271",
+        "layout": "column",
+        "component": "src/mobile/views.tsx#MobileView",
+        "children": [
+          {
+            "id": "r268",
+            "layout": "row",
+            "children": [
+              {
+                "id": "r266",
+                "layout": "row",
+                "text": "Orchestra",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r267",
+                "layout": "row",
+                "component": "src/mobile/views.tsx#ConnectionLine",
+                "text": "{connection} · {age}",
+                "style": [
+                  "muted"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r269",
+            "layout": "row",
+            "component": "src/mobile/views.tsx#ConnectionBanner",
+            "text": "{banner when stale or offline}",
+            "style": [
+              "banner"
+            ]
+          },
+          {
+            "id": "r270",
+            "layout": "row",
+            "style": [
+              "tabs"
+            ],
+            "children": [
+              {
+                "id": "r262",
+                "layout": "row",
+                "text": "Now",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r263",
+                "layout": "row",
+                "text": "Messages",
+                "style": [
+                  "button",
+                  "strong"
+                ]
+              },
+              {
+                "id": "r264",
+                "layout": "row",
+                "text": "Leads",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r265",
+                "layout": "row",
+                "text": "Activity",
+                "style": [
+                  "button"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r189",
+            "layout": "column",
+            "component": "src/mobile/views.tsx#MessagesView",
+            "children": [
+              {
+                "id": "r175",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r173",
+                    "layout": "row",
+                    "text": "Inbox",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r174",
+                    "layout": "row",
+                    "text": "{unread} unread · {updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r178",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r176",
+                    "layout": "row",
+                    "text": "All",
+                    "style": [
+                      "button"
+                    ]
+                  },
+                  {
+                    "id": "r177",
+                    "layout": "row",
+                    "text": "Needs you",
+                    "style": [
+                      "button"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r179",
+                "layout": "row",
+                "text": "Search, including archived",
+                "style": [
+                  "input"
+                ]
+              },
+              {
+                "id": "r182",
+                "layout": "column",
+                "children": [
+                  {
+                    "id": "r180",
+                    "layout": "row",
+                    "text": "{sender} · {age}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r181",
+                    "layout": "row",
+                    "text": "{subject}",
+                    "style": [
+                      "strong"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r185",
+                "layout": "column",
+                "children": [
+                  {
+                    "id": "r183",
+                    "layout": "row",
+                    "text": "{sender} · {age}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r184",
+                    "layout": "row",
+                    "text": "{subject}",
+                    "style": [
+                      "strong"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r188",
+                "layout": "column",
+                "children": [
+                  {
+                    "id": "r186",
+                    "layout": "row",
+                    "text": "{sender} · {age}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r187",
+                    "layout": "row",
+                    "text": "{subject}",
+                    "style": [
+                      "strong"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-leads",
+      "name": "Phone: Leads",
+      "device": "phone",
+      "root": {
+        "id": "r281",
+        "layout": "column",
+        "component": "src/mobile/views.tsx#MobileView",
+        "children": [
+          {
+            "id": "r278",
+            "layout": "row",
+            "children": [
+              {
+                "id": "r276",
+                "layout": "row",
+                "text": "Orchestra",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r277",
+                "layout": "row",
+                "component": "src/mobile/views.tsx#ConnectionLine",
+                "text": "{connection} · {age}",
+                "style": [
+                  "muted"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r279",
+            "layout": "row",
+            "component": "src/mobile/views.tsx#ConnectionBanner",
+            "text": "{banner when stale or offline}",
+            "style": [
+              "banner"
+            ]
+          },
+          {
+            "id": "r280",
+            "layout": "row",
+            "style": [
+              "tabs"
+            ],
+            "children": [
+              {
+                "id": "r272",
+                "layout": "row",
+                "text": "Now",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r273",
+                "layout": "row",
+                "text": "Messages",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r274",
+                "layout": "row",
+                "text": "Leads",
+                "style": [
+                  "button",
+                  "strong"
+                ]
+              },
+              {
+                "id": "r275",
+                "layout": "row",
+                "text": "Activity",
+                "style": [
+                  "button"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r218",
+            "layout": "column",
+            "component": "src/mobile/views.tsx#LeadsView",
+            "children": [
+              {
+                "id": "r193",
+                "layout": "row",
+                "children": [
+                  {
+                    "id": "r190",
+                    "layout": "row",
+                    "text": "Lead agents",
+                    "style": [
+                      "heading"
+                    ]
+                  },
+                  {
+                    "id": "r191",
+                    "layout": "row",
+                    "text": "{count}",
+                    "style": [
+                      "badge"
+                    ]
+                  },
+                  {
+                    "id": "r192",
+                    "layout": "row",
+                    "component": "src/components/StaleBadge.tsx#StaleBadge",
+                    "text": "{updated}",
+                    "style": [
+                      "muted"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r205",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#LeadCardView",
+                "style": [
+                  "card"
+                ],
+                "children": [
+                  {
+                    "id": "r196",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r194",
+                        "layout": "row",
+                        "text": "{lead}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r195",
+                        "layout": "row",
+                        "text": "{state}",
+                        "style": [
+                          "badge"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r197",
+                    "layout": "row",
+                    "text": "{purpose}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r200",
+                    "layout": "row",
+                    "component": "src/mobile/views.tsx#MissionView",
+                    "children": [
+                      {
+                        "id": "r198",
+                        "layout": "row",
+                        "text": "{mission}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r199",
+                        "layout": "row",
+                        "style": [
+                          "bar"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r204",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r201",
+                        "layout": "row",
+                        "text": "{lane}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r202",
+                        "layout": "row",
+                        "text": "{state}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r203",
+                        "layout": "row",
+                        "component": "src/mobile/views.tsx#External",
+                        "text": "#{number}",
+                        "style": [
+                          "button"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r217",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#LeadCardView",
+                "style": [
+                  "card"
+                ],
+                "children": [
+                  {
+                    "id": "r208",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r206",
+                        "layout": "row",
+                        "text": "{lead}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r207",
+                        "layout": "row",
+                        "text": "{state}",
+                        "style": [
+                          "badge"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r209",
+                    "layout": "row",
+                    "text": "{purpose}",
+                    "style": [
+                      "muted"
+                    ]
+                  },
+                  {
+                    "id": "r212",
+                    "layout": "row",
+                    "component": "src/mobile/views.tsx#MissionView",
+                    "children": [
+                      {
+                        "id": "r210",
+                        "layout": "row",
+                        "text": "{mission}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r211",
+                        "layout": "row",
+                        "style": [
+                          "bar"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r216",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r213",
+                        "layout": "row",
+                        "text": "{lane}",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r214",
+                        "layout": "row",
+                        "text": "{state}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r215",
+                        "layout": "row",
+                        "component": "src/mobile/views.tsx#External",
+                        "text": "#{number}",
+                        "style": [
+                          "button"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-activity",
+      "name": "Phone: Activity",
+      "device": "phone",
+      "root": {
+        "id": "r291",
+        "layout": "column",
+        "component": "src/mobile/views.tsx#MobileView",
+        "children": [
+          {
+            "id": "r288",
+            "layout": "row",
+            "children": [
+              {
+                "id": "r286",
+                "layout": "row",
+                "text": "Orchestra",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r287",
+                "layout": "row",
+                "component": "src/mobile/views.tsx#ConnectionLine",
+                "text": "{connection} · {age}",
+                "style": [
+                  "muted"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r289",
+            "layout": "row",
+            "component": "src/mobile/views.tsx#ConnectionBanner",
+            "text": "{banner when stale or offline}",
+            "style": [
+              "banner"
+            ]
+          },
+          {
+            "id": "r290",
+            "layout": "row",
+            "style": [
+              "tabs"
+            ],
+            "children": [
+              {
+                "id": "r282",
+                "layout": "row",
+                "text": "Now",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r283",
+                "layout": "row",
+                "text": "Messages",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r284",
+                "layout": "row",
+                "text": "Leads",
+                "style": [
+                  "button"
+                ]
+              },
+              {
+                "id": "r285",
+                "layout": "row",
+                "text": "Activity",
+                "style": [
+                  "button",
+                  "strong"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "r242",
+            "layout": "column",
+            "component": "src/mobile/views.tsx#ActivityView",
+            "children": [
+              {
+                "id": "r235",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#Section",
+                "children": [
+                  {
+                    "id": "r234",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r231",
+                        "layout": "row",
+                        "text": "Orchestrator",
+                        "style": [
+                          "heading"
+                        ]
+                      },
+                      {
+                        "id": "r232",
+                        "layout": "row",
+                        "text": "{count}",
+                        "style": [
+                          "badge"
+                        ]
+                      },
+                      {
+                        "id": "r233",
+                        "layout": "row",
+                        "component": "src/components/StaleBadge.tsx#StaleBadge",
+                        "text": "{updated}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r224",
+                    "layout": "column",
+                    "component": "src/mobile/views.tsx#ActivityGroup",
+                    "children": [
+                      {
+                        "id": "r219",
+                        "layout": "row",
+                        "text": "Background ({count})",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r223",
+                        "layout": "column",
+                        "component": "src/mobile/views.tsx#TaskItem",
+                        "children": [
+                          {
+                            "id": "r220",
+                            "layout": "row",
+                            "text": "{kind} · {age}",
+                            "style": [
+                              "muted"
+                            ]
+                          },
+                          {
+                            "id": "r221",
+                            "layout": "row",
+                            "text": "{summary}"
+                          },
+                          {
+                            "id": "r222",
+                            "layout": "row",
+                            "component": "src/mobile/views.tsx#CallItem",
+                            "text": "{tool} · {summary}",
+                            "style": [
+                              "muted"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r227",
+                    "layout": "column",
+                    "component": "src/mobile/views.tsx#ActivityGroup",
+                    "children": [
+                      {
+                        "id": "r225",
+                        "layout": "row",
+                        "text": "CLI calls ({count})",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r226",
+                        "layout": "row",
+                        "component": "src/mobile/views.tsx#CallItem",
+                        "text": "{tool} · {summary}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r230",
+                    "layout": "column",
+                    "component": "src/mobile/views.tsx#ActivityGroup",
+                    "children": [
+                      {
+                        "id": "r228",
+                        "layout": "row",
+                        "text": "Subagents ({count})",
+                        "style": [
+                          "strong"
+                        ]
+                      },
+                      {
+                        "id": "r229",
+                        "layout": "row",
+                        "text": "{state} · {description}",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "r241",
+                "layout": "column",
+                "component": "src/mobile/views.tsx#Section",
+                "children": [
+                  {
+                    "id": "r238",
+                    "layout": "row",
+                    "children": [
+                      {
+                        "id": "r236",
+                        "layout": "row",
+                        "text": "Last 24 hours",
+                        "style": [
+                          "heading"
+                        ]
+                      },
+                      {
+                        "id": "r237",
+                        "layout": "row",
+                        "text": "{done} done · {failed} failed",
+                        "style": [
+                          "muted"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "r239",
+                    "layout": "row",
+                    "component": "src/mobile/views.tsx#RunItem",
+                    "text": "{tool} · {why} · {age} ago"
+                  },
+                  {
+                    "id": "r240",
+                    "layout": "row",
+                    "component": "src/mobile/views.tsx#RunItem",
+                    "text": "{tool} · {why} · {age} ago"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "phone-pair",
+      "name": "Phone: Pairing",
+      "device": "phone",
+      "root": {
+        "id": "r293",
+        "layout": "column",
+        "component": "src/mobile/views.tsx#MobileView",
+        "children": [
+          {
+            "id": "r292",
+            "layout": "row",
+            "text": "Orchestra",
+            "style": [
+              "heading"
+            ]
+          },
+          {
+            "id": "r251",
+            "layout": "column",
+            "component": "src/mobile/views.tsx#PairingView",
+            "children": [
+              {
+                "id": "r243",
+                "layout": "row",
+                "text": "Pair this phone",
+                "style": [
+                  "heading"
+                ]
+              },
+              {
+                "id": "r244",
+                "layout": "row",
+                "text": "Create a one-use pairing code on the Mac, then enter it here within 60 seconds."
+              },
+              {
+                "id": "r245",
+                "layout": "row",
+                "text": "Device name",
+                "style": [
+                  "muted"
+                ]
+              },
+              {
+                "id": "r246",
+                "layout": "row",
+                "text": "{label}",
+                "style": [
+                  "input"
+                ]
+              },
+              {
+                "id": "r247",
+                "layout": "row",
+                "text": "Pairing code",
+                "style": [
+                  "muted"
+                ]
+              },
+              {
+                "id": "r248",
+                "layout": "row",
+                "text": "{code}",
+                "style": [
+                  "input"
+                ]
+              },
+              {
+                "id": "r249",
+                "layout": "row",
+                "text": "Pair phone",
+                "style": [
+                  "button",
+                  "strong"
+                ]
+              },
+              {
+                "id": "r250",
+                "layout": "row",
+                "text": "The device credential is kept only in this site's reviewed browser credential store. It is never shown again.",
+                "style": [
+                  "muted"
+                ]
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

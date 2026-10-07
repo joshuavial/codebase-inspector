@@ -15,7 +15,13 @@
   </div>
 </header>
 <main>
-  <section id="stage"><svg id="diagram" role="img"></svg></section>
+  <section id="stage" data-mode="diagram">
+    <svg id="diagram" role="img"></svg>
+    <div id="sketch"></div>
+    <div id="legend" hidden></div>
+    <div id="toggle" hidden></div>
+    <div id="zoom"><button id="zin" title="Zoom in (+)">+</button><button id="zout" title="Zoom out (-)">−</button><button id="zfit" title="Fit (0)">fit</button></div>
+  </section>
   <aside id="drawer"></aside>
 </main>
 <script src="vendor/elk.bundled.js"></script>
