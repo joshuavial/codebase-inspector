@@ -1,3 +1,8 @@
+// ponytail: even hidden, a launched Electron can take focus on macOS; run it in CI, not on a working Mac.
+if (process.platform === "darwin" && !process.env.CI) {
+  console.error("Electron smoke runs only in CI on macOS (CI=1); it can take the focus of whoever is using this Mac.");
+  process.exit(1);
+}
 // A ref view with no checkout opens a read-only snapshot. Assert the argv.
 // The fake `code` on PATH records a launch; dry-run must leave that file empty.
 // main.ts keeps every window hidden when this is set.
