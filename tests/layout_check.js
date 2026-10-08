@@ -426,6 +426,41 @@ async function main() {
       assert.ok(!(sameY && overlap), `shared horizontal lane ${horiz[i][0].y}`);
     }
   }
+  // Edges that leave one exit must not cross: a horizontal may not cut another
+  // edge's vertical except at a shared endpoint. The trunk they share is not a cross.
+  const cuts = (h, v) => {
+    const hy = h[0].y;
+    const x0 = Math.min(h[0].x, h[1].x), x1 = Math.max(h[0].x, h[1].x);
+    const vx = v[0].x;
+    const y0 = Math.min(v[0].y, v[1].y), y1 = Math.max(v[0].y, v[1].y);
+    return vx > x0 + 1 && vx < x1 - 1 && hy > y0 + 1 && hy < y1 - 1;
+  };
+  const byExit = new Map();
+  for (const r of routed) {
+    const p = r.route.pts[0];
+    const key = Math.round(p.x) + ":" + Math.round(p.y);
+    if (!byExit.has(key)) byExit.set(key, []);
+    byExit.get(key).push(r.route.pts);
+  }
+  for (const group of byExit.values()) {
+    const segs = group.map((pts) => {
+      const h = [], v = [];
+      for (let k = 1; k < pts.length; k++) {
+        const a = pts[k - 1], b = pts[k];
+        if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) > 8) h.push([a, b]);
+        if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) > 8) v.push([a, b]);
+      }
+      return { h, v };
+    });
+    for (let i = 0; i < segs.length; i++) {
+      for (let j = 0; j < segs.length; j++) {
+        if (i === j) continue;
+        for (const h of segs[i].h) for (const v of segs[j].v) {
+          assert.ok(!cuts(h, v), `edges from one exit cross at ${h[0].y}`);
+        }
+      }
+    }
+  }
   const alone = app.placeAround({
     W: 400, H: 120,
     nodes: [{ id: "only", w: 90, h: 36 }],

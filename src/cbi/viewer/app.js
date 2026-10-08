@@ -1876,23 +1876,11 @@ function edgeMatches(edge, id, groups) {
 }
 
 // Above and below the frame, each sideways edge takes its own lane unless a straight drop
-// already lands on its box. Labels sit beside that drop, and the row grows to fit them.
+// already lands on its box. The farthest box on a side of an exit takes the lane closest
+// to the frame, so a nearer drop does not cross it. Labels sit beside that drop, and the
+// row grows to fit them.
 const SIDE_GAP = 18, SIDE_LANE = 18, FRAME_OX = 8;
 const LINE_GAP = 10, LANE_PITCH = 18, LANE_INSET = 14, LANE_CLEAR = 12, BOX_LABEL_GAP = 8, DIRECT_DROP = 16;
-
-function assignLanes(spans) {
-  const color = spans.map(() => 0), taken = [];
-  const order = spans.map((s, i) => i).sort((a, b) => spans[a][0] - spans[b][0] || spans[a][1] - spans[b][1] || a - b);
-  for (const i of order) {
-    const [l, r] = spans[i];
-    let lane = 0;
-    for (; lane < taken.length; lane++) if (taken[lane].every(([a, b]) => r <= a || l >= b)) break;
-    if (lane === taken.length) taken.push([]);
-    taken[lane].push([l, r]);
-    color[i] = lane;
-  }
-  return color;
-}
 
 function outsideEnd(e, sideOf) {
   if (sideOf[e.a] && !sideOf[e.b]) return e.a;
@@ -1918,18 +1906,53 @@ function labelStackH(id, edges) {
 }
 
 function lanePlan(items) {
-  const laneOf = items.map(() => -1), jog = [];
+  const laneOf = items.map(() => -1);
+  const sxOf = (it) => it.sx == null ? it.cx : it.sx;
+  const spanOf = (it) => {
+    const sx = sxOf(it);
+    return [Math.min(sx, it.cx), Math.max(sx, it.cx)];
+  };
+  // A span covers a drop when the drop sits strictly inside it. That span has to
+  // stay closer to the frame, or the drop falls through it.
+  const covers = (a, b) => {
+    const [l, r] = spanOf(a);
+    return b.cx > l + 0.5 && b.cx < r - 0.5;
+  };
+  const jog = [];
   items.forEach((it, i) => {
-    const sx = it.sx == null ? it.cx : it.sx;
-    const alone = items.every((o, j) => j === i || Math.abs((o.sx == null ? o.cx : o.sx) - sx) > DIRECT_DROP);
-    if (Math.abs(sx - it.cx) <= DIRECT_DROP && alone) return;
+    const sx = sxOf(it);
+    const alone = items.every((o, j) => j === i || Math.abs(sxOf(o) - sx) > DIRECT_DROP);
+    const covered = items.some((o, j) => j !== i && covers(o, it));
+    if (Math.abs(sx - it.cx) <= DIRECT_DROP && alone && !covered) return;
     jog.push(i);
   });
-  const spans = jog.map((i) => {
-    const sx = items[i].sx == null ? items[i].cx : items[i].sx;
-    return [Math.min(sx, items[i].cx) - 6, Math.max(sx, items[i].cx) + 6];
-  });
-  assignLanes(spans).forEach((lane, k) => { laneOf[jog[k]] = lane; });
+  const reach = (it) => Math.abs(it.cx - sxOf(it));
+  const oneWay = (o, k) => covers(items[jog[o]], items[jog[k]]) && !covers(items[jog[k]], items[jog[o]]);
+  const assigned = jog.map(() => false), lane = jog.map(() => 0), taken = [];
+  for (let step = 0; step < jog.length; step++) {
+    const waiting = [];
+    for (let k = 0; k < jog.length; k++) {
+      if (assigned[k]) continue;
+      if (jog.some((_, o) => !assigned[o] && oneWay(o, k))) continue;
+      waiting.push(k);
+    }
+    const pool = waiting.length ? waiting : jog.map((_, k) => k).filter((k) => !assigned[k]);
+    pool.sort((a, b) => reach(items[jog[b]]) - reach(items[jog[a]]) || a - b);
+    const k = pool[0];
+    const [l, r] = spanOf(items[jog[k]]);
+    const padL = l - 6, padR = r + 6;
+    let minLane = 0;
+    for (let o = 0; o < jog.length; o++) if (assigned[o] && oneWay(o, k)) minLane = Math.max(minLane, lane[o] + 1);
+    let L = minLane;
+    for (;; L++) {
+      if (!taken[L]) taken[L] = [];
+      if (taken[L].every(([a, b]) => padR <= a || padL >= b)) break;
+    }
+    taken[L].push([padL, padR]);
+    lane[k] = L;
+    assigned[k] = true;
+    laneOf[jog[k]] = L;
+  }
   return { laneOf, laneCount: laneOf.some((n) => n >= 0) ? Math.max(...laneOf) + 1 : 0 };
 }
 
