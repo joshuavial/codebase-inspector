@@ -34,7 +34,7 @@ def test_install_script_contract():
     assert 'ditto "$src" "$dest.new"' in code
     assert 'mv "$dest" "$dest.prev"' in code
     assert 'mv "$dest.new" "$dest"' in code
-    assert 'open "$dest"' in code
+    assert 'open -g "$dest"' in code
     assert 'rm -rf "$dest"' in code
     assert 'mv "$dest.prev" "$dest"' in code
     assert "CFBundleShortVersionString" in code
