@@ -1,0 +1,23 @@
+[project]
+name = "codebase-inspector"
+version = "0.1.0"
+description = "Deterministic CLI that maps a codebase into a layered model for AI agents and a static viewer."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.25,<0.26",
+    "tree-sitter-language-pack>=1.21",
+]
+
+[project.scripts]
+cbi = "cbi.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "cbi"

@@ -1,0 +1,117 @@
+going  Going
+  concept-removed  Going
+    gone/src/old.ts  old.ts
+  symbol-removed  gone/src/old.ts#old
+    gone/src/old.ts  old
+
+born  Born
+  concept-added  Born
+    newcomer/src/fresh.ts  fresh.ts
+  relationship-added  Born -> Core  starts  calls 0  imports 0
+  symbol-added  newcomer/src/fresh.ts#fresh
+    newcomer/src/fresh.ts  fresh
+
+other  Other
+  concept-added  Other
+    app/only.ts  only.ts
+  file-moved-concept  app/only.ts  App -> Other
+    app/only.ts  only.ts
+
+whole  Whole
+  concept-split  Whole -> Half A, Half B
+    split/a.ts  a.ts
+    split/b.ts  b.ts
+
+joined  Joined
+  concept-merged  Part one, Part two -> Joined
+    merge/m1.ts  m1.ts
+    merge/m2.ts  m2.ts
+
+parked  Stored
+  concept-renamed  Parked -> Stored
+    relocated/same.ts  same.ts
+  file-moved  move-file/same.ts -> relocated/same.ts
+    relocated/same.ts  same.ts
+  symbol-moved  move-file/same.ts#same -> relocated/same.ts#same
+    move-file/same.ts  same
+    relocated/same.ts  same
+
+titled  Titled
+  concept-renamed  Named -> Titled
+    lib/stay.ts  stay.ts
+  relationship-removed  Titled -> Core  old-link  calls 0  imports 0
+
+core  Core
+  integration-removed  Core -> API  calls  HTTP
+  env-unread  OLD_FLAG
+    core/env.ts  readEnv
+  env-read  NEW_FLAG
+    core/env.ts  readEnv
+  symbol-removed  core/drop.ts#drop
+    core/drop.ts  drop
+  symbol-added  core/add.ts#add
+    core/add.ts  add
+  symbol-added  core/icon.tsx#Icon
+    core/icon.tsx  Icon
+  symbol-moved  core/move.ts#moveMe -> app/moved.ts#moveMe
+    core/move.ts  moveMe
+    app/moved.ts  moveMe
+  symbol-changed  body  core/body.ts#body
+    core/body.ts  body
+  symbol-changed  body  core/env.ts#readEnv
+    core/env.ts  readEnv
+  symbol-changed  body  core/ui.tsx#Box
+    core/ui.tsx  Box
+  symbol-changed  signature  core/sig.ts#sig
+    core/sig.ts  sig
+  untested  core/body.ts#body
+    core/body.ts  body
+  untested  core/env.ts#readEnv
+    core/env.ts  readEnv
+  untested  core/ui.tsx#Box
+    core/ui.tsx  Box
+  render-removed  core/ui.tsx#Box -> core/badge.tsx#Badge
+    core/ui.tsx  Box
+    core/badge.tsx  Badge
+  render-added  core/ui.tsx#Box -> core/icon.tsx#Icon
+    core/ui.tsx  Box
+    core/icon.tsx  Icon
+  test-removed  core/box.test.ts#box
+    core/box.test.ts  box
+  test-added  core/sig.test.ts#sig
+    core/sig.test.ts  sig
+
+app  App
+  integration-added  App -> Disk  writes  fs
+  integration-changed  App -> OS  reads  IPC -> exec CLI
+  relationship-volume  App -> Core  uses  calls 1 -> 2  imports 1 -> 1
+    app/use.ts  use
+    app/use.ts  use.ts
+    app/use.ts  useMore
+  file-moved-concept  app/only.ts  App -> Other
+    app/only.ts  only.ts
+  symbol-added  app/use.ts#useMore
+    app/use.ts  useMore
+  symbol-moved  core/move.ts#moveMe -> app/moved.ts#moveMe
+    core/move.ts  moveMe
+    app/moved.ts  moveMe
+
+local:repo:deployable:gone  gone
+  deployable-removed  gone
+
+local:repo:deployable:newcomer  newcomer
+  deployable-added  newcomer
+  depends-on-added  node app newcomer -> package left
+
+local:repo:package:gone  gone
+  package-removed  gone
+
+local:repo:package:newcomer  newcomer
+  package-added  newcomer
+  depends-on-added  package newcomer -> package left
+
+local:repo:deployable:right  right
+  depends-on-removed  cli right -> package left
+
+local:repo:package:right  right
+  depends-on-removed  package right -> package left

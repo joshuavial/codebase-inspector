@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2c34"/>
+      <stop offset="1" stop-color="#121318"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34363e"/>
+      <stop offset="1" stop-color="#22242b"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <!-- Break the frame where the exit arrow leaves, so the arrow sits on the tile. -->
+    <mask id="gap" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <rect x="616" y="610" width="64" height="56" fill="#000"/>
+    </mask>
+  </defs>
+  <!-- Big Sur grid: 824 tile centred on 1024, transparent outside the shadow. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#16171c" filter="url(#shadow)"/>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+    <rect x="100" y="100" width="824" height="300" fill="url(#sheen)"/>
+    <rect x="212" y="212" width="416" height="600" rx="48" fill="url(#plate)"/>
+    <rect x="192" y="192" width="456" height="640" rx="64" fill="none" stroke="#d2d3d8" stroke-width="40" mask="url(#gap)"/>
+    <!-- ui #3987e5, app #d95926, service #199e70 -->
+    <rect x="244" y="320" width="132" height="132" rx="18" fill="#3987e5"/>
+    <rect x="460" y="320" width="132" height="132" rx="18" fill="#d95926"/>
+    <rect x="460" y="572" width="132" height="132" rx="18" fill="#199e70"/>
+    <path fill="#ffffff" d="M390 377h26v-8l30 17-30 17v-8h-26z"/>
+    <path fill="#ffffff" d="M516 468h20v40h8l-18 48-18-48h8z"/>
+    <path fill="#ffffff" d="M604 629h62v-8l46 17-46 17v-8h-62z"/>
+    <!-- kind-cli #9085e9, dashed, outside the boundary and inside the tile -->
+    <g fill="#9085e9">
+      <rect x="712" y="554" width="50" height="26"/>
+      <rect x="802" y="554" width="50" height="26"/>
+      <rect x="712" y="580" width="26" height="36"/>
+      <rect x="826" y="580" width="26" height="36"/>
+      <rect x="712" y="660" width="26" height="36"/>
+      <rect x="826" y="660" width="26" height="36"/>
+      <rect x="712" y="696" width="50" height="26"/>
+      <rect x="802" y="696" width="50" height="26"/>
+    </g>
+  </g>
+</svg>

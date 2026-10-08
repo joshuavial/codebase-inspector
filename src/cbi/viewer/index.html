@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>codebase inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <nav id="crumbs" aria-label="Breadcrumb"></nav>
+  <button id="details" title="Show or hide the details panel">Details</button>
+  <div id="compare" hidden>
+    <button type="button" data-side="head">Head</button>
+    <button type="button" data-side="base">Base</button>
+  </div>
+  <button id="chg-toggle" type="button" hidden>Changes</button>
+  <div id="overlay" role="group" aria-label="Test overlay">
+    <button data-t="" class="on">map</button>
+    <button data-t="links">tests</button>
+    <button data-t="coverage">cover</button>
+    <button data-t="result">results</button>
+  </div>
+  <div id="find">
+    <input id="q" type="search" placeholder="Find a concept or function" autocomplete="off" aria-label="Search">
+    <ul id="hits" hidden></ul>
+  </div>
+</header>
+<main>
+  <aside id="changes" hidden></aside>
+  <section id="stage" data-mode="diagram">
+    <svg id="diagram" role="img"></svg>
+    <div id="sketch"></div>
+    <div id="legend" hidden></div>
+    <div id="toggle" hidden></div>
+    <div id="debug" hidden></div>
+    <div id="zoom"><button id="zin" title="Zoom in (+)">+</button><button id="zout" title="Zoom out (-)">−</button><button id="zfit" title="Fit (0)">fit</button></div>
+  </section>
+  <aside id="drawer"></aside>
+</main>
+<div id="toast" role="status" hidden>Copied</div>
+<script src="vendor/elk.bundled.js"></script>
+<script src="open-editor.js"></script>
+<script src="app.js"></script>
+<script src="data/editor.js"></script>
+<script src="data/diff.js"></script>
+<script src="data/concepts.js"></script>
+<script src="data/context.js"></script>
+</body>
+</html>

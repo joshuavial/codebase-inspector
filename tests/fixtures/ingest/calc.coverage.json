@@ -1,0 +1,18 @@
+{
+  "meta": {"format": 3, "version": "7.6.1", "timestamp": "2026-10-07T00:00:00", "branch_coverage": false, "show_contexts": true},
+  "files": {
+    "pkg/calc.py": {
+      "executed_lines": [1, 2, 4, 6, 7],
+      "missing_lines": [8],
+      "contexts": {
+        "1": [""],
+        "2": ["tests/test_calc.py::test_add|run"],
+        "4": [""],
+        "6": ["tests/test_calc.py::test_add|run"],
+        "7": ["tests.test_calc.TestCalc.test_mul", "tests/test_calc.py::test_gone|run"]
+      }
+    },
+    "/elsewhere/vendored.py": {"executed_lines": [1], "missing_lines": []}
+  },
+  "totals": {}
+}

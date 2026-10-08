@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cbi render</title>
+<style id="cbi-viewer-css">
+/*__VIEWER_CSS__*/
+</style>
+<style id="cbi-render-style">
+  html, body { height: 100%; overflow: hidden; }
+  header, #drawer, #zoom, #overlay, #find, #details, #legend, #toggle, #debug,
+  #compare, #chg-toggle, #changes { display: none !important; }
+  main { height: 100%; }
+  #stage { height: 100%; }
+  .compact-key .key-bg { fill: var(--panel); stroke: var(--line); }
+  .compact-key text { font-size: 12px; fill: var(--text); }
+  .compact-key .swatch.chg-added { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 2; }
+  .compact-key .swatch.chg-removed { fill: var(--chg-del-soft); stroke: var(--chg-del); stroke-width: 2; }
+  .compact-key .swatch.chg-changed { fill: var(--panel); stroke: var(--role-core); stroke-width: 2; }
+  .compact-key .swatch.chg-none { fill: var(--box); stroke: var(--line); stroke-width: 1.5; }
+</style>
+</head>
+<body>
+<header>
+  <nav id="crumbs" aria-label="Breadcrumb"></nav>
+  <button id="details" type="button">Details</button>
+  <div id="compare" hidden>
+    <button type="button" data-side="head">Head</button>
+    <button type="button" data-side="base">Base</button>
+  </div>
+  <button id="chg-toggle" type="button" hidden>Changes</button>
+  <div id="overlay"></div>
+  <div id="find">
+    <input id="q" type="search" aria-label="Search">
+    <ul id="hits" hidden></ul>
+  </div>
+</header>
+<main>
+  <aside id="changes" hidden></aside>
+  <section id="stage" data-mode="diagram">
+    <svg id="diagram" role="img"></svg>
+    <div id="sketch"></div>
+    <div id="legend" hidden></div>
+    <div id="toggle" hidden></div>
+    <div id="debug" hidden></div>
+    <div id="zoom"><button id="zin" type="button">+</button><button id="zout" type="button">−</button><button id="zfit" type="button">fit</button></div>
+  </section>
+  <aside id="drawer"></aside>
+</main>
+<script type="text/plain" id="svg-out"></script>
+<script src="vendor/elk.bundled.js"></script>
+<script src="app.js"></script>
+<script src="render.js"></script>
+<script src="data/view.js"></script>
+<script src="data/diff.js"></script>
+<script src="data/model.js"></script>
+</body>
+</html>

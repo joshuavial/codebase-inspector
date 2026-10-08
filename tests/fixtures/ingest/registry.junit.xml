@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="root">
+    <testcase name="stores and returns a device" time="0.002" classname="test" file="registry.test.ts"/>
+    <testcase name="revokes a device" time="0.001" classname="test" file="registry.test.ts">
+      <failure message="expected 5" type="testCodeFailure"/>
+    </testcase>
+    <testcase name="was deleted long ago" time="0.001" classname="test" file="registry.test.ts"/>
+  </testsuite>
+</testsuites>

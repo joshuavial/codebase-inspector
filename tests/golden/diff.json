@@ -1,0 +1,970 @@
+{
+  "grouping": "concept",
+  "groups": [
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "id": "going",
+            "name": "Going"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:gone/src/old.ts",
+              "name": "old.ts",
+              "path": "gone/src/old.ts"
+            }
+          ],
+          "kind": "concept-removed",
+          "summary": "Going"
+        },
+        {
+          "after": null,
+          "before": {
+            "display_kind": "function",
+            "id": "local:repo:gone/src/old.ts#old",
+            "name": "old",
+            "path": "gone/src/old.ts"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:gone/src/old.ts#old",
+              "name": "old",
+              "path": "gone/src/old.ts"
+            }
+          ],
+          "kind": "symbol-removed",
+          "summary": "gone/src/old.ts#old"
+        }
+      ],
+      "id": "going",
+      "kind": "concept",
+      "name": "Going"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "born",
+            "name": "Born"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:newcomer/src/fresh.ts",
+              "name": "fresh.ts",
+              "path": "newcomer/src/fresh.ts"
+            }
+          ],
+          "kind": "concept-added",
+          "summary": "Born"
+        },
+        {
+          "after": {
+            "calls": 0,
+            "from": "born",
+            "imports": 0,
+            "label": "starts",
+            "to": "core"
+          },
+          "before": null,
+          "code": [],
+          "kind": "relationship-added",
+          "summary": "Born -> Core  starts  calls 0  imports 0"
+        },
+        {
+          "after": {
+            "display_kind": "function",
+            "id": "local:repo:newcomer/src/fresh.ts#fresh",
+            "name": "fresh",
+            "path": "newcomer/src/fresh.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:newcomer/src/fresh.ts#fresh",
+              "name": "fresh",
+              "path": "newcomer/src/fresh.ts"
+            }
+          ],
+          "kind": "symbol-added",
+          "summary": "newcomer/src/fresh.ts#fresh"
+        }
+      ],
+      "id": "born",
+      "kind": "concept",
+      "name": "Born"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "other",
+            "name": "Other"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:app/only.ts",
+              "name": "only.ts",
+              "path": "app/only.ts"
+            }
+          ],
+          "kind": "concept-added",
+          "summary": "Other"
+        },
+        {
+          "after": {
+            "id": "other",
+            "name": "Other",
+            "path": "app/only.ts"
+          },
+          "before": {
+            "id": "app",
+            "name": "App",
+            "path": "app/only.ts"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:app/only.ts",
+              "name": "only.ts",
+              "path": "app/only.ts"
+            }
+          ],
+          "kind": "file-moved-concept",
+          "summary": "app/only.ts  App -> Other"
+        }
+      ],
+      "id": "other",
+      "kind": "concept",
+      "name": "Other"
+    },
+    {
+      "changes": [
+        {
+          "after": [
+            {
+              "id": "half-a",
+              "name": "Half A"
+            },
+            {
+              "id": "half-b",
+              "name": "Half B"
+            }
+          ],
+          "before": {
+            "id": "whole",
+            "name": "Whole"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:split/a.ts",
+              "name": "a.ts",
+              "path": "split/a.ts"
+            },
+            {
+              "display_kind": "source file",
+              "id": "local:repo:split/b.ts",
+              "name": "b.ts",
+              "path": "split/b.ts"
+            }
+          ],
+          "kind": "concept-split",
+          "summary": "Whole -> Half A, Half B"
+        }
+      ],
+      "id": "whole",
+      "kind": "concept",
+      "name": "Whole"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "joined",
+            "name": "Joined"
+          },
+          "before": [
+            {
+              "id": "part-1",
+              "name": "Part one"
+            },
+            {
+              "id": "part-2",
+              "name": "Part two"
+            }
+          ],
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:merge/m1.ts",
+              "name": "m1.ts",
+              "path": "merge/m1.ts"
+            },
+            {
+              "display_kind": "source file",
+              "id": "local:repo:merge/m2.ts",
+              "name": "m2.ts",
+              "path": "merge/m2.ts"
+            }
+          ],
+          "kind": "concept-merged",
+          "summary": "Part one, Part two -> Joined"
+        }
+      ],
+      "id": "joined",
+      "kind": "concept",
+      "name": "Joined"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "parked",
+            "name": "Stored"
+          },
+          "before": {
+            "id": "parked",
+            "name": "Parked"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:relocated/same.ts",
+              "name": "same.ts",
+              "path": "relocated/same.ts"
+            }
+          ],
+          "kind": "concept-renamed",
+          "summary": "Parked -> Stored"
+        },
+        {
+          "after": {
+            "id": "local:repo:relocated/same.ts",
+            "path": "relocated/same.ts"
+          },
+          "before": {
+            "id": "local:repo:move-file/same.ts",
+            "path": "move-file/same.ts"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:relocated/same.ts",
+              "name": "same.ts",
+              "path": "relocated/same.ts"
+            }
+          ],
+          "kind": "file-moved",
+          "summary": "move-file/same.ts -> relocated/same.ts"
+        },
+        {
+          "after": {
+            "id": "local:repo:relocated/same.ts#same",
+            "name": "same",
+            "path": "relocated/same.ts",
+            "signature": "function same()"
+          },
+          "before": {
+            "id": "local:repo:move-file/same.ts#same",
+            "name": "same",
+            "path": "move-file/same.ts",
+            "signature": "function same()"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:move-file/same.ts#same",
+              "name": "same",
+              "path": "move-file/same.ts"
+            },
+            {
+              "display_kind": "function",
+              "id": "local:repo:relocated/same.ts#same",
+              "name": "same",
+              "path": "relocated/same.ts"
+            }
+          ],
+          "kind": "symbol-moved",
+          "summary": "move-file/same.ts#same -> relocated/same.ts#same"
+        }
+      ],
+      "id": "parked",
+      "kind": "concept",
+      "name": "Stored"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "titled",
+            "name": "Titled"
+          },
+          "before": {
+            "id": "named",
+            "name": "Named"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:lib/stay.ts",
+              "name": "stay.ts",
+              "path": "lib/stay.ts"
+            }
+          ],
+          "kind": "concept-renamed",
+          "summary": "Named -> Titled"
+        },
+        {
+          "after": null,
+          "before": {
+            "calls": 0,
+            "from": "titled",
+            "imports": 0,
+            "label": "old-link",
+            "to": "core"
+          },
+          "code": [],
+          "kind": "relationship-removed",
+          "summary": "Titled -> Core  old-link  calls 0  imports 0"
+        }
+      ],
+      "id": "titled",
+      "kind": "concept",
+      "name": "Titled"
+    },
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "at": "",
+            "from": "core",
+            "label": "calls",
+            "mechanism": "HTTP",
+            "to": "ext.api"
+          },
+          "code": [],
+          "kind": "integration-removed",
+          "summary": "Core -> API  calls  HTTP"
+        },
+        {
+          "after": null,
+          "before": {
+            "name": "OLD_FLAG"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/env.ts#readEnv",
+              "name": "readEnv",
+              "path": "core/env.ts"
+            }
+          ],
+          "kind": "env-unread",
+          "summary": "OLD_FLAG"
+        },
+        {
+          "after": {
+            "name": "NEW_FLAG"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/env.ts#readEnv",
+              "name": "readEnv",
+              "path": "core/env.ts"
+            }
+          ],
+          "kind": "env-read",
+          "summary": "NEW_FLAG"
+        },
+        {
+          "after": null,
+          "before": {
+            "display_kind": "function",
+            "id": "local:repo:core/drop.ts#drop",
+            "name": "drop",
+            "path": "core/drop.ts"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/drop.ts#drop",
+              "name": "drop",
+              "path": "core/drop.ts"
+            }
+          ],
+          "kind": "symbol-removed",
+          "summary": "core/drop.ts#drop"
+        },
+        {
+          "after": {
+            "display_kind": "function",
+            "id": "local:repo:core/add.ts#add",
+            "name": "add",
+            "path": "core/add.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/add.ts#add",
+              "name": "add",
+              "path": "core/add.ts"
+            }
+          ],
+          "kind": "symbol-added",
+          "summary": "core/add.ts#add"
+        },
+        {
+          "after": {
+            "display_kind": "component",
+            "id": "local:repo:core/icon.tsx#Icon",
+            "name": "Icon",
+            "path": "core/icon.tsx"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/icon.tsx#Icon",
+              "name": "Icon",
+              "path": "core/icon.tsx"
+            }
+          ],
+          "kind": "symbol-added",
+          "summary": "core/icon.tsx#Icon"
+        },
+        {
+          "after": {
+            "id": "local:repo:app/moved.ts#moveMe",
+            "name": "moveMe",
+            "path": "app/moved.ts",
+            "signature": "function moveMe()"
+          },
+          "before": {
+            "id": "local:repo:core/move.ts#moveMe",
+            "name": "moveMe",
+            "path": "core/move.ts",
+            "signature": "function moveMe()"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/move.ts#moveMe",
+              "name": "moveMe",
+              "path": "core/move.ts"
+            },
+            {
+              "display_kind": "function",
+              "id": "local:repo:app/moved.ts#moveMe",
+              "name": "moveMe",
+              "path": "app/moved.ts"
+            }
+          ],
+          "kind": "symbol-moved",
+          "summary": "core/move.ts#moveMe -> app/moved.ts#moveMe"
+        },
+        {
+          "after": {
+            "body": "2e1b3e47a8ed6d5432e59f4f85c96d4101efe76f",
+            "signature": "function body()"
+          },
+          "before": {
+            "body": "d1ef787a9db31433d496337e84a72261139e4641",
+            "signature": "function body()"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/body.ts#body",
+              "name": "body",
+              "path": "core/body.ts"
+            }
+          ],
+          "kind": "symbol-changed",
+          "summary": "body  core/body.ts#body"
+        },
+        {
+          "after": {
+            "body": "afb200de61b095a5735a6eae5829936043d38b5d",
+            "signature": "function readEnv()"
+          },
+          "before": {
+            "body": "e56a2de3a1654860f5a48b28cfb6c856f62ffb4a",
+            "signature": "function readEnv()"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/env.ts#readEnv",
+              "name": "readEnv",
+              "path": "core/env.ts"
+            }
+          ],
+          "kind": "symbol-changed",
+          "summary": "body  core/env.ts#readEnv"
+        },
+        {
+          "after": {
+            "body": "ca0ae2877b2f1f5e3a60407321b8f2f9429433b7",
+            "signature": "function Box()"
+          },
+          "before": {
+            "body": "b2064720bcd2a2ace563817e5f5d5fcf66b527da",
+            "signature": "function Box()"
+          },
+          "code": [
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/ui.tsx#Box",
+              "name": "Box",
+              "path": "core/ui.tsx"
+            }
+          ],
+          "kind": "symbol-changed",
+          "summary": "body  core/ui.tsx#Box"
+        },
+        {
+          "after": {
+            "body": "2653a7e0cb838f179f519ea318402a95452dc8a8",
+            "signature": "function sig(n: number, extra: number)"
+          },
+          "before": {
+            "body": "2653a7e0cb838f179f519ea318402a95452dc8a8",
+            "signature": "function sig(n: number)"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/sig.ts#sig",
+              "name": "sig",
+              "path": "core/sig.ts"
+            }
+          ],
+          "kind": "symbol-changed",
+          "summary": "signature  core/sig.ts#sig"
+        },
+        {
+          "after": {
+            "id": "local:repo:core/body.ts#body",
+            "name": "body",
+            "path": "core/body.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/body.ts#body",
+              "name": "body",
+              "path": "core/body.ts"
+            }
+          ],
+          "kind": "untested",
+          "summary": "core/body.ts#body"
+        },
+        {
+          "after": {
+            "id": "local:repo:core/env.ts#readEnv",
+            "name": "readEnv",
+            "path": "core/env.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/env.ts#readEnv",
+              "name": "readEnv",
+              "path": "core/env.ts"
+            }
+          ],
+          "kind": "untested",
+          "summary": "core/env.ts#readEnv"
+        },
+        {
+          "after": {
+            "id": "local:repo:core/ui.tsx#Box",
+            "name": "Box",
+            "path": "core/ui.tsx"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/ui.tsx#Box",
+              "name": "Box",
+              "path": "core/ui.tsx"
+            }
+          ],
+          "kind": "untested",
+          "summary": "core/ui.tsx#Box"
+        },
+        {
+          "after": null,
+          "before": {
+            "from": "local:repo:core/ui.tsx#Box",
+            "to": "local:repo:core/badge.tsx#Badge"
+          },
+          "code": [
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/ui.tsx#Box",
+              "name": "Box",
+              "path": "core/ui.tsx"
+            },
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/badge.tsx#Badge",
+              "name": "Badge",
+              "path": "core/badge.tsx"
+            }
+          ],
+          "kind": "render-removed",
+          "summary": "core/ui.tsx#Box -> core/badge.tsx#Badge"
+        },
+        {
+          "after": {
+            "from": "local:repo:core/ui.tsx#Box",
+            "to": "local:repo:core/icon.tsx#Icon"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/ui.tsx#Box",
+              "name": "Box",
+              "path": "core/ui.tsx"
+            },
+            {
+              "display_kind": "component",
+              "id": "local:repo:core/icon.tsx#Icon",
+              "name": "Icon",
+              "path": "core/icon.tsx"
+            }
+          ],
+          "kind": "render-added",
+          "summary": "core/ui.tsx#Box -> core/icon.tsx#Icon"
+        },
+        {
+          "after": null,
+          "before": {
+            "id": "local:repo:core/box.test.ts#box",
+            "name": "box",
+            "path": "core/box.test.ts"
+          },
+          "code": [
+            {
+              "display_kind": "test case",
+              "id": "local:repo:core/box.test.ts#box",
+              "name": "box",
+              "path": "core/box.test.ts"
+            }
+          ],
+          "kind": "test-removed",
+          "summary": "core/box.test.ts#box"
+        },
+        {
+          "after": {
+            "id": "local:repo:core/sig.test.ts#sig",
+            "name": "sig",
+            "path": "core/sig.test.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "test case",
+              "id": "local:repo:core/sig.test.ts#sig",
+              "name": "sig",
+              "path": "core/sig.test.ts"
+            }
+          ],
+          "kind": "test-added",
+          "summary": "core/sig.test.ts#sig"
+        }
+      ],
+      "id": "core",
+      "kind": "concept",
+      "name": "Core"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "at": "",
+            "from": "app",
+            "label": "writes",
+            "mechanism": "fs",
+            "to": "ext.disk"
+          },
+          "before": null,
+          "code": [],
+          "kind": "integration-added",
+          "summary": "App -> Disk  writes  fs"
+        },
+        {
+          "after": {
+            "at": "",
+            "from": "app",
+            "label": "reads",
+            "mechanism": "exec CLI",
+            "to": "ext.os"
+          },
+          "before": {
+            "at": "",
+            "from": "app",
+            "label": "reads",
+            "mechanism": "IPC",
+            "to": "ext.os"
+          },
+          "code": [],
+          "kind": "integration-changed",
+          "summary": "App -> OS  reads  IPC -> exec CLI"
+        },
+        {
+          "after": {
+            "calls": 2,
+            "from": "app",
+            "imports": 1,
+            "label": "uses",
+            "to": "core"
+          },
+          "before": {
+            "calls": 1,
+            "from": "app",
+            "imports": 1,
+            "label": "uses",
+            "to": "core"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:app/use.ts#use",
+              "name": "use",
+              "path": "app/use.ts"
+            },
+            {
+              "display_kind": "source file",
+              "id": "local:repo:app/use.ts",
+              "name": "use.ts",
+              "path": "app/use.ts"
+            },
+            {
+              "display_kind": "function",
+              "id": "local:repo:app/use.ts#useMore",
+              "name": "useMore",
+              "path": "app/use.ts"
+            }
+          ],
+          "kind": "relationship-volume",
+          "summary": "App -> Core  uses  calls 1 -> 2  imports 1 -> 1"
+        },
+        {
+          "after": {
+            "id": "other",
+            "name": "Other",
+            "path": "app/only.ts"
+          },
+          "before": {
+            "id": "app",
+            "name": "App",
+            "path": "app/only.ts"
+          },
+          "code": [
+            {
+              "display_kind": "source file",
+              "id": "local:repo:app/only.ts",
+              "name": "only.ts",
+              "path": "app/only.ts"
+            }
+          ],
+          "kind": "file-moved-concept",
+          "summary": "app/only.ts  App -> Other"
+        },
+        {
+          "after": {
+            "display_kind": "function",
+            "id": "local:repo:app/use.ts#useMore",
+            "name": "useMore",
+            "path": "app/use.ts"
+          },
+          "before": null,
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:app/use.ts#useMore",
+              "name": "useMore",
+              "path": "app/use.ts"
+            }
+          ],
+          "kind": "symbol-added",
+          "summary": "app/use.ts#useMore"
+        },
+        {
+          "after": {
+            "id": "local:repo:app/moved.ts#moveMe",
+            "name": "moveMe",
+            "path": "app/moved.ts",
+            "signature": "function moveMe()"
+          },
+          "before": {
+            "id": "local:repo:core/move.ts#moveMe",
+            "name": "moveMe",
+            "path": "core/move.ts",
+            "signature": "function moveMe()"
+          },
+          "code": [
+            {
+              "display_kind": "function",
+              "id": "local:repo:core/move.ts#moveMe",
+              "name": "moveMe",
+              "path": "core/move.ts"
+            },
+            {
+              "display_kind": "function",
+              "id": "local:repo:app/moved.ts#moveMe",
+              "name": "moveMe",
+              "path": "app/moved.ts"
+            }
+          ],
+          "kind": "symbol-moved",
+          "summary": "core/move.ts#moveMe -> app/moved.ts#moveMe"
+        }
+      ],
+      "id": "app",
+      "kind": "concept",
+      "name": "App"
+    },
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "id": "local:repo:deployable:gone",
+            "name": "gone"
+          },
+          "code": [],
+          "kind": "deployable-removed",
+          "summary": "gone"
+        }
+      ],
+      "id": "local:repo:deployable:gone",
+      "kind": "deployable",
+      "name": "gone"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "local:repo:deployable:newcomer",
+            "name": "newcomer"
+          },
+          "before": null,
+          "code": [],
+          "kind": "deployable-added",
+          "summary": "newcomer"
+        },
+        {
+          "after": {
+            "from": "local:repo:deployable:newcomer",
+            "to": "local:repo:package:left"
+          },
+          "before": null,
+          "code": [],
+          "kind": "depends-on-added",
+          "summary": "node app newcomer -> package left"
+        }
+      ],
+      "id": "local:repo:deployable:newcomer",
+      "kind": "deployable",
+      "name": "newcomer"
+    },
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "id": "local:repo:package:gone",
+            "name": "gone"
+          },
+          "code": [],
+          "kind": "package-removed",
+          "summary": "gone"
+        }
+      ],
+      "id": "local:repo:package:gone",
+      "kind": "package",
+      "name": "gone"
+    },
+    {
+      "changes": [
+        {
+          "after": {
+            "id": "local:repo:package:newcomer",
+            "name": "newcomer"
+          },
+          "before": null,
+          "code": [],
+          "kind": "package-added",
+          "summary": "newcomer"
+        },
+        {
+          "after": {
+            "from": "local:repo:package:newcomer",
+            "to": "local:repo:package:left"
+          },
+          "before": null,
+          "code": [],
+          "kind": "depends-on-added",
+          "summary": "package newcomer -> package left"
+        }
+      ],
+      "id": "local:repo:package:newcomer",
+      "kind": "package",
+      "name": "newcomer"
+    },
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "from": "local:repo:deployable:right",
+            "to": "local:repo:package:left"
+          },
+          "code": [],
+          "kind": "depends-on-removed",
+          "summary": "cli right -> package left"
+        }
+      ],
+      "id": "local:repo:deployable:right",
+      "kind": "deployable",
+      "name": "right"
+    },
+    {
+      "changes": [
+        {
+          "after": null,
+          "before": {
+            "from": "local:repo:package:right",
+            "to": "local:repo:package:left"
+          },
+          "code": [],
+          "kind": "depends-on-removed",
+          "summary": "package right -> package left"
+        }
+      ],
+      "id": "local:repo:package:right",
+      "kind": "package",
+      "name": "right"
+    }
+  ]
+}

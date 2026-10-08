@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Codebase Inspector</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<section id="start">
+  <header class="screen-head">
+    <h1>Codebase Inspector</h1>
+    <p class="lede">Open a git repository to see its map.</p>
+  </header>
+  <div id="drop">
+    <button type="button" id="open">Open folder</button>
+    <p>or drop a folder here</p>
+  </div>
+  <p id="start-error" class="error" hidden></p>
+  <section id="recents-wrap">
+    <h2>Recent</h2>
+    <p id="recents-empty" class="muted">No projects yet.</p>
+    <ul id="recents"></ul>
+  </section>
+  <section id="cbi-setup">
+    <h2>cbi</h2>
+    <p id="cbi-using" class="muted"></p>
+    <pre id="cbi-error" class="error" hidden></pre>
+    <div class="cbi-row">
+      <label for="cbi-path">Path to cbi</label>
+      <input id="cbi-path" type="text" spellcheck="false" placeholder="Leave empty to find cbi on PATH">
+      <button type="button" id="cbi-save">Save</button>
+      <button type="button" id="cbi-browse">Choose…</button>
+    </div>
+  </section>
+  <section id="editor-setup">
+    <h2>Editor</h2>
+    <p class="muted">Double-click a file or symbol to open it here.</p>
+    <div class="cbi-row">
+      <label for="editor-choice">Editor</label>
+      <select id="editor-choice">
+        <option value="vscode" data-command="code --reuse-window {project} --goto {file}:{line}">VS Code</option>
+        <option value="cursor" data-command="cursor --reuse-window {project} --goto {file}:{line}">Cursor</option>
+        <option value="none">None</option>
+        <option value="custom">Custom</option>
+      </select>
+    </div>
+    <p id="editor-preset" class="muted"></p>
+    <div class="cbi-row" id="editor-custom-row" hidden>
+      <label for="editor-template">Command</label>
+      <input id="editor-template" type="text" spellcheck="false" placeholder="code --reuse-window {project} --goto {file}:{line}">
+    </div>
+    <div class="cbi-row">
+      <button type="button" id="editor-save">Save</button>
+    </div>
+    <p id="editor-error" class="error" hidden></p>
+  </section>
+</section>
+<section id="project" hidden>
+  <header id="topbar">
+    <button type="button" id="back">Projects</button>
+    <h1 id="project-name"></h1>
+    <span id="project-path"></span>
+    <div id="switcher-wrap">
+      <button type="button" id="switcher" aria-haspopup="listbox" aria-expanded="false">
+        <span id="version-label"></span>
+        <span id="branch"></span>
+      </button>
+      <div id="switcher-panel" role="listbox" hidden>
+        <div id="switcher-worktrees"></div>
+        <div id="switcher-branches"></div>
+        <div id="switcher-remotes"></div>
+        <p id="switcher-error" class="error" hidden></p>
+        <button type="button" id="fetch-remotes">Fetch remote branches</button>
+      </div>
+    </div>
+    <div id="compare-wrap">
+      <button type="button" id="compare-open" aria-expanded="false">Compare</button>
+      <div id="compare-panel" hidden>
+        <label>Base
+          <select id="compare-base"></select>
+        </label>
+        <input id="compare-base-rev" type="text" spellcheck="false" placeholder="commit or ref" hidden>
+        <label>Head
+          <select id="compare-head"></select>
+        </label>
+        <input id="compare-head-rev" type="text" spellcheck="false" placeholder="commit or ref" hidden>
+        <label>Pull request
+          <input id="compare-pr" type="text" inputmode="numeric" spellcheck="false" placeholder="number">
+        </label>
+        <button type="button" id="compare-go">Show</button>
+        <p id="compare-error" class="error" hidden></p>
+      </div>
+    </div>
+    <button type="button" id="compare-back" hidden>Back</button>
+    <span id="readonly" hidden>read-only</span>
+    <span id="scanned"></span>
+  </header>
+  <section id="tasks" hidden>
+    <div>
+      <h2>Judgement tasks waiting</h2>
+      <ul id="task-counts"></ul>
+    </div>
+    <div class="instruction">
+      <p>For your agent</p>
+      <code id="instruction"></code>
+      <button type="button" id="copy">Copy</button>
+    </div>
+  </section>
+  <div id="toast" hidden>
+    <p id="toast-message"></p>
+    <button type="button" id="toast-action" hidden>Show</button>
+    <button type="button" id="toast-details" hidden>Details</button>
+    <button type="button" id="toast-dismiss">Dismiss</button>
+    <pre id="toast-detail" hidden></pre>
+  </div>
+  <pre id="progress" hidden></pre>
+  <div id="stage"></div>
+</section>
+<script src="renderer.js"></script>
+</body>
+</html>

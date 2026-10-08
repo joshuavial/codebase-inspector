@@ -1,0 +1,52 @@
+{
+  "name": "codebase-inspector-app",
+  "productName": "Codebase Inspector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell that opens a git repository and shows the cbi concept map.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json && tsc -p tsconfig.renderer.json && cp src/index.html src/style.css dist/",
+    "start": "npm run build && electron .",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/**/*.test.js",
+    "smoke": "npm run build && node test/smoke.mjs",
+    "editor-ref": "npm run build && node test/editor-ref.mjs",
+    "package": "npm run build && electron-builder --mac dir --arm64"
+  },
+  "build": {
+    "appId": "com.codebaseinspector.app",
+    "productName": "Codebase Inspector",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "identity": null
+    },
+    "protocols": [
+      {
+        "name": "Codebase Inspector",
+        "schemes": ["cbi"]
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.0",
+    "electron": "~44.6.0",
+    "electron-builder": "~26.15.3",
+    "playwright-core": "~1.63.0",
+    "typescript": "~5.9.3"
+  }
+}
