@@ -10,7 +10,7 @@
         {
           "id": "shell",
           "name": "Desktop shell",
-          "summary": "The main process, preload and renderer. Finds the cbi binary on PATH, maps the open project, watches the worktree, and switches worktrees and branches. It shows the last built map at once, toasts when a background scan changes it, opens one file in the editor from a matching worktree or a read-only git show snapshot, and shows a deep-link window without focusing it.",
+          "summary": "The main process, preload and renderer. Finds the cbi binary on PATH, maps the open project, watches the worktree, and switches worktrees and branches. It shows the last built map at once, toasts when a background scan changes it, opens one file in the editor from a matching worktree or a read-only git show snapshot, shows a deep-link window without focusing it, and shows a banner when a newer release is known.",
           "role": "app",
           "entry": true,
           "files": [
@@ -117,7 +117,7 @@
         {
           "id": "cli",
           "name": "Command line",
-          "summary": "The cbi entry point. Argparse dispatches every command, from init and scan through tasks, queries, diff, render, open and review. cbi check fails when changed files have no summary or owner, and cbi open-file launches the editor from a matching worktree or a read-only git show snapshot.",
+          "summary": "The cbi entry point. Argparse dispatches every command, from init and scan through tasks, queries, diff, render, open and review. cbi check fails when changed files have no summary or owner, cbi open-file launches the editor from a matching worktree or a read-only git show snapshot, and prime and status print a one-line notice when a newer release is known.",
           "role": "app",
           "entry": true,
           "files": [
@@ -292,6 +292,19 @@
         ".github/changelog_notes.py",
         "tests/test_changelog_notes.py"
       ]
+    },
+    {
+      "id": "updates",
+      "name": "Release check",
+      "summary": "Checks the GitHub releases API for a newer stable version and does not install it. The desktop side compares semver, ignores drafts and prereleases, picks the asset for this OS and arch, and stores the etag, the skipped version and the once-a-day banner. The CLI side caches one line for a day under the platform cache or CBI_CACHE_DIR, and a timeout, a draft or a bad response stays inside the check.",
+      "role": "core",
+      "files": [
+        "app/src/update-check.ts",
+        "app/src/update-check.test.ts",
+        "app/test/update-smoke.mjs",
+        "src/cbi/update_check.py",
+        "tests/test_update_check.py"
+      ]
     }
   ],
   "externals": [
@@ -336,6 +349,12 @@
       "name": "sqlite3",
       "kind": "cli",
       "summary": "The sqlite3 command. The desktop app reads status and file rows from model.db with a fixed argv, so the window can open before a scan."
+    },
+    {
+      "id": "github-releases",
+      "name": "GitHub releases",
+      "kind": "saas",
+      "summary": "The GitHub releases API for this repository. The update checks GET /releases/latest with an etag and a codebase-inspector user agent. The desktop app then opens the release page or the matching asset in the browser."
     }
   ],
   "relationships": [
@@ -719,6 +738,30 @@
       "from": "packaging",
       "to": "shell",
       "label": "copies the window HTML and CSS into dist for the desktop app"
+    },
+    {
+      "from": "shell",
+      "to": "updates",
+      "label": "runs the release check and shows or skips the banner"
+    },
+    {
+      "from": "cli",
+      "to": "updates",
+      "label": "prints the cached newer-release notice on prime and status"
+    },
+    {
+      "from": "updates",
+      "to": "github-releases",
+      "label": "GETs the latest release for the desktop banner",
+      "via": "HTTP",
+      "at": "app/src/update-check.ts:fetchRelease"
+    },
+    {
+      "from": "updates",
+      "to": "github-releases",
+      "label": "GETs the latest release for the CLI notice",
+      "via": "HTTP",
+      "at": "src/cbi/update_check.py:fetch_release"
     }
   ]
 }
