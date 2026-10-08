@@ -46,7 +46,7 @@ if [[ -d "$dest" ]]; then
 fi
 mv "$dest.new" "$dest"
 
-open "$dest"
+open -g "$dest"
 for _ in {1..20}; do
   if pgrep -f "$bin" >/dev/null; then
     rm -rf "$dest.prev"
