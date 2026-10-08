@@ -101,9 +101,14 @@ try {
       CBI_SKIP_PROTOCOL: "1",
       CBI_SNAPSHOT_DIR: cache,
       CBI_EDITOR_DRY_RUN: argvLog,
+      CBI_HEADLESS: "1",
     },
   });
   const page = await app.firstWindow();
+  const shown = await app.evaluate(({ BrowserWindow }) => {
+    return BrowserWindow.getAllWindows().map((win) => win.isVisible() || win.isFocused());
+  });
+  if (shown.some(Boolean)) throw new Error(`window was shown ${JSON.stringify(shown)}`);
   page.setDefaultTimeout(60_000);
   page.on("console", (msg) => console.log(`page ${msg.type()}: ${msg.text()}`));
   page.on("pageerror", (err) => console.log(`page error: ${err}`));

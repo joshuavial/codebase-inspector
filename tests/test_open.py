@@ -81,7 +81,7 @@ def _open(monkeypatch, capsys, argv):
         opened["url"] = url
         return 0, ""
 
-    monkeypatch.setattr("cbi.open_link._mac_open", launch)
+    monkeypatch.setattr(open_link, "open_url", launch)
     code = main(["open", *argv])
     out = capsys.readouterr()
     return code, out.out, out.err, opened
@@ -315,7 +315,7 @@ def test_open_pr_shows_gh_failures_and_does_not_guess(make_repo, monkeypatch, ca
     def boom(url):
         raise AssertionError(url)
 
-    monkeypatch.setattr("cbi.open_link._mac_open", boom)
+    monkeypatch.setattr(open_link, "open_url", boom)
     _fake_gh(tmp_path, monkeypatch, """#!/bin/sh
 echo 'no such pull request' >&2
 exit 1
@@ -347,7 +347,7 @@ def test_open_compare_rejects_a_bad_shape_and_an_unknown_ref(make_repo, monkeypa
     def boom(url):
         raise AssertionError(url)
 
-    monkeypatch.setattr("cbi.open_link._mac_open", boom)
+    monkeypatch.setattr(open_link, "open_url", boom)
     assert main(["open", "--compare", "main..no-such"]) == 1
     assert "unknown ref" in capsys.readouterr().err
 
@@ -376,7 +376,7 @@ def test_version_flags_are_mutually_exclusive(make_repo, monkeypatch, capsys):
 def test_missing_handler_prints_the_link_and_a_message(make_repo, monkeypatch, capsys):
     repo = make_repo({"README.md": "# app\n"})
     monkeypatch.chdir(repo)
-    monkeypatch.setattr("cbi.open_link._mac_open", lambda url: (1, "No application knows how to open URL"))
+    monkeypatch.setattr(open_link, "open_url", lambda url: (1, "No application knows how to open URL"))
     assert main(["open"]) == 1
     out = capsys.readouterr()
     assert out.out.strip().startswith("cbi://open?")
@@ -392,6 +392,8 @@ def test_open_uses_fixed_git_argv(make_repo, monkeypatch, capsys):
     def spy(*args, **kwargs):
         cmd = args[0] if args else kwargs.get("args")
         calls.append(list(cmd))
+        if cmd and cmd[0] in {"open", "xdg-open", "cmd"}:
+            raise AssertionError(cmd)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", spy)
@@ -412,42 +414,63 @@ class _Run:
         self.stdout = ""
 
 
-def test_open_url_uses_xdg_open_on_linux(monkeypatch):
+def test_open_url_uses_xdg_open_without_an_activation_token(monkeypatch):
     seen = {}
+    monkeypatch.setenv("DESKTOP_STARTUP_ID", "steal")
+    monkeypatch.setenv("XDG_ACTIVATION_TOKEN", "steal")
 
-    def run(argv, **_kwargs):
+    def run(argv, **kwargs):
         seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
         return _Run()
 
     monkeypatch.setattr(open_link.sys, "platform", "linux")
     monkeypatch.setattr(open_link.subprocess, "run", run)
     assert open_link.open_url("cbi://open?repo=/tmp/r") == (0, "")
     assert seen["argv"] == ["xdg-open", "cbi://open?repo=/tmp/r"]
+    assert "DESKTOP_STARTUP_ID" not in seen["env"]
+    assert "XDG_ACTIVATION_TOKEN" not in seen["env"]
+    assert seen["env"]["PATH"] == os.environ["PATH"]
 
 
-def test_open_url_uses_startfile_on_windows(monkeypatch):
+def _install_shell32(monkeypatch, execute):
+    class Shell32:
+        ShellExecuteW = staticmethod(execute)
+
+    class Windll:
+        shell32 = Shell32()
+
+    monkeypatch.setattr(open_link.ctypes, "windll", Windll(), raising=False)
+
+
+def test_open_url_does_not_activate_on_windows(monkeypatch):
     monkeypatch.setattr(open_link.sys, "platform", "win32")
     calls = []
-    monkeypatch.setattr(open_link.os, "startfile", lambda url: calls.append(url), raising=False)
+
+    def execute(*args):
+        calls.append(args)
+        return 42
+
+    _install_shell32(monkeypatch, execute)
     assert open_link.open_url("cbi://open?repo=C:/src") == (0, "")
-    assert calls == ["cbi://open?repo=C:/src"]
+    assert calls == [(None, "open", "cbi://open?repo=C:/src", None, None, open_link.SW_SHOWNOACTIVATE)]
 
 
-def test_open_url_startfile_error_is_a_failure(monkeypatch):
+def test_open_url_shell_execute_error_is_a_failure(monkeypatch):
     monkeypatch.setattr(open_link.sys, "platform", "win32")
 
-    def boom(_url):
-        raise OSError("no handler")
+    def execute(*_args):
+        return 2
 
-    monkeypatch.setattr(open_link.os, "startfile", boom, raising=False)
+    _install_shell32(monkeypatch, execute)
     code, detail = open_link.open_url("cbi://open?repo=C:/src")
     assert code == 1
-    assert "no handler" in detail
+    assert "ShellExecute failed (2)" in detail
 
 
-def test_open_url_falls_back_to_start_when_startfile_is_missing(monkeypatch):
+def test_open_url_falls_back_to_start_when_shell32_is_missing(monkeypatch):
     monkeypatch.setattr(open_link.sys, "platform", "win32")
-    monkeypatch.delattr(open_link.os, "startfile", raising=False)
+    monkeypatch.setattr(open_link.ctypes, "windll", None, raising=False)
     seen = {}
 
     def run(argv, **_kwargs):
@@ -459,7 +482,7 @@ def test_open_url_falls_back_to_start_when_startfile_is_missing(monkeypatch):
     assert seen["argv"] == ["cmd", "/c", "start", "", "cbi://x"]
 
 
-def test_open_url_uses_open_on_macos(monkeypatch):
+def test_open_url_uses_open_g_on_macos(monkeypatch):
     seen = {}
 
     def run(argv, **_kwargs):
@@ -469,4 +492,4 @@ def test_open_url_uses_open_on_macos(monkeypatch):
     monkeypatch.setattr(open_link.sys, "platform", "darwin")
     monkeypatch.setattr(open_link.subprocess, "run", run)
     assert open_link.open_url("cbi://open?repo=/tmp/r") == (0, "")
-    assert seen["argv"] == ["open", "cbi://open?repo=/tmp/r"]
+    assert seen["argv"] == ["open", "-g", "cbi://open?repo=/tmp/r"]

@@ -53,6 +53,8 @@
     "src/project-cache.test.ts",
     "src/model-read.ts",
     "src/editor.ts",
-    "src/editor.test.ts"
+    "src/editor.test.ts",
+    "src/reveal.ts",
+    "src/reveal.test.ts"
   ]
 }

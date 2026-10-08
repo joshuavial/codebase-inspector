@@ -1,5 +1,6 @@
 """Build and open a cbi:// link. Nothing here writes the repo or its model."""
 
+import ctypes
 import json
 import os
 import re
@@ -282,11 +283,21 @@ def _pull_request(root, number):
     return base, head
 
 
-def open_url(url):
-    """Hand a URL to the OS. The URL is one argument, never a shell command.
+# Show the window without activating it. os.startfile cannot pass this;
+# it uses SW_SHOWNORMAL, which steals focus.
+SW_SHOWNOACTIVATE = 4
 
-    macOS uses `open`. Linux uses `xdg-open`. Windows uses `os.startfile`
-    when it exists, and `cmd /c start` otherwise. The empty title is required:
+
+def open_url(url):
+    """Hand a URL to the OS without activating the app.
+
+    The URL is one argument, never a shell command.
+    macOS uses `open -g`, which does not bring the app to the foreground.
+    Linux uses `xdg-open`. It has no flag like `-g`; an inherited
+    DESKTOP_STARTUP_ID or XDG_ACTIVATION_TOKEN is what raises the window,
+    so those are removed.
+    Windows uses ShellExecuteW with SW_SHOWNOACTIVATE. When shell32 is
+    missing, `cmd /c start` is the fallback. The empty title is required:
     `start` treats the first quoted string as a window title.
     """
     if sys.platform == "win32":
@@ -297,23 +308,60 @@ def open_url(url):
 
 
 def _windows_open(url):
-    startfile = getattr(os, "startfile", None)
-    if startfile is not None:
-        try:
-            startfile(url)
-        except OSError as err:
-            return 1, str(err)
-        return 0, ""
+    try:
+        _shell_execute_no_activate(url)
+    except OSError as err:
+        return 1, str(err)
+    return 0, ""
+
+
+def _shell32():
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return None
+    return getattr(windll, "shell32", None)
+
+
+def _shell_execute_no_activate(url):
+    """ShellExecuteW(open, url, SW_SHOWNOACTIVATE). Raises OSError on failure."""
+    shell32 = _shell32()
+    if shell32 is None:
+        _windows_start(url)
+        return
+    execute = shell32.ShellExecuteW
+    if hasattr(execute, "argtypes"):
+        execute.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+        )
+        execute.restype = ctypes.c_void_p
+    rc = execute(None, "open", url, None, None, SW_SHOWNOACTIVATE)
+    code = int(rc or 0)
+    if code <= 32:
+        raise OSError(f"ShellExecute failed ({code})")
+
+
+def _windows_start(url):
+    """Last resort when shell32 is missing. `start` cannot pass SW_SHOWNOACTIVATE."""
     result = subprocess.run(["cmd", "/c", "start", "", url], capture_output=True, text=True)
-    return result.returncode, (result.stderr or result.stdout).strip()
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise OSError(detail or "start failed")
 
 
 def _xdg_open(url):
-    result = subprocess.run(["xdg-open", url], capture_output=True, text=True)
+    env = os.environ.copy()
+    env.pop("DESKTOP_STARTUP_ID", None)
+    env.pop("XDG_ACTIVATION_TOKEN", None)
+    result = subprocess.run(["xdg-open", url], capture_output=True, text=True, env=env)
     return result.returncode, (result.stderr or result.stdout).strip()
 
 
 def _mac_open(url):
-    """Hand a URL to Launch Services. Fixed argv, so the URL is never a shell command."""
-    result = subprocess.run(["open", url], capture_output=True, text=True)
+    """Hand a URL to Launch Services without activating the app. Fixed argv."""
+    result = subprocess.run(["open", "-g", url], capture_output=True, text=True)
     return result.returncode, (result.stderr or result.stdout).strip()

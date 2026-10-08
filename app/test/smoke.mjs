@@ -115,6 +115,7 @@ try {
       CBI_APP_USER_DATA: userData,
       CBI_PICK_FOLDER: fixture,
       CBI_SKIP_PROTOCOL: "1",
+      CBI_HEADLESS: "1",
     },
   });
   const page = await app.firstWindow();
@@ -123,6 +124,19 @@ try {
   page.on("pageerror", (err) => console.log(`page error: ${err}`));
   app.process().stdout?.on("data", (chunk) => process.stdout.write(chunk));
   app.process().stderr?.on("data", (chunk) => process.stderr.write(chunk));
+
+  async function assertHidden(where) {
+    const states = await app.evaluate(({ BrowserWindow }) => {
+      return BrowserWindow.getAllWindows().map((win) => ({
+        visible: win.isVisible(),
+        focused: win.isFocused(),
+      }));
+    });
+    if (states.length === 0) throw new Error(`${where}: no window`);
+    if (states.some((state) => state.visible || state.focused)) {
+      throw new Error(`${where}: window was shown ${JSON.stringify(states)}`);
+    }
+  }
 
   async function viewerEval(code) {
     let last = "no viewer";
@@ -173,6 +187,8 @@ try {
     if (await page.locator("#switcher-panel").isHidden()) await page.locator("#switcher").click();
     await page.locator("#switcher-panel").waitFor({ state: "visible" });
   }
+
+  await assertHidden("launch");
 
   await page.getByRole("button", { name: "Open folder" }).click();
   await page.locator("#project-name", { hasText: "fixture-app" }).waitFor();
@@ -320,6 +336,7 @@ try {
   }
   if (!landed.decoded.includes(nodeId)) throw new Error(`open-url did not land on ${nodeId}: ${JSON.stringify(landed)}`);
   if (!landed.back.includes("Back")) throw new Error(`back chip missing: ${JSON.stringify(landed)}`);
+  await assertHidden("deep link");
   // The hash change opens the directory watch again. A write in that same moment is easy to miss.
   await new Promise((resolve) => setTimeout(resolve, 1500));
 
@@ -383,6 +400,8 @@ try {
   }
   // The comparison reload rearms the worktree watch. A write in that moment is easy to miss.
   await new Promise((resolve) => setTimeout(resolve, 2500));
+
+  await assertHidden("compare link");
 
   const afterGit = repoSnapshot();
   if (afterGit !== beforeGit) throw new Error(`git state changed:\n${afterGit}`);

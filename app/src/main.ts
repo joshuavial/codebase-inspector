@@ -23,6 +23,7 @@ import { describeEditor, EditorError, launchEditor, normalizeChoice, planViewerO
 import { dockIcon, windowIcon } from "./icon";
 import { isCommitSha, parsePrOids, planCompare, prViewArgs, readCompareForm } from "./compare";
 import { linkFromArgv, validateOpen, verifyRef, viewerLocation } from "./deeplink";
+import { revealFor, revealWindow } from "./reveal";
 import { assertRemoteArgv, FETCH_ARGV, parseRemoteRefs, REMOTES_ARGV } from "./git-remotes";
 import { agentInstruction, mapCompare, mapVersion, modelHome, rebuildViewer, taskSummary } from "./map-project";
 import { resolveProject } from "./project";
@@ -61,6 +62,10 @@ const FETCH_TIMEOUT_MS = 60_000;
 
 app.setName("Codebase Inspector");
 if (process.env.CBI_APP_USER_DATA) app.setPath("userData", path.resolve(process.env.CBI_APP_USER_DATA));
+
+// Tests and smoke set CBI_HEADLESS=1. An accessory app is not activated on launch.
+const headless = process.env.CBI_HEADLESS === "1";
+if (headless && process.platform === "darwin") app.setActivationPolicy("accessory");
 
 interface OpenVersion {
   project: string;
@@ -1076,14 +1081,15 @@ function pickedFolder(input: string): string {
 }
 
 function focusWindow() {
-  if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
+  revealWindow(win, revealFor(headless, false));
+}
+
+function revealLink() {
+  revealWindow(win, revealFor(headless, true));
 }
 
 function refuse(message: string) {
-  focusWindow();
+  revealLink();
   send("open-error", message);
   if (shown) sendProgress({ phase: "error", error: message });
 }
@@ -1431,7 +1437,7 @@ async function openCompareLink(opened: { project: string; node: string | null; c
     node: opened.node,
     returnTo,
   });
-  focusWindow();
+  revealLink();
 }
 
 async function startCompare(spec: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -1522,7 +1528,7 @@ function flushLinks() {
 }
 
 async function handleDeepLink(raw: string) {
-  focusWindow();
+  revealLink();
   const result = validateOpen(raw);
   if (!result.ok) {
     refuse(result.error);
@@ -1556,7 +1562,7 @@ async function handleDeepLink(raw: string) {
       return;
     }
     applyBounds();
-    focusWindow();
+    revealLink();
     return;
   }
   const found = lookupCbi();
@@ -1591,7 +1597,7 @@ async function handleDeepLink(raw: string) {
     trustRef: opened.refArgs.length > 0,
     watch: opened.watch,
   });
-  focusWindow();
+  revealLink();
 }
 
 // The stock Edit > Copy accelerator handles Cmd/Ctrl+C in the main process, so the
@@ -1639,8 +1645,10 @@ async function routeFocusedCopy(): Promise<void> {
   if (!handled && !contents.isDestroyed()) contents.copy();
 }
 
-function createWindow() {
+function createWindow(fromLink = false) {
+  const how = revealFor(headless, fromLink);
   const icon = windowIcon(app.getAppPath());
+  const quiet = { backgroundThrottling: false as const };
   win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -1648,22 +1656,25 @@ function createWindow() {
     minHeight: 560,
     title: "Codebase Inspector",
     icon,
+    show: how === "focus",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#161719" : "#f6f6f3",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      ...(headless ? quiet : {}),
     },
   });
   const dock = dockIcon(app.getAppPath(), app.isPackaged);
-  if (process.platform === "darwin" && dock) app.dock?.setIcon(dock);
+  if (!headless && process.platform === "darwin" && dock) app.dock?.setIcon(dock);
   viewer = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, "viewer-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      ...(headless ? quiet : {}),
     },
   });
   win.contentView.addChildView(viewer);
@@ -1686,6 +1697,7 @@ function createWindow() {
     viewer = null;
   });
   void win.loadFile(path.join(__dirname, "index.html"));
+  if (how === "inactive") revealWindow(win, "inactive");
 }
 
 function registerIpc() {
@@ -1866,18 +1878,27 @@ if (!singleInstance) {
   // second-instance. macOS uses open-url. electron-builder `protocols`
   // registers the scheme, including the Windows registry entry.
   app.on("second-instance", (_event, argv) => {
-    if (!win || win.isDestroyed()) createWindow();
     const found = linkFromArgv(argv);
-    if (found) enqueueLink(found);
+    if (!win || win.isDestroyed()) createWindow(found !== null);
+    if (found) {
+      enqueueLink(found);
+      revealLink();
+      return;
+    }
+    // No link: the user launched the app again.
     focusWindow();
   });
   app.whenReady().then(() => {
     installEditMenu();
     registerIpc();
-    createWindow();
+    const fromLink = pendingLinks.length > 0 || linkFromArgv(process.argv) !== null;
+    createWindow(fromLink);
     flushLinks();
+    // Dock, the app icon, and the menu bar. A link does not come through here
+    // when `open -g` launched the process.
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
+      else focusWindow();
     });
   });
 }
