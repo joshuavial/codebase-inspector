@@ -1875,17 +1875,212 @@ function edgeMatches(edge, id, groups) {
   return false;
 }
 
+// Above and below the frame, each sideways edge takes its own lane unless a straight drop
+// already lands on its box. Labels sit beside that drop, and the row grows to fit them.
+const SIDE_GAP = 18, SIDE_LANE = 18, FRAME_OX = 8;
+const LINE_GAP = 10, LANE_PITCH = 18, LANE_INSET = 14, LANE_CLEAR = 12, BOX_LABEL_GAP = 8, DIRECT_DROP = 16;
+
+function assignLanes(spans) {
+  const color = spans.map(() => 0), taken = [];
+  const order = spans.map((s, i) => i).sort((a, b) => spans[a][0] - spans[b][0] || spans[a][1] - spans[b][1] || a - b);
+  for (const i of order) {
+    const [l, r] = spans[i];
+    let lane = 0;
+    for (; lane < taken.length; lane++) if (taken[lane].every(([a, b]) => r <= a || l >= b)) break;
+    if (lane === taken.length) taken.push([]);
+    taken[lane].push([l, r]);
+    color[i] = lane;
+  }
+  return color;
+}
+
+function outsideEnd(e, sideOf) {
+  if (sideOf[e.a] && !sideOf[e.b]) return e.a;
+  if (sideOf[e.b] && !sideOf[e.a]) return e.b;
+  return null;
+}
+
+function exitX(e, outsideId, at, origin) {
+  const innerId = e.a === outsideId ? e.b : e.a;
+  const ids = (e.bundle || [innerId]).filter((id) => id !== "boundary" && at && at[id]);
+  if (!ids.length) return null;
+  return origin + ids.reduce((t, id) => t + at[id].x + at[id].width / 2, 0) / ids.length;
+}
+
+function edgeLabelBox(e) {
+  return e && (e.text || e.via) ? labelBox(e) : null;
+}
+
+function labelStackH(id, edges) {
+  const boxes = edges.filter((e) => e.a === id || e.b === id).map(edgeLabelBox).filter(Boolean);
+  if (!boxes.length) return 0;
+  return boxes.reduce((t, b) => t + b.height, 0) + (boxes.length - 1) * 4;
+}
+
+function lanePlan(items) {
+  const laneOf = items.map(() => -1), jog = [];
+  items.forEach((it, i) => {
+    const sx = it.sx == null ? it.cx : it.sx;
+    const alone = items.every((o, j) => j === i || Math.abs((o.sx == null ? o.cx : o.sx) - sx) > DIRECT_DROP);
+    if (Math.abs(sx - it.cx) <= DIRECT_DROP && alone) return;
+    jog.push(i);
+  });
+  const spans = jog.map((i) => {
+    const sx = items[i].sx == null ? items[i].cx : items[i].sx;
+    return [Math.min(sx, items[i].cx) - 6, Math.max(sx, items[i].cx) + 6];
+  });
+  assignLanes(spans).forEach((lane, k) => { laneOf[jog[k]] = lane; });
+  return { laneOf, laneCount: laneOf.some((n) => n >= 0) ? Math.max(...laneOf) + 1 : 0 };
+}
+
+function sideGutter(laneCount, labelH) {
+  if (!laneCount) return labelH ? labelH + BOX_LABEL_GAP + 12 : 16;
+  const last = LANE_INSET + (laneCount - 1) * LANE_PITCH;
+  return last + LANE_CLEAR + labelH + BOX_LABEL_GAP;
+}
+
+function spreadCenters(ids, size, want, labelW, exits, bx) {
+  const order = ids.slice().sort((p, q) => want[p].x - want[q].x || (p < q ? -1 : p > q ? 1 : 0));
+  const left = {};
+  let minCenter = -Infinity, nextLeft = bx;
+  for (const id of order) {
+    const w = size[id].w, lw = labelW(id) || 0;
+    let center = Math.max(bx + want[id].x, minCenter, nextLeft + w / 2);
+    const own = new Set(exits[id] || []);
+    const foreign = Object.entries(exits).filter(([k]) => k !== id).flatMap(([, xs]) => xs).filter((x) => !own.has(x));
+    for (let n = 0; n < 8; n++) {
+      const hit = foreign.find((x) => Math.abs(x - center) <= DIRECT_DROP);
+      if (hit == null) break;
+      center = hit + DIRECT_DROP + 1;
+    }
+    left[id] = center - w / 2;
+    minCenter = lw ? center + LINE_GAP + lw + LINE_GAP : center;
+    nextLeft = left[id] + w + SIDE_GAP;
+  }
+  return left;
+}
+
+function verticalItems(ids, leftOf, edges, sideOf, at, origin, size) {
+  const onSide = new Set(ids);
+  const items = [];
+  for (const e of edges) {
+    const o = outsideEnd(e, sideOf);
+    if (!o || !onSide.has(o)) continue;
+    const sx = exitX(e, o, at, origin);
+    if (sx == null && e.a !== "boundary" && e.b !== "boundary") continue;
+    items.push({ e, o, sx, cx: leftOf[o] + size[o].w / 2 });
+  }
+  return items;
+}
+
+function stampRoutes(items, plan, side, edgeY, pos, size) {
+  const dir = side === "below" ? 1 : -1;
+  const byBox = new Map();
+  for (const it of items) {
+    if (!byBox.has(it.o)) byBox.set(it.o, []);
+    byBox.get(it.o).push(it);
+  }
+  const routes = {};
+  for (const [o, group] of byBox) {
+    const top = pos[o].y, bot = top + size[o].h;
+    let cursor = side === "below" ? top - BOX_LABEL_GAP : bot + BOX_LABEL_GAP;
+    for (const it of group) {
+      const lane = plan.laneOf[items.indexOf(it)];
+      const sx = it.sx == null ? it.cx : it.sx;
+      const endY = side === "below" ? top : bot;
+      const ly = edgeY + dir * (LANE_INSET + lane * LANE_PITCH);
+      let pts = lane < 0
+        ? [{ x: it.cx, y: edgeY }, { x: it.cx, y: endY }]
+        : [{ x: sx, y: edgeY }, { x: sx, y: ly }, { x: it.cx, y: ly }, { x: it.cx, y: endY }];
+      pts = pts.filter((p, k) => k === 0 || p.x !== pts[k - 1].x || p.y !== pts[k - 1].y);
+      const lb = edgeLabelBox(it.e);
+      let label = null;
+      if (lb) {
+        const y = side === "below" ? cursor - lb.height : cursor;
+        label = { x: it.cx + LINE_GAP, y, width: lb.width, height: lb.height };
+        cursor = side === "below" ? y - 4 : cursor + lb.height + 4;
+      }
+      routes[it.e.id] = { pts, label };
+    }
+  }
+  return routes;
+}
+
+function placeAround(arranged) {
+  const { W, H, nodes, edges: cross, sideOf, want, at } = arranged;
+  const size = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const ids = (s) => nodes.filter((n) => sideOf[n.id] === s).map((n) => n.id);
+  const above = ids("above"), below = ids("below");
+  const column = (list) => {
+    list.sort((p, q) => want[p].y - want[q].y);
+    const out = [];
+    let y = 0;
+    for (const id of list) {
+      const top = Math.max(want[id].y - size[id].h / 2, y);
+      out.push([id, top]);
+      y = top + size[id].h + SIDE_GAP;
+    }
+    return out;
+  };
+  const left = column(ids("left")), right = column(ids("right"));
+  const colW = (list) => Math.max(0, ...list.map(([id]) => size[id].w));
+  const labFor = (id) => Math.max(0, ...cross.filter((e) => e.a === id || e.b === id).map((e) => labelBox(e).width));
+  const labW = (list) => Math.max(0, ...list.map(([id]) => labFor(id)));
+  const labelW = (id) => Math.max(0, ...cross.filter((e) => e.a === id || e.b === id).map((e) => (edgeLabelBox(e) || {}).width || 0));
+  const bx = left.length ? colW(left) + labW(left) + 2 * SIDE_LANE + 8 : 0;
+  const origin = bx + FRAME_OX;
+  const exits = {};
+  for (const id of [...above, ...below]) exits[id] = [];
+  for (const e of cross) {
+    const o = outsideEnd(e, sideOf);
+    if (o && exits[o]) {
+      const sx = exitX(e, o, at, origin);
+      if (sx != null) exits[o].push(sx);
+    }
+  }
+  const aboveLeft = spreadCenters(above, size, want, labelW, exits, bx);
+  const belowLeft = spreadCenters(below, size, want, labelW, exits, bx);
+  const aboveItems = verticalItems(above, aboveLeft, cross, sideOf, at, origin, size);
+  const belowItems = verticalItems(below, belowLeft, cross, sideOf, at, origin, size);
+  const abovePlan = lanePlan(aboveItems), belowPlan = lanePlan(belowItems);
+  const aboveH = above.length ? Math.max(...above.map((id) => size[id].h)) : 0;
+  const aboveLab = above.length ? Math.max(...above.map((id) => labelStackH(id, cross))) : 0;
+  const belowLab = below.length ? Math.max(...below.map((id) => labelStackH(id, cross))) : 0;
+  const aboveGutter = above.length ? sideGutter(abovePlan.laneCount, aboveLab) : 0;
+  const belowGutter = below.length ? sideGutter(belowPlan.laneCount, belowLab) : 0;
+  const by = aboveH + aboveGutter;
+  const pos = {};
+  for (const [id, top] of left) pos[id] = { x: bx - 2 * SIDE_LANE - 8 - labW(left) - size[id].w, y: by + top };
+  const rx = bx + W + (right.length ? labW(right) + 2 * SIDE_LANE + 8 : 0);
+  for (const [id, top] of right) pos[id] = { x: rx, y: by + top };
+  for (const id of above) pos[id] = { x: aboveLeft[id], y: aboveH - size[id].h };
+  const belowY = by + H + belowGutter;
+  for (const id of below) pos[id] = { x: belowLeft[id], y: belowY };
+  const sideRoutes = {
+    ...stampRoutes(aboveItems, abovePlan, "above", by, pos, size),
+    ...stampRoutes(belowItems, belowPlan, "below", by + H, pos, size),
+  };
+  const corners = nodes.map((n) => [pos[n.id].x + size[n.id].w, pos[n.id].y + size[n.id].h]);
+  const overhang = [...above, ...below].map((id) => pos[id].x + size[id].w / 2 + LINE_GAP + labelW(id));
+  return {
+    ...arranged, pos, bx, by, size, sideRoutes,
+    width: Math.max(bx + W, ...corners.map((p) => p[0]), ...overhang) + 8,
+    height: Math.max(by + H, ...corners.map((p) => p[1])),
+  };
+}
+
 // ELK lays out the inside of a concept. Edges with both ends inside stay in that interior.
-// Externals sit on the nearest side of the boundary (above, right, below, left). The inside is
-// tried unwrapped, wrapped into rows and top to bottom; whichever scales largest wins, with a
-// preference for unwrapped left to right.
+// Externals sit on the nearest side of the boundary (above, right, below, left). Above and
+// below, each edge keeps its own lane or a straight drop, and the row spreads for the label.
+// The inside is tried unwrapped, wrapped into rows and top to bottom; whichever scales largest
+// wins, with a preference for unwrapped left to right.
 async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   const gen = ++layoutGen;
   const inner = new Set(boundary.children.map((n) => n.id));
   const insideEdges = edges.filter((e) => inner.has(e.a) && inner.has(e.b));
   const onFrame = (e) => e.a === "boundary" || e.b === "boundary";
   const crossing = edges.filter((e) => onFrame(e) || inner.has(e.a) !== inner.has(e.b));
-  const OX = 8, OY = 28, GAP = 18, LANE = 18;
+  const OX = 8, OY = 28, LANE = 18;
   const avail = availSize();
   const innerEndId = (id) => id === "boundary" || inner.has(id);
   const otherEnd = (e) => (innerEndId(e.b) ? e.a : e.b);
@@ -1946,53 +2141,6 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     return { at, W, H, nodes, edges: retargetCrossing(crossing, memberOf), sideOf, want, groups };
   };
 
-  const place = (arranged) => {
-    const { W, H, nodes, edges: cross, sideOf, want } = arranged;
-    const size = Object.fromEntries(nodes.map((n) => [n.id, n]));
-    const ids = (s) => nodes.filter((n) => sideOf[n.id] === s).map((n) => n.id);
-    const above = ids("above"), below = ids("below");
-    const column = (list) => {
-      list.sort((p, q) => want[p].y - want[q].y);
-      const out = [];
-      let y = 0;
-      for (const id of list) {
-        const top = Math.max(want[id].y - size[id].h / 2, y);
-        out.push([id, top]);
-        y = top + size[id].h + GAP;
-      }
-      return out;
-    };
-    const left = column(ids("left")), right = column(ids("right"));
-    const rowH = (list) => (list.length ? Math.max(...list.map((id) => size[id].h)) + 70 : 0);
-    const colW = (list) => Math.max(0, ...list.map(([id]) => size[id].w));
-    const labFor = (id) => Math.max(0, ...cross.filter((e) => e.a === id || e.b === id).map((e) => labelBox(e).width));
-    const labW = (list) => Math.max(0, ...list.map(([id]) => labFor(id)));
-    const bx = left.length ? colW(left) + labW(left) + 2 * LANE + 8 : 0;
-    const by = rowH(above);
-    const pos = {};
-    for (const [id, top] of left) pos[id] = { x: bx - 2 * LANE - 8 - labW(left) - size[id].w, y: by + top };
-    const rx = bx + W + (right.length ? labW(right) + 2 * LANE + 8 : 0);
-    for (const [id, top] of right) pos[id] = { x: rx, y: by + top };
-    const row = (list, y, alignBottom) => {
-      list.sort((p, q) => want[p].x - want[q].x);
-      let x = bx;
-      const tallest = Math.max(0, ...list.map((id) => size[id].h), 0);
-      for (const id of list) {
-        const lx = Math.max(bx + want[id].x - size[id].w / 2, x);
-        pos[id] = { x: lx, y: alignBottom ? y + tallest - size[id].h : y };
-        x = lx + Math.max(size[id].w, labFor(id) + 12) + GAP;
-      }
-    };
-    row(above, 0, true);
-    row(below, by + H + 70, false);
-    const corners = nodes.map((n) => [pos[n.id].x + size[n.id].w, pos[n.id].y + size[n.id].h]);
-    return {
-      ...arranged, pos, bx, by, size,
-      width: Math.max(bx + W, ...corners.map((p) => p[0])),
-      height: Math.max(by + H, ...corners.map((p) => p[1])),
-    };
-  };
-
   // Two first-tier boxes joined by an edge sit in one column; leave room for that edge's label.
   // Stated edges keep a route so they still pull layers together, but no label lane.
   const pinned = new Set(boundary.children.filter((n) => n.pinned).map((n) => n.id));
@@ -2013,7 +2161,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     for (const [dir, w, r, bias] of modes) {
       try {
         const p1 = await layoutInside(dir, w, r);
-        tries.push({ dir, wrapping: w, ratio: r, bias, p1, ...place(arrange(p1)) });
+        tries.push({ dir, wrapping: w, ratio: r, bias, p1, ...placeAround(arrange(p1)) });
       } catch (err) {
         if (!layoutErr) {
           const into = insideEdges.filter((e) => pinned.has(e.b) && !pinned.has(e.a)).map((e) => `${e.a}->${e.b}`).join(",");
@@ -2041,11 +2189,23 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       if (!pos[o] || !size[o]) return { id: e.id, sections: [], labels: [] };
       const where = best.sideOf[o];
       const box = { ...pos[o], w: size[o].w, h: size[o].h };
+      if (where === "above" || where === "below") {
+        const planned = best.sideRoutes[e.id];
+        if (!planned || planned.pts.length < 2) return { id: e.id, sections: [], labels: [] };
+        let pts = planned.pts.map((p) => ({ x: p.x, y: p.y }));
+        if (incoming) pts.reverse();
+        pts = pts.filter((p, i) => i === 0 || p.x !== pts[i - 1].x || p.y !== pts[i - 1].y);
+        const label = planned.label;
+        return {
+          id: e.id, sections: [{ startPoint: pts[0], endPoint: pts[pts.length - 1], bendPoints: pts.slice(1, -1) }],
+          labels: label ? [{ text: e.text || "", ...label }] : [],
+        };
+      }
       const ns = (e.bundle || [incoming ? e.b : e.a]).map((id) => at[id]).filter(Boolean);
       if (!ns.length && e.a !== "boundary" && e.b !== "boundary") return { id: e.id, sections: [], labels: [] };
       if (!ns.length) {
         const lb = labelBox(e);
-        const cy = box.y + box.h / 2, cx = box.x + box.w / 2;
+        const cy = box.y + box.h / 2;
         let pts, label;
         if (where === "left" || where === "right") {
           const onLeft = where === "left";
@@ -2055,12 +2215,6 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
           const edgeX = onLeft ? bx : bx + W, laneX = onLeft ? bx - LANE : bx + W + LANE, boxX = onLeft ? box.x + box.w : box.x;
           pts = [{ x: edgeX, y }, { x: laneX, y }, { x: laneX, y: cy }, { x: boxX, y: cy }];
           label = { x: onLeft ? box.x + box.w + 4 : box.x - lb.width - 4, y: cy - lb.height - 2 };
-        } else if (where === "above") {
-          pts = [{ x: cx, y: by }, { x: cx, y: box.y + box.h }];
-          label = { x: cx + 6, y: box.y + box.h + 4 };
-        } else {
-          pts = [{ x: cx, y: by + H }, { x: cx, y: box.y }];
-          label = { x: cx + 6, y: box.y - lb.height - 4 };
         }
         if (incoming) pts.reverse();
         pts = pts.filter((p, i) => i === 0 || p.x !== pts[i - 1].x || p.y !== pts[i - 1].y);
@@ -2076,29 +2230,18 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
         : e.lane === "out" ? ns.reduce((p, q) => (q.x + q.width > p.x + p.width ? q : p))
         : ns[0];
       const lb = labelBox(e);
-      const cy = box.y + box.h / 2, cx = box.x + box.w / 2;
-      const sx = dx + ns.reduce((t, k) => t + k.x + k.width / 2, 0) / ns.length;
+      const cy = box.y + box.h / 2;
       let pts, label;
-      if (where === "above") {
-        const edgeY = by, laneY = edgeY - 22;
-        pts = [{ x: sx, y: edgeY }, { x: sx, y: laneY }, { x: cx, y: laneY }, { x: cx, y: box.y + box.h }];
-        label = { x: cx + 6, y: box.y + box.h + 4 };
-      } else if (where === "below") {
-        const edgeY = by + H, laneY = edgeY + 22;
-        pts = [{ x: sx, y: edgeY }, { x: sx, y: laneY }, { x: cx, y: laneY }, { x: cx, y: box.y }];
-        label = { x: cx + 6, y: box.y - lb.height - 4 };
-      } else {
-        const onLeft = where === "left";
-        const key = (onLeft ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
-        const mid = e.lane ? n.y + n.height / 2 : ns.reduce((t, q) => t + q.y + q.height / 2, 0) / ns.length;
-        const py = dy + mid + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
-        const edgeX = onLeft ? bx : bx + W, laneX = onLeft ? bx - LANE : bx + W + LANE;
-        const y0 = py - dy, [x0, x1] = onLeft ? [0, n.x] : [n.x + n.width, p1.width + OX];
-        const blocked = (!e.lane && e.bundle) || p1.children.some((q) => q !== n && y0 > q.y - 4 && y0 < q.y + q.height + 4 && q.x < x1 && q.x + q.width > x0);
-        const innerX = onLeft ? dx + n.x : dx + n.x + n.width, boxX = onLeft ? box.x + box.w : box.x;
-        pts = [...(blocked ? [] : [{ x: innerX, y: py }]), { x: edgeX, y: py }, { x: laneX, y: py }, { x: laneX, y: cy }, { x: boxX, y: cy }];
-        label = { x: onLeft ? box.x + box.w + 4 : box.x - lb.width - 4, y: cy - lb.height - 2 };
-      }
+      const onLeft = where === "left";
+      const key = (onLeft ? "W" : "E") + n.id, k = (used[key] = (used[key] || 0) + 1) - 1;
+      const mid = e.lane ? n.y + n.height / 2 : ns.reduce((t, q) => t + q.y + q.height / 2, 0) / ns.length;
+      const py = dy + mid + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 8;
+      const edgeX = onLeft ? bx : bx + W, laneX = onLeft ? bx - LANE : bx + W + LANE;
+      const y0 = py - dy, [x0, x1] = onLeft ? [0, n.x] : [n.x + n.width, p1.width + OX];
+      const blocked = (!e.lane && e.bundle) || p1.children.some((q) => q !== n && y0 > q.y - 4 && y0 < q.y + q.height + 4 && q.x < x1 && q.x + q.width > x0);
+      const innerX = onLeft ? dx + n.x : dx + n.x + n.width, boxX = onLeft ? box.x + box.w : box.x;
+      pts = [...(blocked ? [] : [{ x: innerX, y: py }]), { x: edgeX, y: py }, { x: laneX, y: py }, { x: laneX, y: cy }, { x: boxX, y: cy }];
+      label = { x: onLeft ? box.x + box.w + 4 : box.x - lb.width - 4, y: cy - lb.height - 2 };
       if (incoming) pts.reverse();
       pts = pts.filter((p, i) => i === 0 || p.x !== pts[i - 1].x || p.y !== pts[i - 1].y);
       return {

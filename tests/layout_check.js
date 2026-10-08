@@ -340,6 +340,120 @@ async function main() {
     "call.ts → left.ts",
   ]);
 
+  // Eight externals below one frame, plus a row above. Labels stay off each other,
+  // off boxes and off the edge lines, and sideways runs do not share a lane.
+  {
+  const phrases = [
+    "opens one file with a fixed argv",
+    "fetches remote-tracking branches when asked",
+    "reads status and file rows from the model",
+    "asks the desktop to open this file in the editor",
+    "runs cbi init, scan, build, status and worktrees",
+    "resolves the pull request for cbi open",
+    "hands the cbi:// link to Launch Services",
+    "reads the model to resolve that node",
+    "lists worktrees to open a ref that is already checked out",
+  ];
+  const shell = { x: 30, y: 36, width: 280, height: 90 };
+  const deep = { x: 380, y: 36, width: 250, height: 90 };
+  const anchorX = (n) => 8 + n.x + n.width / 2;
+  const narrow = new Set([0, 1, 5]);
+  const nodes = phrases.map((text, i) => ({ id: "x" + i, w: narrow.has(i) ? 72 : 168, h: 38 }));
+  const edges = phrases.map((text, i) => ({
+    id: "e" + i, a: i < 5 ? "shell" : "deep", b: "x" + i, text, via: "exec CLI", count: i === 3 ? 2 : 1,
+  }));
+  const aboveNodes = [
+    { id: "up0", w: 80, h: 38 },
+    { id: "up1", w: 150, h: 38 },
+  ];
+  const aboveEdges = [
+    { id: "u0", a: "shell", b: "up0", text: "stores device token verifiers and the write ledger", via: "security CLI" },
+    { id: "u1", a: "shell", b: "up1", text: "preflights serve status before the shell will start", via: "exec CLI" },
+  ];
+  const sideOf = {};
+  const want = {};
+  nodes.forEach((n, i) => { sideOf[n.id] = "below"; want[n.id] = { x: i < 5 ? anchorX(shell) : anchorX(deep), y: 80 }; });
+  aboveNodes.forEach((n) => { sideOf[n.id] = "above"; want[n.id] = { x: anchorX(shell), y: 40 }; });
+  const placed = app.placeAround({
+    W: 680, H: 200, nodes: [...nodes, ...aboveNodes], edges: [...edges, ...aboveEdges], sideOf, want,
+    at: { shell, deep },
+  });
+  assert.ok(nodes.length >= 8);
+  const boxOf = (id) => ({ x: placed.pos[id].x, y: placed.pos[id].y, w: placed.size[id].w, h: placed.size[id].h });
+  const edgeFrame = { x: placed.bx, y: placed.by, w: placed.W, h: placed.H, container: true };
+  const obstacles = [edgeFrame, ...placed.nodes.map((n) => boxOf(n.id))];
+  const routed = [...edges, ...aboveEdges].map((e) => ({ e, route: placed.sideRoutes[e.id] }));
+  assert.ok(routed.every((r) => r.route && r.route.pts.length >= 2), "every external edge is routed");
+  const fake = routed.filter((r) => r.route.label).map((r) => ({
+    id: r.e.id,
+    sections: [{ startPoint: r.route.pts[0], endPoint: r.route.pts[r.route.pts.length - 1], bendPoints: r.route.pts.slice(1, -1) }],
+    labels: [{ ...r.route.label, text: r.e.text }],
+  }));
+  const em = Object.fromEntries([...edges, ...aboveEdges].map((e) => [e.id, e]));
+  app.placeEdgeLabels({ edges: fake }, em, obstacles);
+  const labels = fake.map((e) => e.labels[0]);
+  const segHits = (label, a, b) => {
+    const pad = 2;
+    const x0 = Math.min(a.x, b.x) - pad, x1 = Math.max(a.x, b.x) + pad;
+    const y0 = Math.min(a.y, b.y) - pad, y1 = Math.max(a.y, b.y) + pad;
+    return label.x < x1 && label.x + label.width > x0 && label.y < y1 && label.y + label.height > y0;
+  };
+  for (let i = 0; i < labels.length; i++) {
+    for (let j = i + 1; j < labels.length; j++) {
+      assert.ok(!hits(labels[i], labels[j]), `labels overlap ${labels[i].text} / ${labels[j].text}`);
+    }
+    for (const box of obstacles) assert.ok(!app.obstacleHits(labels[i], box), `label hits box ${labels[i].text}`);
+    for (const r of routed) {
+      const pts = r.route.pts;
+      for (let k = 1; k < pts.length; k++) {
+        assert.ok(!segHits(labels[i], pts[k - 1], pts[k]), `label sits on a line ${labels[i].text}`);
+      }
+    }
+  }
+  const horiz = [];
+  for (const r of routed) {
+    const pts = r.route.pts;
+    for (let k = 1; k < pts.length; k++) {
+      if (Math.abs(pts[k].y - pts[k - 1].y) < 0.5 && Math.abs(pts[k].x - pts[k - 1].x) > 8) horiz.push([pts[k - 1], pts[k]]);
+    }
+  }
+  for (let i = 0; i < horiz.length; i++) {
+    for (let j = i + 1; j < horiz.length; j++) {
+      const a0 = Math.min(horiz[i][0].x, horiz[i][1].x), a1 = Math.max(horiz[i][0].x, horiz[i][1].x);
+      const b0 = Math.min(horiz[j][0].x, horiz[j][1].x), b1 = Math.max(horiz[j][0].x, horiz[j][1].x);
+      const sameY = Math.abs(horiz[i][0].y - horiz[j][0].y) < 1;
+      const overlap = a0 < b1 - 4 && b0 < a1 - 4;
+      assert.ok(!(sameY && overlap), `shared horizontal lane ${horiz[i][0].y}`);
+    }
+  }
+  const alone = app.placeAround({
+    W: 400, H: 120,
+    nodes: [{ id: "only", w: 90, h: 36 }],
+    edges: [{ id: "eo", a: "shell", b: "only", text: "reads status", via: "exec CLI" }],
+    sideOf: { only: "below" },
+    want: { only: { x: anchorX(shell), y: 60 } },
+    at: { shell },
+  });
+  const drop = alone.sideRoutes.eo.pts;
+  assert.ok(drop.every((p) => p.x === drop[0].x), "a box under its source drops straight");
+
+  const flank = app.placeAround({
+    W: 400, H: 180,
+    nodes: [{ id: "L", w: 80, h: 40 }, { id: "R", w: 80, h: 40 }],
+    edges: [
+      { id: "el", a: "in", b: "L", text: "reads the model from the left side", via: "IPC" },
+      { id: "er", a: "in", b: "R", text: "writes the model out to the right side", via: "IPC" },
+    ],
+    sideOf: { L: "left", R: "right" },
+    want: { L: { x: 40, y: 70 }, R: { x: 360, y: 90 } },
+    at: { in: { x: 40, y: 40, width: 120, height: 40 } },
+  });
+  assert.ok(flank.pos.L.x + flank.size.L.w < flank.bx, "left external stays left of the frame");
+  assert.ok(flank.pos.R.x >= flank.bx + flank.W, "right external stays right of the frame");
+  const leftLabel = app.labelBox(flank.edges[0]);
+  assert.ok(flank.bx - (flank.pos.L.x + flank.size.L.w) >= leftLabel.width, "left label still fits before the frame");
+  }
+
   console.log("layout checks passed");
 }
 
