@@ -44,6 +44,7 @@ jobs:
         with:
           node-version: "22"
       - run: uv sync --frozen
+      - run: uvx --from playwright playwright install chromium-headless-shell
       - run: uv run pytest
       - run: npm ci
         working-directory: app

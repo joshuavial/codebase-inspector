@@ -116,11 +116,12 @@ def test_code_is_found_on_path_then_in_the_app_bundle(tmp_path):
     on_path.chmod(on_path.stat().st_mode | stat.S_IEXEC)
     have = {str(on_path), str(bundle)}
     check = lambda path: path in have
-    assert editor.find_program("code", path_env=str(on_path.parent), home=home, is_executable=check) == str(on_path)
-    assert editor.find_program("code", path_env="", home=home, is_executable=check) == str(bundle)
-    assert editor.find_program("code", path_env="", home=tmp_path / "nobody", is_executable=lambda _path: False) is None
+    mac = {"platform": "darwin"}
+    assert editor.find_program("code", path_env=str(on_path.parent), home=home, is_executable=check, **mac) == str(on_path)
+    assert editor.find_program("code", path_env="", home=home, is_executable=check, **mac) == str(bundle)
+    assert editor.find_program("code", path_env="", home=tmp_path / "nobody", is_executable=lambda _path: False, **mac) is None
     argv = editor.command_argv(
-        "vscode", None, "/proj", "/proj/a.ts", 2, path_env="", home=str(home), is_executable=check,
+        "vscode", None, "/proj", "/proj/a.ts", 2, path_env="", home=str(home), is_executable=check, **mac,
     )
     assert argv == [str(bundle), "--reuse-window", "/proj", "--goto", "/proj/a.ts:2"]
     with pytest.raises(EditorError, match="VS Code was not found"):
