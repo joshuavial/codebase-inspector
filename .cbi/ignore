@@ -1,0 +1,20 @@
+# cbi ignore file, gitignore syntax, paths relative to the repo root.
+# Tracked files that match are left out of the model. Edit freely:
+# `cbi init` never overwrites this file, and `cbi scan` rescans when it changes.
+
+# Fixtures, eval snapshots and build output
+fixtures/
+evals/
+test-data/
+dist*/
+build/
+*.min.js
+*.min.css
+
+# Directories of mostly data files (json, txt, csv, jsonl)
+
+# Files with minified-looking lines
+/src/cbi/viewer/vendor/elk.bundled.js
+# Team mode. The committed judgement is not part of the map.
+/.cbi/
+/.gitattributes

@@ -1,0 +1,724 @@
+{
+  "summary": "Codebase inspector maps a git repository into a SQLite model the cbi CLI can query, then shows that model as a concept map in a static viewer and an Electron app.",
+  "concepts": [
+    {
+      "id": "desktop",
+      "name": "Desktop app",
+      "summary": "The Electron shell. It runs the installed cbi CLI, keeps recents and view state outside the repo, and shows the start screen beside the concept map.",
+      "role": "app",
+      "children": [
+        {
+          "id": "shell",
+          "name": "Desktop shell",
+          "summary": "The main process, preload and renderer. Finds the cbi binary on PATH, maps the open project, watches the worktree, and switches worktrees and branches. It shows the last built map at once, toasts when a background scan changes it, opens one file in the editor from a matching worktree or a read-only git show snapshot, and shows a deep-link window without focusing it.",
+          "role": "app",
+          "entry": true,
+          "files": [
+            "app/src/cbi-bin.test.ts",
+            "app/src/cbi-bin.ts",
+            "app/src/compare.test.ts",
+            "app/src/compare.ts",
+            "app/src/git-remotes.test.ts",
+            "app/src/git-remotes.ts",
+            "app/src/icon.test.ts",
+            "app/src/icon.ts",
+            "app/src/main.ts",
+            "app/src/map-project.test.ts",
+            "app/src/map-project.ts",
+            "app/src/preload.ts",
+            "app/src/project.test.ts",
+            "app/src/project.ts",
+            "app/src/recents.test.ts",
+            "app/src/recents.ts",
+            "app/src/renderer.ts",
+            "app/src/rescan.test.ts",
+            "app/src/rescan.ts",
+            "app/src/session.test.ts",
+            "app/src/session.ts",
+            "app/src/spawn.test.ts",
+            "app/src/spawn.ts",
+            "app/src/switcher.test.ts",
+            "app/src/switcher.ts",
+            "app/src/types.ts",
+            "app/src/view-state.test.ts",
+            "app/src/view-state.ts",
+            "app/src/viewer-load.test.ts",
+            "app/src/viewer-load.ts",
+            "app/test/smoke.mjs",
+            "app/test/editor-ref.mjs",
+            "tests/test_install_app.py",
+            "app/src/editor.test.ts",
+            "app/src/editor.ts",
+            "app/src/fast-open.test.ts",
+            "app/src/fast-open.ts",
+            "app/src/model-read.ts",
+            "app/src/project-cache.test.ts",
+            "app/src/project-cache.ts",
+            "app/src/toast.test.ts",
+            "app/src/toast.ts",
+            "app/src/viewer-preload.ts",
+            "app/src/which.ts",
+            "app/src/which.test.ts",
+            "app/src/reveal.ts",
+            "app/src/reveal.test.ts"
+          ]
+        },
+        {
+          "id": "deeplinks",
+          "name": "Deep links",
+          "summary": "cbi://open links. The CLI builds a link and macOS open launches the app; the app checks the repo, ref, node and comparison, then switches the existing window.",
+          "role": "app",
+          "files": [
+            "app/src/deeplink.test.ts",
+            "app/src/deeplink.ts",
+            "src/cbi/open_link.py",
+            "tests/test_open.py"
+          ]
+        },
+        {
+          "id": "packaging",
+          "name": "App packaging",
+          "summary": "Copies the Electron window's index.html and style.css into app/dist. The app package.json build script runs this before the desktop app is packaged.",
+          "role": "app",
+          "files": [
+            "app/scripts/copy-assets.mjs"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "viewer",
+      "name": "Static viewer",
+      "summary": "The concept map opened from file://. The build copies the page and writes data/concepts.js, and the page lays boxes out with elk, falling back to deployables when the model has no concepts. The page can copy a node's agent block and open one file in the editor; a static ref view copies a git show command instead.",
+      "role": "ui",
+      "files": [
+        "scripts/smoke_viewer.py",
+        "src/cbi/build.py",
+        "src/cbi/viewer/app.js",
+        "src/cbi/viewer/render.js",
+        "tests/layout_check.js",
+        "tests/test_compare_viewer.py",
+        "tests/test_layout.py",
+        "tests/test_viewer.py",
+        "src/cbi/viewer/open-editor.js",
+        "tests/sketch_check.js",
+        "tests/test_container_edges.py",
+        "tests/test_context_viewer.py",
+        "tests/test_editor_page.py",
+        "tests/test_editor_url.py"
+      ]
+    },
+    {
+      "id": "mapper",
+      "name": "Mapper",
+      "summary": "The Python package behind the cbi command: enumeration, parsing, manifests, judgement tasks, concepts, queries, diff, review and rendering.",
+      "role": "core",
+      "children": [
+        {
+          "id": "cli",
+          "name": "Command line",
+          "summary": "The cbi entry point. Argparse dispatches every command, from init and scan through tasks, queries, diff, render, open and review. cbi check fails when changed files have no summary or owner, and cbi open-file launches the editor from a matching worktree or a read-only git show snapshot.",
+          "role": "app",
+          "entry": true,
+          "files": [
+            "src/cbi/__init__.py",
+            "src/cbi/cli.py",
+            "tests/test_cli.py",
+            "src/cbi/check.py",
+            "src/cbi/editor.py",
+            "tests/test_check.py",
+            "tests/test_editor.py"
+          ]
+        },
+        {
+          "id": "scan",
+          "name": "Scanning and enumeration",
+          "summary": "Lists tracked files with git, hashes the working tree, assigns stable node ids, and links markdown mentions. A ref scan reads blobs with git cat-file and does not check the commit out.",
+          "role": "core",
+          "files": [
+            "src/cbi/docs.py",
+            "src/cbi/files.py",
+            "src/cbi/ids.py",
+            "tests/conftest.py",
+            "tests/test_docs.py",
+            "tests/test_files.py",
+            "tests/test_ids.py",
+            "tests/test_refs.py",
+            "tests/test_scan.py"
+          ]
+        },
+        {
+          "id": "parse",
+          "name": "Parsing and resolution",
+          "summary": "Tree-sitter parsers for Python, TypeScript, TSX, JavaScript, Vue and C#, then import, call, test, env and reference resolution from the stored facts. HTTP client calls are linked to the server routes they match.",
+          "role": "core",
+          "files": [
+            "src/cbi/env.py",
+            "src/cbi/parse/__init__.py",
+            "src/cbi/parse/python.py",
+            "src/cbi/parse/typescript.py",
+            "src/cbi/resolve.py",
+            "tests/test_env.py",
+            "tests/test_injection.py",
+            "tests/test_python.py",
+            "tests/test_resolve.py",
+            "tests/test_typescript.py",
+            "src/cbi/http.py",
+            "src/cbi/parse/csharp.py",
+            "src/cbi/parse/endpoints.py",
+            "src/cbi/parse/vue.py",
+            "tests/test_csharp.py",
+            "tests/test_http.py",
+            "tests/test_routes.py",
+            "tests/test_vue.py"
+          ]
+        },
+        {
+          "id": "manifests",
+          "name": "Manifests",
+          "summary": "Detects deployables and packages from package.json, pyproject, Vite, Docker, compose, wrangler and skills, applies .cbi/structure.json, and follows imports from each entry point.",
+          "role": "core",
+          "files": [
+            "src/cbi/manifests.py",
+            "tests/test_deploy_manifests.py",
+            "tests/test_manifests.py"
+          ]
+        },
+        {
+          "id": "tasks",
+          "name": "Judgement tasks",
+          "summary": "The task protocol and the prime guide. Briefs, validation, bottom-up blocking, and summaries cached in the shared answer database. A large brief splits into parts. Team mode commits that judgement into the repo.",
+          "role": "core",
+          "files": [
+            "src/cbi/prime.py",
+            "src/cbi/tasks.py",
+            "tests/test_agent_guide.py",
+            "tests/test_structure_tasks.py",
+            "tests/test_task_kinds.py",
+            "tests/test_tracer.py",
+            "src/cbi/parts.py",
+            "src/cbi/team.py",
+            "tests/test_large_briefs.py",
+            "tests/test_parts.py",
+            "tests/test_team.py"
+          ]
+        },
+        {
+          "id": "concepts",
+          "name": "Concepts and screens",
+          "summary": "Projects .cbi/concepts.json and .cbi/screens.json on every scan: concept and external nodes, owns and relates edges, screen sketches, and entry points.",
+          "role": "core",
+          "files": [
+            "src/cbi/concepts.py",
+            "src/cbi/screens.py",
+            "tests/test_concepts.py",
+            "tests/test_screens.py"
+          ]
+        },
+        {
+          "id": "queries",
+          "name": "Queries",
+          "summary": "search, show, tests-for, status and cbi context, the reviewer queries (hotspots, orphans, cycles, deps), and ingest of lcov, coverage.py JSON and JUnit XML. cbi context writes a short Markdown block for pasting into an agent.",
+          "role": "core",
+          "files": [
+            "src/cbi/graph.py",
+            "src/cbi/ingest.py",
+            "src/cbi/query.py",
+            "tests/test_ingest.py",
+            "tests/test_query.py",
+            "tests/test_review.py",
+            "src/cbi/context.py",
+            "tests/test_context.py"
+          ]
+        },
+        {
+          "id": "changes",
+          "name": "Diff and review",
+          "summary": "Compares two models and writes the change review: a cbi:// link, a Mermaid diagram, and an optional GitHub comment.",
+          "role": "core",
+          "children": [
+            {
+              "id": "diff",
+              "name": "Diff",
+              "summary": "Compares two models by stable id. Reports concept structure, relationships, integrations, deployables, env vars, symbols, tests and moves.",
+              "role": "core",
+              "files": [
+                "scripts/smoke_compare.py",
+                "src/cbi/diff.py",
+                "tests/test_diff.py"
+              ]
+            },
+            {
+              "id": "review",
+              "name": "Review",
+              "summary": "Resolves a pull request, branch or commit range, diffs the two commits, and writes review.md. --post edits the inspector's earlier GitHub comment.",
+              "role": "core",
+              "files": [
+                "src/cbi/review.py",
+                "tests/test_change_review.py"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "render",
+          "name": "Rendering",
+          "summary": "Renders one concept-map view to PNG and SVG by opening a staged viewer page in headless Chrome. The capture waits until the page sets cbi-render-ready, then reads the screenshot and the SVG and kills that browser.",
+          "role": "core",
+          "files": [
+            "src/cbi/render.py",
+            "tests/test_render.py"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "store",
+      "name": "Model store",
+      "summary": "The SQLite model at .cbi/model.db: nodes, edges, parse facts, tasks, diagnostics, coverage and the full-text index.",
+      "role": "data",
+      "files": [
+        "src/cbi/store.py",
+        "tests/test_store.py",
+        "tests/test_readonly.py"
+      ]
+    },
+    {
+      "id": "release-notes",
+      "name": "Release notes",
+      "summary": "Prints one Keep a Changelog section for a version. Given a version and a path to CHANGELOG.md, it writes that section to stdout.",
+      "role": "core",
+      "files": [
+        ".github/changelog_notes.py",
+        "tests/test_changelog_notes.py"
+      ]
+    }
+  ],
+  "externals": [
+    {
+      "id": "git",
+      "name": "git",
+      "kind": "cli",
+      "summary": "The git command. Enumeration, ref scans, repo checks, merge-base and read-only snapshots all use a fixed argv, never a shell."
+    },
+    {
+      "id": "gh",
+      "name": "gh",
+      "kind": "cli",
+      "summary": "The GitHub CLI. Used read-only to resolve a pull request, and by cbi review --post to publish the comment."
+    },
+    {
+      "id": "chrome",
+      "name": "Chrome",
+      "kind": "cli",
+      "summary": "Headless system Chrome or Chromium. cbi render and cbi review use it to screenshot the map and read the SVG back."
+    },
+    {
+      "id": "answer-cache",
+      "name": "Answer cache",
+      "kind": "storage",
+      "summary": "The shared SQLite cache at ~/.cache/codebase-inspector/answers.db, moved with CBI_CACHE_DIR. File summaries are reused across repositories."
+    },
+    {
+      "id": "macos",
+      "name": "macOS open",
+      "kind": "platform",
+      "summary": "The macOS open command. cbi open hands it a cbi:// URL so Launch Services starts the desktop app or focuses the running one."
+    },
+    {
+      "id": "editor",
+      "name": "Editor",
+      "kind": "cli",
+      "summary": "VS Code or Cursor. cbi open-file and the desktop app launch a fixed argv, with no shell. A static page uses that editor's URL scheme instead."
+    },
+    {
+      "id": "sqlite",
+      "name": "sqlite3",
+      "kind": "cli",
+      "summary": "The sqlite3 command. The desktop app reads status and file rows from model.db with a fixed argv, so the window can open before a scan."
+    }
+  ],
+  "relationships": [
+    {
+      "from": "shell",
+      "to": "cli",
+      "label": "runs cbi init, scan, build, status and worktrees with a fixed argv"
+    },
+    {
+      "from": "shell",
+      "to": "deeplinks",
+      "label": "handles a cbi://open URL in the running app"
+    },
+    {
+      "from": "shell",
+      "to": "viewer",
+      "label": "opens the built viewer in the window",
+      "kind": "hosts"
+    },
+    {
+      "from": "deeplinks",
+      "to": "shell",
+      "label": "resolves the project, worktree and comparison the link names"
+    },
+    {
+      "from": "deeplinks",
+      "to": "scan",
+      "label": "checks the repo path and resolves the ref to a commit"
+    },
+    {
+      "from": "deeplinks",
+      "to": "queries",
+      "label": "looks up the node named in the link"
+    },
+    {
+      "from": "deeplinks",
+      "to": "store",
+      "label": "reads the model to resolve that node"
+    },
+    {
+      "from": "cli",
+      "to": "scan",
+      "label": "enumerates the working tree and scans a ref"
+    },
+    {
+      "from": "cli",
+      "to": "parse",
+      "label": "parses changed files and resolves the scan"
+    },
+    {
+      "from": "cli",
+      "to": "manifests",
+      "label": "detects deployables and applies structure.json"
+    },
+    {
+      "from": "cli",
+      "to": "tasks",
+      "label": "prints prime and runs the judgement tasks"
+    },
+    {
+      "from": "cli",
+      "to": "concepts",
+      "label": "applies the concept map and the screen sketches"
+    },
+    {
+      "from": "cli",
+      "to": "queries",
+      "label": "runs search, show, ingest and the graph queries"
+    },
+    {
+      "from": "cli",
+      "to": "diff",
+      "label": "diffs two refs or two stored models"
+    },
+    {
+      "from": "cli",
+      "to": "review",
+      "label": "writes a review of a pull request, branch or commit"
+    },
+    {
+      "from": "cli",
+      "to": "render",
+      "label": "renders one view to PNG and SVG"
+    },
+    {
+      "from": "cli",
+      "to": "viewer",
+      "label": "builds the static viewer into .cbi/viewer"
+    },
+    {
+      "from": "cli",
+      "to": "deeplinks",
+      "label": "builds a cbi://open link and launches it"
+    },
+    {
+      "from": "scan",
+      "to": "git",
+      "label": "lists tracked files, submodules and commits",
+      "via": "exec CLI",
+      "at": "src/cbi/files.py:_git"
+    },
+    {
+      "from": "shell",
+      "to": "git",
+      "label": "resolves a folder to its main worktree",
+      "via": "exec CLI",
+      "at": "app/src/project.ts:realGit"
+    },
+    {
+      "from": "shell",
+      "to": "git",
+      "label": "fetches remote-tracking branches when asked",
+      "via": "exec CLI",
+      "at": "app/src/main.ts:fetchRemotes"
+    },
+    {
+      "from": "review",
+      "to": "git",
+      "label": "finds the merge-base with main or master",
+      "via": "exec CLI",
+      "at": "src/cbi/review.py:_default_base"
+    },
+    {
+      "from": "deeplinks",
+      "to": "gh",
+      "label": "resolves the pull request named in a link",
+      "via": "exec CLI",
+      "at": "app/src/deeplink.ts:realGh"
+    },
+    {
+      "from": "deeplinks",
+      "to": "gh",
+      "label": "resolves the pull request for cbi open --pr",
+      "via": "exec CLI",
+      "at": "src/cbi/open_link.py:_pull_request"
+    },
+    {
+      "from": "review",
+      "to": "gh",
+      "label": "reads the pull request and posts the review comment",
+      "via": "exec CLI",
+      "at": "src/cbi/review.py:_gh"
+    },
+    {
+      "from": "render",
+      "to": "chrome",
+      "label": "waits until the page is ready, screenshots the map, reads the SVG, then kills Chrome",
+      "via": "exec CLI",
+      "at": "src/cbi/render.py:render_view"
+    },
+    {
+      "from": "tasks",
+      "to": "answer-cache",
+      "label": "attaches the shared answer database for this submit",
+      "via": "SQLite ATTACH",
+      "at": "src/cbi/tasks.py:attach_cache"
+    },
+    {
+      "from": "deeplinks",
+      "to": "macos",
+      "label": "hands the cbi:// link to Launch Services",
+      "via": "macOS open",
+      "at": "src/cbi/open_link.py:_mac_open"
+    },
+    {
+      "from": "mapper",
+      "to": "store",
+      "label": "reads and writes the SQLite model"
+    },
+    {
+      "from": "parse",
+      "to": "scan",
+      "label": "assigns symbol ids and classifies files it reads for env declarations"
+    },
+    {
+      "from": "parse",
+      "to": "manifests",
+      "label": "resolves package imports against detected packages"
+    },
+    {
+      "from": "manifests",
+      "to": "parse",
+      "label": "follows imports from each entry point to member files"
+    },
+    {
+      "from": "manifests",
+      "to": "queries",
+      "label": "records import cycles while detecting structure"
+    },
+    {
+      "from": "tasks",
+      "to": "scan",
+      "label": "hashes the files a brief lists"
+    },
+    {
+      "from": "tasks",
+      "to": "parse",
+      "label": "reruns resolution after a structure answer"
+    },
+    {
+      "from": "tasks",
+      "to": "manifests",
+      "label": "reruns manifest detection after confirm-structure"
+    },
+    {
+      "from": "tasks",
+      "to": "concepts",
+      "label": "opens define-concepts and stores the accepted map"
+    },
+    {
+      "from": "tasks",
+      "to": "queries",
+      "label": "prints the ingest commands for the detected test runners"
+    },
+    {
+      "from": "concepts",
+      "to": "tasks",
+      "label": "stays closed until confirm-structure is done"
+    },
+    {
+      "from": "queries",
+      "to": "concepts",
+      "label": "prints concept ownership, screens and where a deployable starts"
+    },
+    {
+      "from": "diff",
+      "to": "scan",
+      "label": "reads both commits from git objects"
+    },
+    {
+      "from": "diff",
+      "to": "cli",
+      "label": "scans each ref through the CLI so the import cycle stays local",
+      "minor": true
+    },
+    {
+      "from": "review",
+      "to": "diff",
+      "label": "turns the two models into the change list"
+    },
+    {
+      "from": "review",
+      "to": "scan",
+      "label": "resolves branch names and commits"
+    },
+    {
+      "from": "review",
+      "to": "cli",
+      "label": "scans the base and head refs",
+      "minor": true
+    },
+    {
+      "from": "review",
+      "to": "concepts",
+      "label": "groups the written review by concept"
+    },
+    {
+      "from": "review",
+      "to": "tasks",
+      "label": "opens a narrative task for the change"
+    },
+    {
+      "from": "review",
+      "to": "render",
+      "label": "captures the before and after pictures"
+    },
+    {
+      "from": "render",
+      "to": "diff",
+      "label": "marks the comparison on the capture page"
+    },
+    {
+      "from": "render",
+      "to": "viewer",
+      "label": "stages the viewer page that Chrome opens"
+    },
+    {
+      "from": "viewer",
+      "to": "queries",
+      "label": "embeds each node's copy-for-agent block in the built page"
+    },
+    {
+      "from": "queries",
+      "to": "scan",
+      "label": "recognises a commit tree when that block names a ref",
+      "minor": true
+    },
+    {
+      "from": "cli",
+      "to": "queries",
+      "label": "prints one node's copy-for-agent block"
+    },
+    {
+      "from": "cli",
+      "to": "tasks",
+      "label": "exports and imports the committed judgement when the repo opts in"
+    },
+    {
+      "from": "tasks",
+      "to": "answer-cache",
+      "label": "imports committed answers.jsonl over the matching cache rows",
+      "via": "SQLite ATTACH",
+      "at": "src/cbi/team.py:import_answers"
+    },
+    {
+      "from": "cli",
+      "to": "git",
+      "label": "finds the merge base and the paths changed since it",
+      "via": "exec CLI",
+      "at": "src/cbi/check.py:base_sha"
+    },
+    {
+      "from": "queries",
+      "to": "git",
+      "label": "reads the checked-out branch for the agent block",
+      "via": "exec CLI",
+      "at": "src/cbi/context.py:current_branch"
+    },
+    {
+      "from": "shell",
+      "to": "editor",
+      "label": "opens one file with a fixed argv",
+      "via": "exec CLI",
+      "at": "app/src/editor.ts:launchEditor"
+    },
+    {
+      "from": "cli",
+      "to": "editor",
+      "label": "opens one file with the same command shape",
+      "via": "exec CLI",
+      "at": "src/cbi/editor.py:launch"
+    },
+    {
+      "from": "viewer",
+      "to": "shell",
+      "label": "asks the desktop to open this file in the editor"
+    },
+    {
+      "from": "viewer",
+      "to": "editor",
+      "label": "opens a vscode or cursor URL when no desktop is hosting the page",
+      "via": "editor URL",
+      "at": "src/cbi/viewer/open-editor.js:editorHref"
+    },
+    {
+      "from": "shell",
+      "to": "sqlite",
+      "label": "reads status and file rows from the model without starting cbi",
+      "via": "exec CLI",
+      "at": "app/src/model-read.ts:querySqlite"
+    },
+    {
+      "from": "shell",
+      "to": "git",
+      "label": "lists worktrees to open a ref that is already checked out",
+      "via": "exec CLI",
+      "at": "app/src/editor.ts:gitWorktrees"
+    },
+    {
+      "from": "shell",
+      "to": "git",
+      "label": "reads a read-only snapshot with git show when the file is not checked out",
+      "via": "exec CLI",
+      "at": "app/src/editor.ts:gitShowBlob"
+    },
+    {
+      "from": "cli",
+      "to": "git",
+      "label": "lists worktrees to open a ref that is already checked out",
+      "via": "exec CLI",
+      "at": "src/cbi/editor.py:git_worktrees"
+    },
+    {
+      "from": "cli",
+      "to": "git",
+      "label": "reads a read-only snapshot with git show when the file is not checked out",
+      "via": "exec CLI",
+      "at": "src/cbi/editor.py:git_show_blob"
+    },
+    {
+      "from": "packaging",
+      "to": "shell",
+      "label": "copies the window HTML and CSS into dist for the desktop app"
+    }
+  ]
+}

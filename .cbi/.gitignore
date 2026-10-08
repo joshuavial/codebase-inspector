@@ -1,0 +1,6 @@
+model.db*
+viewer/
+refs/
+reviews/
+history/
+ignore.local
