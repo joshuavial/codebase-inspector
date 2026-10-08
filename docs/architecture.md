@@ -52,7 +52,7 @@ tests/
   fixtures/               builders for small synthetic repos (one per language + a submodule case)
   test_*.py
 scripts/acceptance.sh     runs the acceptance checks against a sample repo
-.claude/skills/           project skills; .agent/skills -> ../.claude/skills
+.agent/skills/            project skills (created when the first one is added)
 docs/
 ```
 
