@@ -55,6 +55,8 @@
     "src/editor.ts",
     "src/editor.test.ts",
     "src/reveal.ts",
-    "src/reveal.test.ts"
+    "src/reveal.test.ts",
+    "src/update-check.ts",
+    "src/update-check.test.ts"
   ]
 }

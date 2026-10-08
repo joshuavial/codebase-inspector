@@ -106,6 +106,7 @@ try {
       CBI_APP_USER_DATA: userData,
       CBI_PICK_FOLDER: fixture,
       CBI_SKIP_PROTOCOL: "1",
+      CBI_NO_UPDATE_CHECK: "1",
       CBI_SNAPSHOT_DIR: cache,
       CBI_EDITOR_DRY_RUN: argvLog,
       CBI_HEADLESS: "1",

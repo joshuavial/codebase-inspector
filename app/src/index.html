@@ -7,6 +7,13 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="update-banner" hidden>
+  <p id="update-message"></p>
+  <button type="button" id="update-notes">Release notes</button>
+  <button type="button" id="update-download">Download</button>
+  <button type="button" id="update-skip">Skip this version</button>
+  <button type="button" id="update-dismiss">Dismiss</button>
+</div>
 <section id="start">
   <header class="screen-head">
     <h1>Codebase Inspector</h1>
@@ -54,6 +61,13 @@
       <button type="button" id="editor-save">Save</button>
     </div>
     <p id="editor-error" class="error" hidden></p>
+  </section>
+  <section id="update-setup">
+    <h2>Updates</h2>
+    <label id="update-auto">
+      <input id="check-updates" type="checkbox" checked>
+      Check for updates automatically
+    </label>
   </section>
 </section>
 <section id="project" hidden>

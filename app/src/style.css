@@ -29,7 +29,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
-body { overflow: hidden; }
+body { overflow: hidden; display: flex; flex-direction: column; }
 button, input { font: inherit; color: inherit; }
 button {
   background: var(--panel);
@@ -45,7 +45,7 @@ h1 { font-size: 18px; font-weight: 600; }
 h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .muted { color: var(--muted); }
 .error { color: var(--warn); white-space: pre-wrap; background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; }
-#start, #project { height: 100%; }
+#start, #project { flex: 1; min-height: 0; }
 #start { overflow: auto; padding: 28px 32px 40px; display: flex; flex-direction: column; gap: 22px; }
 .lede { color: var(--muted); margin-top: 4px; }
 #drop {
@@ -80,6 +80,20 @@ h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: upp
 .cbi-row input { flex: 1; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: var(--panel); min-width: 0; }
 .cbi-row select { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: var(--panel); }
 #editor-setup { margin-top: 22px; }
+#update-setup { margin-top: 22px; }
+#update-setup label { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+#update-banner {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+#update-banner p { margin: 0; }
 #editor-preset { margin: 8px 0 0; }
 #cbi-error { margin-top: 8px; }
 #project { display: flex; flex-direction: column; }

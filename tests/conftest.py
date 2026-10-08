@@ -13,6 +13,8 @@ def answer_cache(tmp_path, monkeypatch):
     path = tmp_path / "answer-cache"
     monkeypatch.setenv("CBI_CACHE_DIR", str(path))
     monkeypatch.setenv("CBI_SNAPSHOT_DIR", str(tmp_path / "snapshots"))
+    # prime and status look for a newer release. Tests opt out so they stay offline.
+    monkeypatch.setenv("CBI_NO_UPDATE_CHECK", "1")
     return path
 
 

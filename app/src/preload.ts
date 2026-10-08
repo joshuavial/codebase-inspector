@@ -51,4 +51,14 @@ contextBridge.exposeInMainWorld("cbi", {
   onToast: (cb: (toast: ToastPayload | null) => void) => subscribe("toast", cb),
   acceptToast: (): Promise<void> => ipcRenderer.invoke("toast-action"),
   dismissToast: (): void => ipcRenderer.send("toast-dismiss"),
+  onUpdateBanner: (cb: (notice: UpdateNotice | null) => void) => subscribe("update-banner", cb),
+  openUpdate: (which: "notes" | "download"): Promise<void> => ipcRenderer.invoke("update-open", which),
+  skipUpdate: (): Promise<void> => ipcRenderer.invoke("update-skip"),
+  dismissUpdate: (): Promise<void> => ipcRenderer.invoke("update-dismiss"),
+  getUpdateSetting: (): Promise<boolean> => ipcRenderer.invoke("get-update-setting"),
+  setUpdateSetting: (auto: boolean): Promise<boolean> => ipcRenderer.invoke("set-update-setting", auto),
 });
+
+type UpdateNotice =
+  | { kind: "available"; message: string; notesUrl: string; downloadUrl: string; version: string }
+  | { kind: "info"; message: string };

@@ -117,10 +117,20 @@ function readFile(json: string): FileShape {
 }
 
 function writeFile(file: string, value: FileShape) {
+  const body = `${JSON.stringify(value, null, 2)}\n`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  fs.renameSync(tmp, file);
+  // A shared `.tmp` name in the temp directory can vanish between the write and the rename.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const tmp = `${file}.${process.pid}.${attempt}.tmp`;
+    try {
+      fs.writeFileSync(tmp, body);
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      if (attempt === 2) throw err;
+    }
+  }
 }
 
 /**

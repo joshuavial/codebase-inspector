@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeTheme, webContents } from "electron";
+import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeTheme, shell, webContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { findCbi, isExecutable, readSetting, writeSetting } from "./cbi-bin";
@@ -19,6 +19,17 @@ import {
 import { querySqlite } from "./model-read";
 import { viewFromCache, type ProjectSnapshot } from "./project-cache";
 import { errorToast, updateToast } from "./toast";
+import {
+  DAY_MS,
+  RELEASES_URL,
+  fetchRelease,
+  readState,
+  runCheck,
+  setAutoCheck,
+  skipRelease,
+  writeState,
+  type UpdateBanner,
+} from "./update-check";
 import { describeEditor, EditorError, launchEditor, normalizeChoice, planViewerOpen, readEditorSettings, refEditorContext, writeEditorSettings } from "./editor";
 import { dockIcon, windowIcon } from "./icon";
 import { isCommitSha, parsePrOids, planCompare, prViewArgs, readCompareForm } from "./compare";
@@ -337,6 +348,7 @@ function applyBounds() {
     height: Math.round(stageBounds.height),
   });
   viewer.setVisible(true);
+  startAutomaticUpdateChecks();
 }
 
 let loadToken = 0;
@@ -753,7 +765,11 @@ async function rescan(gen: number, key: string) {
   const current = version;
   const db = modelDbPath(current.cwd, current.project, current.ref, current.head);
   const before = new Map(shownFiles);
-  await captureCurrent();
+  try {
+    await captureCurrent();
+  } catch {
+    // A failed view save must not cancel the scan behind the map.
+  }
   if (gen !== generation || rescanEpoch !== epoch || !version || version.key !== key) return;
   session?.stop();
   session = null;
@@ -1619,6 +1635,90 @@ async function handleDeepLink(raw: string) {
 // The stock Edit > Copy accelerator handles Cmd/Ctrl+C in the main process, so the
 // map never sees it. This item asks the focused page to copy the agent block, and
 // falls back to a normal copy when that page has a text selection or is not the map.
+type UpdateNotice =
+  | ({ kind: "available" } & UpdateBanner)
+  | { kind: "info"; message: string };
+
+let currentNotice: UpdateNotice | null = null;
+let updatesArmed = false;
+let updateFlight: Promise<void> = Promise.resolve();
+
+function updateStatePath(): string {
+  return path.join(app.getPath("userData"), "update-check.json");
+}
+
+function releasesUrl(): string {
+  const override = process.env.CBI_UPDATE_URL;
+  if (override && /^https?:\/\//.test(override)) return override;
+  return RELEASES_URL;
+}
+
+function enqueueUpdate(job: () => Promise<void>): Promise<void> {
+  const run = updateFlight.then(job, job);
+  updateFlight = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+function showUpdateNotice(notice: UpdateNotice | null): void {
+  currentNotice = notice;
+  send("update-banner", notice);
+}
+
+async function checkForUpdatesOnce(manual: boolean): Promise<void> {
+  if (!manual && process.env.CBI_NO_UPDATE_CHECK === "1") return;
+  const file = updateStatePath();
+  const result = await runCheck({
+    current: app.getVersion(),
+    state: readState(file),
+    now: Date.now(),
+    manual,
+    platform: process.platform,
+    arch: process.arch,
+    url: releasesUrl(),
+    fetch: fetchRelease,
+  });
+  writeState(file, result.state);
+  if (result.banner) {
+    showUpdateNotice({ kind: "available", ...result.banner });
+    return;
+  }
+  if (manual && result.message) showUpdateNotice({ kind: "info", message: result.message });
+}
+
+function checkForUpdates(manual: boolean): Promise<void> {
+  return enqueueUpdate(() => checkForUpdatesOnce(manual));
+}
+
+function startAutomaticUpdateChecks(): void {
+  if (updatesArmed) return;
+  updatesArmed = true;
+  // CBI_NO_UPDATE_CHECK=1 is the same opt-out as the CLI. The in-app setting is separate.
+  if (process.env.CBI_NO_UPDATE_CHECK === "1") return;
+  void checkForUpdates(false);
+  setInterval(() => { void checkForUpdates(false); }, DAY_MS);
+}
+
+function openExternalUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "::1";
+  // macOS builds are unsigned, so nothing installs the update. Open it in the browser.
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) return;
+  void shell.openExternal(url).catch(() => undefined);
+}
+
+function checkForUpdatesItem(): Electron.MenuItemConstructorOptions {
+  return {
+    id: "check-for-updates",
+    label: "Check for updates",
+    click: () => { void checkForUpdates(true); },
+  };
+}
+
 function installEditMenu(): void {
   const copy: Electron.MenuItemConstructorOptions = {
     label: "Copy",
@@ -1639,12 +1739,29 @@ function installEditMenu(): void {
         : [{ role: "delete" as const }, { type: "separator" as const }, { role: "selectAll" as const }]),
     ],
   };
+  const applicationMenu: Electron.MenuItemConstructorOptions = {
+    label: app.name,
+    submenu: [
+      { role: "about" },
+      { type: "separator" },
+      checkForUpdatesItem(),
+      { type: "separator" },
+      { role: "services" },
+      { type: "separator" },
+      { role: "hide" },
+      { role: "hideOthers" },
+      { role: "unhide" },
+      { type: "separator" },
+      { role: "quit" },
+    ],
+  };
   const template: Electron.MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    ...(process.platform === "darwin" ? [applicationMenu] : []),
     { role: "fileMenu" },
     edit,
     { role: "viewMenu" },
     { role: "windowMenu" },
+    ...(process.platform === "darwin" ? [] : [{ label: "Help", submenu: [checkForUpdatesItem()] }]),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -1737,6 +1854,29 @@ function registerIpc() {
     return views;
   });
   ipcMain.handle("toast-action", () => acceptUpdate());
+  ipcMain.handle("update-open", (_event, which: unknown) => {
+    if (!currentNotice || currentNotice.kind !== "available") return;
+    openExternalUrl(which === "notes" ? currentNotice.notesUrl : which === "download" ? currentNotice.downloadUrl : "");
+  });
+  ipcMain.handle("update-skip", () => enqueueUpdate(async () => {
+    if (!currentNotice || currentNotice.kind !== "available") return;
+    const file = updateStatePath();
+    writeState(file, skipRelease(readState(file), currentNotice.version));
+    showUpdateNotice(null);
+  }));
+  ipcMain.handle("update-dismiss", () => {
+    showUpdateNotice(null);
+  });
+  ipcMain.handle("get-update-setting", () => readState(updateStatePath()).auto);
+  ipcMain.handle("set-update-setting", async (_event, auto: unknown) => {
+    if (typeof auto !== "boolean") return readState(updateStatePath()).auto;
+    await enqueueUpdate(async () => {
+      const file = updateStatePath();
+      writeState(file, setAutoCheck(readState(file), auto));
+    });
+    if (auto && updatesArmed && process.env.CBI_NO_UPDATE_CHECK !== "1") await checkForUpdates(false);
+    return auto;
+  });
   ipcMain.on("toast-dismiss", () => {
     pendingUpdate = null;
     send("toast", null);

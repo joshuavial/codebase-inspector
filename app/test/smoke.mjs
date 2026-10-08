@@ -119,6 +119,7 @@ try {
       CBI_PICK_FOLDER: fixture,
       CBI_SKIP_PROTOCOL: "1",
       CBI_HEADLESS: "1",
+      CBI_NO_UPDATE_CHECK: "1",
     },
   });
   const page = await app.firstWindow();

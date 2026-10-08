@@ -55,7 +55,7 @@ jobs:
       - name: App smoke (hidden windows)
         if: runner.os == 'macOS'
         working-directory: app
-        run: node test/smoke.mjs && node test/editor-ref.mjs
+        run: node test/smoke.mjs && node test/editor-ref.mjs && node test/update-smoke.mjs
       - name: Package (unsigned)
         working-directory: app
         run: npx --no-install electron-builder ${{ matrix.args }}

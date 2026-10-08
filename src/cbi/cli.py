@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import build, check, concepts, context, diff, docs, editor, files, graph, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team
+from cbi import build, check, concepts, context, diff, docs, editor, files, graph, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -701,7 +701,16 @@ def cmd_tests_for(args):
 
 
 def cmd_status(args):
-    return _query(args, query.status)
+    code = _query(args, query.status)
+    if code == 0 and not args.json:
+        _print_update_notice()
+    return code
+
+
+def _print_update_notice():
+    line = update_check.notice()
+    if line:
+        print(line)
 
 
 def cmd_hotspots(args):
@@ -1089,7 +1098,10 @@ def main(argv=None):
 def _main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "prime":
-        return prime.run(args.out)
+        code = prime.run(args.out)
+        if code == 0:
+            _print_update_notice()
+        return code
     handler = HANDLERS.get(args.command)
     if not handler:
         print(f"cbi {args.command}: not implemented yet", file=sys.stderr)

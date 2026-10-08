@@ -11,6 +11,7 @@
     "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\"",
     "smoke": "npm run build && node test/smoke.mjs",
     "editor-ref": "npm run build && node test/editor-ref.mjs",
+    "update-smoke": "npm run build && node test/update-smoke.mjs",
     "package": "npm run build && electron-builder --mac dir --arm64"
   },
   "build": {

@@ -79,6 +79,10 @@ interface StageBounds {
   height: number;
 }
 
+type UpdateNotice =
+  | { kind: "available"; message: string; notesUrl: string; downloadUrl: string; version: string }
+  | { kind: "info"; message: string };
+
 interface CbiApi {
   pickFolder(): Promise<string | null>;
   openPath(projectPath: string): Promise<void>;
@@ -111,6 +115,12 @@ interface CbiApi {
   onToast(cb: (toast: ToastPayload | null) => void): () => void;
   acceptToast(): Promise<void>;
   dismissToast(): void;
+  onUpdateBanner(cb: (notice: UpdateNotice | null) => void): () => void;
+  openUpdate(which: "notes" | "download"): Promise<void>;
+  skipUpdate(): Promise<void>;
+  dismissUpdate(): Promise<void>;
+  getUpdateSetting(): Promise<boolean>;
+  setUpdateSetting(auto: boolean): Promise<boolean>;
 }
 
 interface Window {
@@ -171,6 +181,13 @@ const toastMessage = must<HTMLElement>("toast-message");
 const toastAction = must<HTMLButtonElement>("toast-action");
 const toastDetails = must<HTMLButtonElement>("toast-details");
 const toastDetail = must<HTMLElement>("toast-detail");
+const updateBanner = must<HTMLElement>("update-banner");
+const updateMessage = must<HTMLElement>("update-message");
+const updateNotes = must<HTMLButtonElement>("update-notes");
+const updateDownload = must<HTMLButtonElement>("update-download");
+const updateSkip = must<HTMLButtonElement>("update-skip");
+const updateDismiss = must<HTMLButtonElement>("update-dismiss");
+const checkUpdates = must<HTMLInputElement>("check-updates");
 
 let progressPhase = "";
 
@@ -330,6 +347,21 @@ function renderCbi(info: CbiInfo) {
   }
   cbiError.hidden = !info.error;
   cbiError.textContent = info.error ?? "";
+}
+
+function renderUpdate(notice: UpdateNotice | null) {
+  if (!notice) {
+    updateBanner.hidden = true;
+  } else {
+    updateBanner.hidden = false;
+    updateMessage.textContent = notice.message;
+    const available = notice.kind === "available";
+    updateNotes.hidden = !available;
+    updateDownload.hidden = !available;
+    updateSkip.hidden = !available;
+    updateDismiss.hidden = available;
+  }
+  if (!project.hidden) reportBounds();
 }
 
 function renderToast(payload: ToastPayload | null) {
@@ -515,6 +547,23 @@ window.cbi.onProgress(appendProgress);
 window.cbi.onRecents(renderRecents);
 window.cbi.onError(showError);
 window.cbi.onToast(renderToast);
+window.cbi.onUpdateBanner(renderUpdate);
+
+updateNotes.addEventListener("click", () => {
+  void window.cbi.openUpdate("notes");
+});
+updateDownload.addEventListener("click", () => {
+  void window.cbi.openUpdate("download");
+});
+updateSkip.addEventListener("click", () => {
+  void window.cbi.skipUpdate();
+});
+updateDismiss.addEventListener("click", () => {
+  void window.cbi.dismissUpdate();
+});
+checkUpdates.addEventListener("change", () => {
+  void window.cbi.setUpdateSetting(checkUpdates.checked);
+});
 
 toastAction.addEventListener("click", () => {
   void window.cbi.acceptToast();
@@ -721,3 +770,6 @@ window.cbi.onVersions((list) => {
 void window.cbi.listRecents().then(renderRecents);
 void window.cbi.getCbi().then(renderCbi);
 void window.cbi.getEditor().then(renderEditor).catch(() => undefined);
+void window.cbi.getUpdateSetting().then((auto) => {
+  checkUpdates.checked = auto !== false;
+}).catch(() => undefined);
