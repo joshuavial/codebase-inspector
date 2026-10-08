@@ -8,6 +8,7 @@ import urllib.parse
 import pytest
 
 from cbi.cli import main
+from cbi import open_link
 from cbi.open_link import (
     NO_HANDLER,
     build_compare_url,
@@ -402,3 +403,70 @@ def test_open_uses_fixed_git_argv(make_repo, monkeypatch, capsys):
     for cmd in git:
         assert cmd[1] not in forbidden
         assert cmd[1:3] != ["worktree", "add"]
+
+
+class _Run:
+    def __init__(self):
+        self.returncode = 0
+        self.stderr = ""
+        self.stdout = ""
+
+
+def test_open_url_uses_xdg_open_on_linux(monkeypatch):
+    seen = {}
+
+    def run(argv, **_kwargs):
+        seen["argv"] = argv
+        return _Run()
+
+    monkeypatch.setattr(open_link.sys, "platform", "linux")
+    monkeypatch.setattr(open_link.subprocess, "run", run)
+    assert open_link.open_url("cbi://open?repo=/tmp/r") == (0, "")
+    assert seen["argv"] == ["xdg-open", "cbi://open?repo=/tmp/r"]
+
+
+def test_open_url_uses_startfile_on_windows(monkeypatch):
+    monkeypatch.setattr(open_link.sys, "platform", "win32")
+    calls = []
+    monkeypatch.setattr(open_link.os, "startfile", lambda url: calls.append(url), raising=False)
+    assert open_link.open_url("cbi://open?repo=C:/src") == (0, "")
+    assert calls == ["cbi://open?repo=C:/src"]
+
+
+def test_open_url_startfile_error_is_a_failure(monkeypatch):
+    monkeypatch.setattr(open_link.sys, "platform", "win32")
+
+    def boom(_url):
+        raise OSError("no handler")
+
+    monkeypatch.setattr(open_link.os, "startfile", boom, raising=False)
+    code, detail = open_link.open_url("cbi://open?repo=C:/src")
+    assert code == 1
+    assert "no handler" in detail
+
+
+def test_open_url_falls_back_to_start_when_startfile_is_missing(monkeypatch):
+    monkeypatch.setattr(open_link.sys, "platform", "win32")
+    monkeypatch.delattr(open_link.os, "startfile", raising=False)
+    seen = {}
+
+    def run(argv, **_kwargs):
+        seen["argv"] = argv
+        return _Run()
+
+    monkeypatch.setattr(open_link.subprocess, "run", run)
+    assert open_link.open_url("cbi://x") == (0, "")
+    assert seen["argv"] == ["cmd", "/c", "start", "", "cbi://x"]
+
+
+def test_open_url_uses_open_on_macos(monkeypatch):
+    seen = {}
+
+    def run(argv, **_kwargs):
+        seen["argv"] = argv
+        return _Run()
+
+    monkeypatch.setattr(open_link.sys, "platform", "darwin")
+    monkeypatch.setattr(open_link.subprocess, "run", run)
+    assert open_link.open_url("cbi://open?repo=/tmp/r") == (0, "")
+    assert seen["argv"] == ["open", "cbi://open?repo=/tmp/r"]

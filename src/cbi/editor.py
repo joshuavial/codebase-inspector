@@ -21,7 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from cbi import files, query
 
@@ -152,29 +152,88 @@ def mac_candidates(name, home):
     return [root / rel for root in roots]
 
 
-def find_program(name, *, path_env, home, is_executable=None):
-    """Absolute path of name on PATH, else the macOS app bundle, else None."""
-    check = _executable if is_executable is None else is_executable
-    for directory in (path_env or "").split(os.pathsep):
-        if not directory:
-            continue
-        candidate = str(Path(directory) / name)
-        if check(candidate):
-            return candidate
-    for candidate in mac_candidates(name, home):
-        if check(str(candidate)):
-            return str(candidate)
+def command_names(name, platform=None):
+    """Filenames to try. Windows looks for `code.cmd` before `code.exe`.
+
+    Node and Python do not search PATHEXT for an absolute path, so the `.cmd`
+    launcher has to be named. Other tools (`git`, `cbi`) prefer `.exe`.
+    """
+    plat = sys.platform if platform is None else platform
+    if plat != "win32":
+        return [name]
+    if name in ("code", "cursor"):
+        return [f"{name}.cmd", f"{name}.exe", name]
+    return [f"{name}.exe", f"{name}.cmd", name]
+
+
+def _path_sep(platform):
+    if platform is None:
+        return os.pathsep
+    return ";" if platform == "win32" else ":"
+
+
+def _join_program(directory, filename, platform):
+    if platform == "win32":
+        return str(PureWindowsPath(directory) / filename)
+    return str(Path(directory) / filename)
+
+
+def _where_program(name):
+    """First hit from `where`. Missing `where`, or no hit, is None."""
+    try:
+        result = subprocess.run(
+            ["where", name], capture_output=True, text=True, timeout=5, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        found = line.strip()
+        if found:
+            return found
     return None
 
 
-def resolve_program(token, *, path_env, home, is_executable=None):
+def find_program(name, *, path_env, home, is_executable=None, platform=None, where=None):
+    """Absolute path of name on PATH, else a platform fallback, else None.
+
+    macOS falls back to the app bundle. Windows falls back to `where` after
+    PATH. `where` runs only on a Windows host unless the caller passes it,
+    so a test that sets platform to win32 does not spawn `where` here.
+    """
+    check = _executable if is_executable is None else is_executable
+    plat = sys.platform if platform is None else platform
+    for directory in (path_env or "").split(_path_sep(platform)):
+        if not directory:
+            continue
+        for filename in command_names(name, plat):
+            candidate = _join_program(directory, filename, plat)
+            if check(candidate):
+                return candidate
+    if plat == "darwin":
+        for candidate in mac_candidates(name, home):
+            if check(str(candidate)):
+                return str(candidate)
+    if plat == "win32":
+        finder = where if where is not None else (_where_program if sys.platform == "win32" else None)
+        if finder is not None:
+            found = finder(name)
+            if found and check(found):
+                return found
+    return None
+
+
+def resolve_program(token, *, path_env, home, is_executable=None, platform=None, where=None):
     """argv[0]: an absolute path is used as given; a bare name is looked up."""
     check = _executable if is_executable is None else is_executable
     if "/" in token or "\\" in token:
         if check(token):
             return token
         raise EditorError(f"The editor command was not found: {token}")
-    found = find_program(token, path_env=path_env, home=home, is_executable=check)
+    found = find_program(
+        token, path_env=path_env, home=home, is_executable=check, platform=platform, where=where,
+    )
     if found:
         return found
     label = _BIN_LABEL.get(token)
@@ -194,14 +253,18 @@ def template_text(editor, template):
         raise EditorError(f"Unknown editor {editor}.", code=2) from None
 
 
-def command_argv(editor, template, project, file, line, *, path_env=None, home=None, is_executable=None):
+def command_argv(editor, template, project, file, line, *, path_env=None, home=None,
+                 is_executable=None, platform=None, where=None):
     """The argv that opens file:line in project. The program is an absolute path."""
     if path_env is None:
         path_env = os.environ.get("PATH", "")
     if home is None:
         home = str(Path.home())
     argv = fill_template(template_text(editor, template), project, file, line)
-    argv[0] = resolve_program(argv[0], path_env=path_env, home=home, is_executable=is_executable)
+    argv[0] = resolve_program(
+        argv[0], path_env=path_env, home=home, is_executable=is_executable,
+        platform=platform, where=where,
+    )
     return argv
 
 
@@ -273,15 +336,31 @@ def snapshot_notice(branch, sha):
     return f"Opened a read-only copy from {label} ({sha[:7]}); not checked out locally."
 
 
-def snapshot_cache(cache_dir=None, home=None):
-    """Where read-only copies live. Tests set `CBI_SNAPSHOT_DIR` or cache_dir."""
+def snapshot_cache(cache_dir=None, home=None, platform=None, env=None):
+    """Where read-only copies live. Tests set `CBI_SNAPSHOT_DIR` or cache_dir.
+
+    An explicit home is the root. LOCALAPPDATA and XDG_CACHE_HOME are read
+    only when home is omitted, so a test does not pick up the machine's cache.
+    """
     if cache_dir:
         return Path(cache_dir)
-    env = os.environ.get("CBI_SNAPSHOT_DIR")
-    if env:
-        return Path(env)
-    base = Path(home) if home else Path.home()
-    return base / "Library" / "Caches" / "codebase-inspector" / "snapshots"
+    environ = os.environ if env is None else env
+    override = environ.get("CBI_SNAPSHOT_DIR")
+    if override:
+        return Path(override)
+    plat = sys.platform if platform is None else platform
+    if plat == "win32":
+        if home is None and environ.get("LOCALAPPDATA"):
+            return Path(environ["LOCALAPPDATA"]) / "codebase-inspector" / "snapshots"
+        base = Path(home) if home is not None else Path(environ.get("USERPROFILE") or Path.home())
+        return base / "AppData" / "Local" / "codebase-inspector" / "snapshots"
+    if plat == "darwin":
+        base = Path(home) if home is not None else Path.home()
+        return base / "Library" / "Caches" / "codebase-inspector" / "snapshots"
+    if home is None and environ.get("XDG_CACHE_HOME"):
+        return Path(environ["XDG_CACHE_HOME"]) / "codebase-inspector" / "snapshots"
+    base = Path(home) if home is not None else Path(environ.get("HOME") or Path.home())
+    return base / ".cache" / "codebase-inspector" / "snapshots"
 
 
 def repo_snapshot_name(repo):
@@ -435,14 +514,32 @@ def resolve_ref_target(rel_path, line, *, repo, branch, sha, cache_dir=None, hom
     }
 
 
-def launch(argv):
-    """Start argv detached. No shell. The editor outlives this process."""
+def _popen_kwargs(platform=None):
+    """Detach without a shell. Windows has no `start_new_session`."""
+    plat = sys.platform if platform is None else platform
+    if plat == "win32":
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        return {"creationflags": flags}
+    return {"start_new_session": True}
+
+
+def launch(argv, platform=None):
+    """Start argv detached. No shell. The editor outlives this process.
+
+    A Windows `.cmd` or `.bat` cannot be started by CreateProcess. It is one
+    quoted command line after `cmd.exe /d /s /c`.
+    """
+    plat = sys.platform if platform is None else platform
+    cmd = list(argv)
+    if plat == "win32" and cmd and str(cmd[0]).lower().endswith((".cmd", ".bat")):
+        cmd = ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(list(argv))]
     subprocess.Popen(
-        argv,
+        cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **_popen_kwargs(plat),
     )
 
 

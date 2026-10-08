@@ -21,6 +21,8 @@
     "src/project.test.ts",
     "src/cbi-bin.ts",
     "src/cbi-bin.test.ts",
+    "src/which.ts",
+    "src/which.test.ts",
     "src/icon.ts",
     "src/icon.test.ts",
     "src/spawn.ts",

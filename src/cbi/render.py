@@ -15,6 +15,7 @@ import socket
 import sqlite3
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -66,6 +67,12 @@ _APP_BINARIES = (
     "Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
 )
 _PATH_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome")
+_WIN_BINARIES = (
+    "Google/Chrome/Application/chrome.exe",
+    "Google/Chrome Beta/Application/chrome.exe",
+    "Chromium/Application/chrome.exe",
+)
+_WIN_PATH_NAMES = ("chrome.exe", "chrome", "chromium.exe", "chromium")
 _SIDES = (("base", "before.png", "before.svg"), ("head", "after.png", "after.svg"))
 _ASSETS = Path(__file__).parent / "viewer"
 _TIMEOUT = 120
@@ -77,33 +84,55 @@ class RenderError(Exception):
         self.code = code
 
 
+def _windows_chrome_roots():
+    """Program Files and the per-user local app dir. Empty entries are skipped."""
+    roots = []
+    for key in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        value = os.environ.get(key)
+        if value:
+            roots.append(Path(value))
+    return roots
+
+
 def application_dirs():
-    """Where macOS keeps .app bundles. Tests replace this."""
+    """Where system Chrome lives. Tests replace this with a zero-arg function."""
+    if sys.platform == "win32":
+        return _windows_chrome_roots()
     root = Path("/Applications")
     return [root] if root.is_dir() else []
 
 
-def find_chrome(env=None, applications=None):
+def find_chrome(env=None, applications=None, platform=None):
     """The first system Chrome or Chromium, or None.
 
-    Applications directories first, then the usual names on PATH.
-    `env` defaults to the process environment. A file that is not executable
-    does not count.
+    macOS looks in application directories first, then the usual names on PATH.
+    Windows looks under Program Files, then `chrome.exe` on PATH.
+    Linux is PATH only. `env` defaults to the process environment. A file that
+    is not executable does not count. `application_dirs` is called with no
+    arguments so a test can replace it with a zero-arg function.
     """
     if env is None:
         env = os.environ
-    if applications is None:
-        applications = application_dirs()
-    for root in applications:
+    plat = sys.platform if platform is None else platform
+    roots = application_dirs() if applications is None else applications
+    if plat == "win32":
+        # App-bundle paths stay in the list so a caller can pass either layout.
+        rels = _WIN_BINARIES + _APP_BINARIES
+        names = _WIN_PATH_NAMES + _PATH_NAMES
+    else:
+        rels = _APP_BINARIES
+        names = _PATH_NAMES
+    for root in roots:
         root = Path(root)
-        for rel in _APP_BINARIES:
+        for rel in rels:
             candidate = root / rel
             if _can_run(candidate):
                 return candidate
-    for directory in env.get("PATH", "").split(os.pathsep):
+    sep = os.pathsep if platform is None else (";" if plat == "win32" else ":")
+    for directory in env.get("PATH", "").split(sep):
         if not directory:
             continue
-        for name in _PATH_NAMES:
+        for name in names:
             candidate = Path(directory) / name
             if _can_run(candidate):
                 return candidate
@@ -328,7 +357,7 @@ def _capture(chrome, page, timeout=_TIMEOUT):
         _chrome_argv(chrome, profile, Path(page).resolve().as_uri()),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        start_new_session=True,
+        **_popen_kwargs(),
     )
     chunks = []
     reader = threading.Thread(target=_drain, args=(proc.stderr, chunks), daemon=True)
@@ -344,8 +373,31 @@ def _capture(chrome, page, timeout=_TIMEOUT):
         reader.join(timeout=2)
 
 
+def _popen_kwargs():
+    """Detach Chrome. Windows has no process session to kill with killpg."""
+    if sys.platform == "win32":
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        flags |= getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        return {"creationflags": flags}
+    return {"start_new_session": True}
+
+
 def _kill_group(proc):
-    """SIGKILL the session Chrome leads, then wait so a helper cannot keep the profile."""
+    """Stop Chrome, then wait so a helper cannot keep the profile.
+
+    On Windows the process is killed directly. Elsewhere the session is killed.
+    """
+    if sys.platform == "win32":
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except OSError:

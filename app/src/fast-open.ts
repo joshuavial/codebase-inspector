@@ -83,10 +83,17 @@ export function viewerForTarget(opts: {
   return opts.exists(index) ? index : null;
 }
 
+/** SQLite URI. A Windows drive letter is not encoded: file:///C:/repo/.cbi/model.db. */
+export function fileUri(db: string): string {
+  const normalized = db.replace(/\\/g, "/");
+  const encoded = normalized.split("/").map((part) => /^[A-Za-z]:$/.test(part) ? part : encodeURIComponent(part)).join("/");
+  const prefix = /^[A-Za-z]:/.test(encoded) ? "file:///" : "file:";
+  return `${prefix}${encoded}?immutable=1`;
+}
+
 /** `sqlite3` argv. immutable so a status read does not create or touch the wal shared-memory file. */
 export function sqliteArgs(db: string, sql: string): string[] {
-  const uri = `file:${db.split("/").map((part) => encodeURIComponent(part)).join("/")}?immutable=1`;
-  return ["-batch", "-noheader", "-separator", "|", uri, sql];
+  return ["-batch", "-noheader", "-separator", "|", fileUri(db), sql];
 }
 
 export function statusQuery(): string {

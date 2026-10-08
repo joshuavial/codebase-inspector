@@ -4,12 +4,49 @@
 
 ## Install
 
-Needs Python 3.11 or later and [uv](https://docs.astral.sh/uv/).
+You need git and [uv](https://docs.astral.sh/uv/) (Python 3.11 or later). Desktop builds are on the [Releases](https://github.com/joshuavial/codebase-inspector/releases) page. The builds are unsigned.
+
+### macOS
+
+Download the arm64 `.dmg` or `.zip`. Move Codebase Inspector to Applications.
+
+Gatekeeper blocks an unsigned app the first time you open it. Control-click the app, choose Open, then Open again. After it is in Applications you can also clear the download flag:
+
+```
+xattr -dr com.apple.quarantine "/Applications/Codebase Inspector.app"
+```
+
+### Windows
+
+Download the `.exe` installer or the `.zip` and run it.
+
+SmartScreen says Windows protected your PC. Choose More info, then Run anyway.
+
+### Linux
+
+Download the `.AppImage` or the `.deb`. Mark the AppImage executable (`chmod +x`) and run it. Install the `.deb` with `sudo apt install ./<downloaded.deb>`, using the file name from the release.
+
+### Command line
+
+From a checkout:
 
 ```
 uv tool install .
-cbi prime
 ```
+
+From the 0.1.0 wheel:
+
+```
+uv tool install https://github.com/joshuavial/codebase-inspector/releases/download/v0.1.0/codebase_inspector-0.1.0-py3-none-any.whl
+```
+
+Or from git:
+
+```
+uv tool install git+https://github.com/joshuavial/codebase-inspector
+```
+
+Then `cbi prime`.
 
 ## Quick start
 

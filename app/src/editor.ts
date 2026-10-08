@@ -8,6 +8,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { commandExecutable, findOnPath } from "./which";
 
 export const EDITORS = ["vscode", "cursor", "none"] as const;
 export const TEMPLATES = {
@@ -116,15 +117,22 @@ export function findProgram(name: string, opts: {
   pathEnv: string;
   home: string;
   isExecutable?: (file: string) => boolean;
+  platform?: string;
+  where?: (name: string) => string | null;
 }): string | null {
+  const platform = opts.platform ?? process.platform;
   const check = opts.isExecutable ?? defaultExecutable;
-  for (const directory of (opts.pathEnv || "").split(path.delimiter)) {
-    if (!directory) continue;
-    const candidate = path.join(directory, name);
-    if (check(candidate)) return candidate;
-  }
-  for (const candidate of macCandidates(name, opts.home)) {
-    if (check(candidate)) return candidate;
+  const onPath = findOnPath(name, {
+    pathEnv: opts.pathEnv,
+    platform,
+    isExecutable: check,
+    where: opts.where,
+  });
+  if (onPath) return onPath;
+  if (platform === "darwin") {
+    for (const candidate of macCandidates(name, opts.home)) {
+      if (check(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -143,6 +151,8 @@ export function resolveProgram(token: string, opts: {
   pathEnv: string;
   home: string;
   isExecutable?: (file: string) => boolean;
+  platform?: string;
+  where?: (name: string) => string | null;
 }): string {
   const check = opts.isExecutable ?? defaultExecutable;
   if (token.includes("/") || token.includes("\\")) {
@@ -167,11 +177,15 @@ export function commandArgv(editor: string, template: string | null | undefined,
   pathEnv?: string;
   home?: string;
   isExecutable?: (file: string) => boolean;
+  platform?: string;
+  where?: (name: string) => string | null;
 } = {}): string[] {
   const pathEnv = opts.pathEnv ?? process.env.PATH ?? "";
   const home = opts.home ?? os.homedir();
   const argv = fillTemplate(templateText(editor, template), project, file, line);
-  argv[0] = resolveProgram(argv[0], { pathEnv, home, isExecutable: opts.isExecutable });
+  argv[0] = resolveProgram(argv[0], {
+    pathEnv, home, isExecutable: opts.isExecutable, platform: opts.platform, where: opts.where,
+  });
   return argv;
 }
 
@@ -255,10 +269,24 @@ export function snapshotNotice(branch: string, sha: string): string {
   return `Opened a read-only copy from ${label} (${sha.slice(0, 7)}); not checked out locally.`;
 }
 
-export function snapshotCache(cacheDir?: string | null, home?: string): string {
+export function snapshotCache(
+  cacheDir?: string | null,
+  home?: string,
+  platform: string = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   if (cacheDir) return cacheDir;
-  if (process.env.CBI_SNAPSHOT_DIR) return process.env.CBI_SNAPSHOT_DIR;
-  return path.join(home ?? os.homedir(), "Library", "Caches", "codebase-inspector", "snapshots");
+  if (env.CBI_SNAPSHOT_DIR) return env.CBI_SNAPSHOT_DIR;
+  if (platform === "win32") {
+    if (home == null && env.LOCALAPPDATA) return path.win32.join(env.LOCALAPPDATA, "codebase-inspector", "snapshots");
+    const base = home ?? env.USERPROFILE ?? os.homedir();
+    return path.win32.join(base, "AppData", "Local", "codebase-inspector", "snapshots");
+  }
+  if (platform === "darwin") {
+    return path.join(home ?? os.homedir(), "Library", "Caches", "codebase-inspector", "snapshots");
+  }
+  if (home == null && env.XDG_CACHE_HOME) return path.posix.join(env.XDG_CACHE_HOME, "codebase-inspector", "snapshots");
+  return path.posix.join(home ?? env.HOME ?? os.homedir(), ".cache", "codebase-inspector", "snapshots");
 }
 
 export function parseWorktrees(text: string): WorktreeRow[] {
@@ -282,7 +310,7 @@ export function parseWorktrees(text: string): WorktreeRow[] {
 
 function gitWorktrees(repo: string): WorktreeRow[] {
   try {
-    const out = execFileSync("git", ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+    const out = execFileSync(commandExecutable("git"), ["-C", repo, "worktree", "list", "--porcelain"], { encoding: "utf8" });
     return parseWorktrees(out);
   } catch {
     throw new EditorError("Could not list worktrees.");
@@ -291,7 +319,7 @@ function gitWorktrees(repo: string): WorktreeRow[] {
 
 function gitShowBlob(repo: string, sha: string, rel: string): Buffer {
   try {
-    return execFileSync("git", ["-C", repo, "--no-pager", "show", "--no-textconv", `${sha}:${rel}`], {
+    return execFileSync(commandExecutable("git"), ["-C", repo, "--no-pager", "show", "--no-textconv", `${sha}:${rel}`], {
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch {
@@ -301,7 +329,7 @@ function gitShowBlob(repo: string, sha: string, rel: string): Buffer {
 
 export function repoSnapshotName(repo: string): string {
   try {
-    const common = execFileSync("git", ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8" }).trim();
+    const common = execFileSync(commandExecutable("git"), ["-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"], { encoding: "utf8" }).trim();
     const dir = path.resolve(common);
     if (path.basename(dir) === ".git") {
       const name = path.basename(path.dirname(dir));
@@ -462,6 +490,22 @@ export function planViewerOpen(opts: {
   }
 }
 
+/** Argv actually spawned. A Windows `.cmd` goes through `cmd.exe /c` as one quoted line. */
+export function detachedArgv(argv: string[], platform: string = process.platform): { command: string; args: string[] } {
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(argv[0] || "")) {
+    return { command: "cmd.exe", args: ["/d", "/s", "/c", quoteWin(argv)] };
+  }
+  return { command: argv[0], args: argv.slice(1) };
+}
+
+function quoteWin(argv: string[]): string {
+  return argv.map((arg) => {
+    if (arg.length === 0) return "\"\"";
+    if (!/[\s"]/.test(arg)) return arg;
+    return `"${arg.replace(/"/g, "\\\"")}"`;
+  }).join(" ");
+}
+
 /** Start argv detached. No shell. `CBI_EDITOR_DRY_RUN` records argv and does not spawn. */
 export function launchEditor(argv: string[]) {
   const dry = process.env.CBI_EDITOR_DRY_RUN;
@@ -469,7 +513,8 @@ export function launchEditor(argv: string[]) {
     fs.appendFileSync(dry, `${JSON.stringify(argv)}\n`);
     return;
   }
-  const child = spawn(argv[0], argv.slice(1), { detached: true, stdio: "ignore", shell: false });
+  const spec = detachedArgv(argv);
+  const child = spawn(spec.command, spec.args, { detached: true, stdio: "ignore", shell: false });
   child.unref();
 }
 

@@ -100,10 +100,10 @@ def _project_root(root, project):
     """Absolute path embedded for the editor URL. A commit tree exposes .root."""
     chosen = project if project is not None else root
     if isinstance(chosen, Path):
-        return str(chosen.resolve())
+        return chosen.resolve().as_posix()
     found = getattr(chosen, "root", None)
     if isinstance(found, Path):
-        return str(found.resolve())
+        return found.resolve().as_posix()
     return ""
 
 

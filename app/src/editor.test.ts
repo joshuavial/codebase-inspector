@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import {
   commandArgv,
+  detachedArgv,
   EditorError,
   fillTemplate,
   findProgram,
@@ -14,6 +15,7 @@ import {
   readEditorSettings,
   refEditorContext,
   resolveRefTarget,
+  snapshotCache,
   snapshotNotice,
   splitTemplate,
   TEMPLATES,
@@ -212,6 +214,46 @@ test("code is taken from PATH, then the app bundle", () => {
     pathEnv: "", home, isExecutable: (file) => file === bundle,
   });
   assert.deepEqual(argv, [bundle, "--reuse-window", "/proj", "--goto", "/proj/a.ts:2"]);
+});
+
+test("windows looks up code.cmd and caches snapshots under LocalAppData", () => {
+  const cmd = "C:\\bin\\code.cmd";
+  const found = findProgram("code", {
+    pathEnv: "C:\\empty;C:\\bin",
+    home: "C:\\Users\\me",
+    platform: "win32",
+    where: () => null,
+    isExecutable: (file) => file === cmd,
+  });
+  assert.equal(found, cmd);
+  const viaWhere = findProgram("code", {
+    pathEnv: "",
+    home: "C:\\Users\\me",
+    platform: "win32",
+    where: () => "D:\\editors\\code.cmd",
+    isExecutable: (file) => file === "D:\\editors\\code.cmd",
+  });
+  assert.equal(viaWhere, "D:\\editors\\code.cmd");
+  assert.equal(
+    snapshotCache(null, "C:\\Users\\me", "win32", {}),
+    "C:\\Users\\me\\AppData\\Local\\codebase-inspector\\snapshots",
+  );
+  assert.equal(
+    snapshotCache(null, undefined, "win32", { LOCALAPPDATA: "D:\\Cache" }),
+    "D:\\Cache\\codebase-inspector\\snapshots",
+  );
+  assert.equal(
+    snapshotCache(null, "/home/me", "linux", {}),
+    "/home/me/.cache/codebase-inspector/snapshots",
+  );
+  assert.equal(
+    snapshotCache(null, "/home/me", "linux", { XDG_CACHE_HOME: "/var/cache" }),
+    "/home/me/.cache/codebase-inspector/snapshots",
+  );
+  const spec = detachedArgv(["C:\\bin\\code.cmd", "--goto", "C:\\proj\\a.ts:1"], "win32");
+  assert.equal(spec.command, "cmd.exe");
+  assert.deepEqual(spec.args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.match(spec.args[3], /code\.cmd/);
 });
 
 test("none does not launch, and a custom template must name the file", () => {

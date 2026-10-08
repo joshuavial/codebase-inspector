@@ -1,6 +1,7 @@
 """Build and open a cbi:// link. Nothing here writes the repo or its model."""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -92,7 +93,7 @@ def build_compare_url(repo, compare, node=None):
 
 
 def run(args, launch=None):
-    """Print the link and hand it to macOS open. Returns a process exit code."""
+    """Print the link and hand it to the OS. Returns a process exit code."""
     try:
         return _run(args, launch)
     except OpenError as err:
@@ -128,7 +129,7 @@ def _run(args, launch):
         node = _node(root, ref, args.node) if args.node else None
         url = build_url(root, ref, node)
     print(url)
-    opener = launch or _mac_open
+    opener = launch or open_url
     code, _detail = opener(url)
     if code != 0:
         print(NO_HANDLER, file=sys.stderr)
@@ -279,6 +280,37 @@ def _pull_request(root, number):
     files.resolve_commit(root, base)
     files.resolve_commit(root, head)
     return base, head
+
+
+def open_url(url):
+    """Hand a URL to the OS. The URL is one argument, never a shell command.
+
+    macOS uses `open`. Linux uses `xdg-open`. Windows uses `os.startfile`
+    when it exists, and `cmd /c start` otherwise. The empty title is required:
+    `start` treats the first quoted string as a window title.
+    """
+    if sys.platform == "win32":
+        return _windows_open(url)
+    if sys.platform == "darwin":
+        return _mac_open(url)
+    return _xdg_open(url)
+
+
+def _windows_open(url):
+    startfile = getattr(os, "startfile", None)
+    if startfile is not None:
+        try:
+            startfile(url)
+        except OSError as err:
+            return 1, str(err)
+        return 0, ""
+    result = subprocess.run(["cmd", "/c", "start", "", url], capture_output=True, text=True)
+    return result.returncode, (result.stderr or result.stdout).strip()
+
+
+def _xdg_open(url):
+    result = subprocess.run(["xdg-open", url], capture_output=True, text=True)
+    return result.returncode, (result.stderr or result.stdout).strip()
 
 
 def _mac_open(url):

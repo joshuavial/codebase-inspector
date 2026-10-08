@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { allowedGhArgs, parsePrOids, prViewArgs } from "./compare";
 import { realGit, resolveProject, type GitResult, type GitRunner } from "./project";
+import { commandExecutable } from "./which";
 
 export type GhRunner = (cwd: string, args: string[]) => GitResult;
 
@@ -89,7 +90,12 @@ export function allowedGitArgs(args: readonly string[]): boolean {
     || line === "rev-parse --abbrev-ref HEAD";
 }
 
-export function parseOpenUrl(raw: string): { ok: true; query: OpenQuery } | { ok: false; error: string } {
+/** Absolute on the platform the link was built for. `path.isAbsolute` follows the host. */
+export function isAbsolutePath(value: string, platform: string = process.platform): boolean {
+  return (platform === "win32" ? path.win32 : path.posix).isAbsolute(value);
+}
+
+export function parseOpenUrl(raw: string, platform: string = process.platform): { ok: true; query: OpenQuery } | { ok: false; error: string } {
   let url: URL;
   try {
     url = new URL(raw);
@@ -113,11 +119,11 @@ export function parseOpenUrl(raw: string): { ok: true; query: OpenQuery } | { ok
   }
   if (!repo) return { ok: false, error: "The link needs a repo path." };
   if (repo.includes("\0") || repo.includes("\n") || hasDotDot(repo)) return { ok: false, error: "That path is not allowed." };
-  if (!path.isAbsolute(repo)) return { ok: false, error: "The repo path must be absolute." };
+  if (!isAbsolutePath(repo, platform)) return { ok: false, error: "The repo path must be absolute." };
   if (ref !== null && (ref.includes("\0") || ref.includes("\n") || hasDotDot(ref))) {
     return { ok: false, error: "That path is not allowed." };
   }
-  if (ref !== null && ref !== "" && !path.isAbsolute(ref) && !safeRef(ref)) return { ok: false, error: `unknown ref ${ref}` };
+  if (ref !== null && ref !== "" && !isAbsolutePath(ref, platform) && !safeRef(ref)) return { ok: false, error: `unknown ref ${ref}` };
   if (ref === "") return { ok: false, error: "unknown ref" };
   let compareSides: { base: string; head: string } | null = null;
   if (compare !== null) {
@@ -138,7 +144,7 @@ export function parseOpenUrl(raw: string): { ok: true; query: OpenQuery } | { ok
 export function realGh(cwd: string, args: string[]): GitResult {
   if (!allowedGhArgs(args)) throw new Error(`refusing gh ${args.join(" ")}`);
   try {
-    const stdout = execFileSync("gh", args, {
+    const stdout = execFileSync(commandExecutable("gh"), args, {
       cwd,
       shell: false,
       encoding: "utf8",

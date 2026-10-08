@@ -155,7 +155,7 @@ def test_build_writes_the_editor_config(tmp_path):
     text = (viewer.parent / "data" / "editor.js").read_text()
     assert text.startswith('cbiLoad("editor", ')
     assert '"editor":"vscode"' in text
-    assert str(project.resolve()) in text
+    assert project.resolve().as_posix() in text
     html = viewer.read_text()
     assert html.index("open-editor.js") < html.index("app.js") < html.index("data/editor.js")
     assert html.index("app.js") < html.index("data/diff.js") < html.index("data/concepts.js")
@@ -188,6 +188,64 @@ def test_launch_does_not_use_a_shell(monkeypatch):
     assert seen["argv"] == ["/bin/echo", "hi"]
     assert seen["kwargs"]["start_new_session"] is True
     assert seen["kwargs"].get("shell") is not True
+
+    seen.clear()
+    editor.launch([r"C:\Program Files\code.cmd", "--goto", r"C:\proj\a.ts:1"], platform="win32")
+    assert seen["argv"][0] == "cmd.exe"
+    assert seen["argv"][1:4] == ["/d", "/s", "/c"]
+    assert "code.cmd" in seen["argv"][4]
+    assert seen["kwargs"]["creationflags"] & 0x00000200
+    assert seen["kwargs"].get("shell") is not True
+    assert "start_new_session" not in seen["kwargs"]
+
+
+def test_windows_editor_lookup_prefers_code_cmd(tmp_path):
+    assert editor.command_names("code", "win32") == ["code.cmd", "code.exe", "code"]
+    assert editor.command_names("git", "win32") == ["git.exe", "git.cmd", "git"]
+    assert editor.command_names("code", "linux") == ["code"]
+    home = tmp_path / "home"
+    cmd = r"C:\bin\code.cmd"
+    exe = r"C:\bin\code.exe"
+    have = {cmd, exe}
+
+    def check(path):
+        return path in have
+
+    assert editor.find_program(
+        "code", path_env=r"C:\empty;C:\bin", home=home, is_executable=check,
+        platform="win32", where=lambda _name: None,
+    ) == cmd
+    assert editor.find_program(
+        "code", path_env=r"C:\empty", home=home, is_executable=check,
+        platform="win32", where=lambda _name: exe,
+    ) == exe
+    assert editor.find_program(
+        "code", path_env="", home=home, is_executable=lambda _path: False,
+        platform="linux", where=lambda _name: exe,
+    ) is None
+
+
+def test_snapshot_cache_follows_the_platform(tmp_path, monkeypatch):
+    monkeypatch.delenv("CBI_SNAPSHOT_DIR", raising=False)
+    home = tmp_path / "home"
+    assert editor.snapshot_cache(home=home, platform="win32", env={}) == (
+        home / "AppData" / "Local" / "codebase-inspector" / "snapshots"
+    )
+    assert editor.snapshot_cache(home=home, platform="linux", env={}) == (
+        home / ".cache" / "codebase-inspector" / "snapshots"
+    )
+    assert editor.snapshot_cache(home=home, platform="darwin", env={}) == (
+        home / "Library" / "Caches" / "codebase-inspector" / "snapshots"
+    )
+    assert editor.snapshot_cache(platform="linux", env={"XDG_CACHE_HOME": str(tmp_path / "xdg")}) == (
+        tmp_path / "xdg" / "codebase-inspector" / "snapshots"
+    )
+    assert editor.snapshot_cache(
+        home=home, platform="linux", env={"XDG_CACHE_HOME": str(tmp_path / "xdg")},
+    ) == home / ".cache" / "codebase-inspector" / "snapshots"
+    assert editor.snapshot_cache(platform="win32", env={"LOCALAPPDATA": str(tmp_path / "local")}) == (
+        tmp_path / "local" / "codebase-inspector" / "snapshots"
+    )
 
 
 def _fake_code(tmp_path, monkeypatch):

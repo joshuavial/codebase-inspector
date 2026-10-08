@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { commandExecutable, missingGit } from "./which";
 
 export interface GitResult {
   code: number;
@@ -24,7 +25,7 @@ export const GIT_ARGV = [
 const NOT_A_REPO = "This folder is not inside a git repository.";
 const BARE = "This is a bare repository, so there is no working tree to map.";
 const NO_WORKTREE = "This repository has no working tree to map.";
-const NO_GIT = "git was not found on PATH. Install the Xcode command line tools, or set PATH so this app can see git.";
+const NO_GIT = missingGit();
 
 export type ResolveResult =
   | { ok: true; main: string; branch: string }
@@ -32,7 +33,7 @@ export type ResolveResult =
 
 export function realGit(cwd: string, args: string[]): GitResult {
   try {
-    const stdout = execFileSync("git", args, {
+    const stdout = execFileSync(commandExecutable("git"), args, {
       cwd,
       shell: false,
       encoding: "utf8",

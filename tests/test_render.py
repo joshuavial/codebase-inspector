@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -88,6 +89,39 @@ def test_find_chrome_prefers_applications_then_path(tmp_path):
     assert found == chrome
 
 
+def test_find_chrome_on_windows_uses_program_files_then_path(tmp_path):
+    root = tmp_path / "pf"
+    chrome = _exe(root / "Google" / "Chrome" / "Application" / "chrome.exe")
+    found = render.find_chrome(env={"PATH": ""}, applications=[root], platform="win32")
+    assert found == chrome
+    path_dir = tmp_path / "bin"
+    exe = _exe(path_dir / "chrome.exe")
+    found = render.find_chrome(env={"PATH": str(path_dir)}, applications=[], platform="win32")
+    assert found == exe
+
+
+def test_chrome_process_flags_on_windows(monkeypatch):
+    monkeypatch.setattr(render.sys, "platform", "win32")
+    flags = render._popen_kwargs()
+    assert flags["creationflags"] & 0x00000200
+    assert "start_new_session" not in flags
+
+    class Proc:
+        def __init__(self):
+            self.killed = 0
+
+        def kill(self):
+            self.killed += 1
+
+        def wait(self, timeout=None):
+            return 0
+
+    proc = Proc()
+    render._kill_group(proc)
+    assert proc.killed == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows reports every existing file as executable")
 def test_find_chrome_ignores_files_that_are_not_executable(tmp_path):
     apps = tmp_path / "Applications"
     binary = apps / "Google Chrome.app/Contents/MacOS/Google Chrome"

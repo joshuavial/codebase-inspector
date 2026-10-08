@@ -40,12 +40,23 @@ COMMANDS = {
 }
 
 
+def package_version():
+    """Installed distribution version. pyproject.toml is the source."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("codebase-inspector")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="cbi",
         description="Map a codebase into a model that agents can query and people can browse. "
         "New here? Run `cbi prime`.",
     )
+    parser.add_argument("--version", action="version", version=f"cbi {package_version()}")
     sub = parser.add_subparsers(dest="command", metavar="<command>", required=True)
     for name, help_text in COMMANDS.items():
         cmd = sub.add_parser(name, help=help_text, description=DESCRIPTIONS.get(name, help_text),

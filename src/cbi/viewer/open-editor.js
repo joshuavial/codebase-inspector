@@ -9,11 +9,17 @@ function cbiSetEditor(value) {
   if (value && typeof value === "object") EDITOR = value;
 }
 
+function normalizeRoot(value) {
+  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
 function projectRoot() {
-  if (EDITOR.root) return String(EDITOR.root).replace(/\/+$/, "");
+  if (EDITOR.root) return normalizeRoot(EDITOR.root);
   try {
     if (location.protocol !== "file:") return "";
-    const file = decodeURIComponent(location.pathname);
+    // A Windows file URL pathname is /C:/repo/.cbi/viewer/index.html.
+    let file = decodeURIComponent(location.pathname);
+    if (/^\/[A-Za-z]:\//.test(file)) file = file.slice(1);
     const at = file.indexOf("/.cbi/");
     if (at > 0) return file.slice(0, at);
   } catch (e) { /* opened from somewhere that is not a built viewer */ }
@@ -21,16 +27,21 @@ function projectRoot() {
 }
 
 // vscode://file/<abs path>:<line> and the same shape for Cursor. none has no URL.
+// A Windows drive letter is not percent-encoded: vscode://file/C:/repo/src/a.ts:1.
 function editorHref(file, line) {
   const name = EDITOR.editor || "vscode";
   if (name === "none") return "";
   const scheme = name === "cursor" ? "cursor" : "vscode";
   const n = Number(line) > 0 ? Number(line) : 1;
-  const rel = String(file || "").replace(/^\/+/, "");
+  const rel = String(file || "").replace(/\\/g, "/").replace(/^\/+/, "");
   const root = projectRoot();
-  const abs = root ? `${root}/${rel}` : (rel.startsWith("/") ? rel : `/${rel}`);
-  const encoded = abs.split("/").map((part) => encodeURIComponent(part)).join("/");
-  return `${scheme}://file${encoded}:${n}`;
+  let abs;
+  if (root) abs = `${root}/${rel}`;
+  else if (/^[A-Za-z]:\//.test(rel)) abs = rel;
+  else abs = rel.startsWith("/") ? rel : `/${rel}`;
+  const encoded = abs.split("/").map((part) => /^[A-Za-z]:$/.test(part) ? part : encodeURIComponent(part)).join("/");
+  const pathPart = encoded.startsWith("/") ? encoded : `/${encoded}`;
+  return `${scheme}://file${pathPart}:${n}`;
 }
 window.cbiEditorHref = editorHref;
 

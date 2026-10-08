@@ -38,4 +38,4 @@ npm run smoke
 npm run package
 ```
 
-This writes an unsigned arm64 app to `release/mac-arm64/Codebase Inspector.app`. `scripts/install-app.sh` copies that app to `/Applications` and installs the CLI. Gatekeeper will refuse a double-click until the app is signed; `npm start` is the way to run it in development.
+This writes an unsigned arm64 app to `release/mac-arm64/Codebase Inspector.app`. `scripts/install-app.sh` copies that app to `/Applications` and installs the CLI. Gatekeeper will refuse a double-click until the app is signed; `npm start` is the way to run it in development. A tagged release also builds an unsigned Windows installer and zip, and a Linux AppImage and deb.

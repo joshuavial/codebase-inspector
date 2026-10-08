@@ -1,8 +1,21 @@
+import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from cbi.cli import COMMANDS, main
+
+
+def test_version_matches_the_package(capsys):
+    text = (Path(__file__).parents[1] / "pyproject.toml").read_text()
+    assert 'version = "0.1.0"' in text
+    app = json.loads((Path(__file__).parents[1] / "app" / "package.json").read_text())
+    assert app["version"] == "0.1.0"
+    with pytest.raises(SystemExit) as caught:
+        main(["--version"])
+    assert caught.value.code == 0
+    assert capsys.readouterr().out.strip() == "cbi 0.1.0"
 
 
 def test_help_lists_every_command(capsys):

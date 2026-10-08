@@ -121,6 +121,17 @@ test("viewer location keeps a back chip when a window is already open", () => {
 test("argv carries a cbi link for a second instance", () => {
   assert.equal(linkFromArgv(["electron", ".", "cbi://open?repo=%2Ftmp%2Frepo"]), "cbi://open?repo=%2Ftmp%2Frepo");
   assert.equal(linkFromArgv(["electron", "."]), null);
+  const win = "cbi://open?repo=C%3A%5Csrc%5Crepo";
+  assert.equal(linkFromArgv(["C:\\Program Files\\Codebase Inspector\\app.exe", win]), win);
+  const parsed = parseOpenUrl(win, "win32");
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.query.repo, "C:\\src\\repo");
+  const slash = parseOpenUrl("cbi://open?repo=C%3A%2Fsrc%2Frepo", "win32");
+  assert.equal(slash.ok, true);
+  if (!slash.ok) return;
+  assert.equal(slash.query.repo, "C:/src/repo");
+  assert.equal(parseOpenUrl(win).ok, false);
 });
 
 test("git argv for a link is read-only", () => {

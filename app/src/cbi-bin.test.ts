@@ -42,6 +42,32 @@ test("PATH is searched, then ~/.local/bin/cbi", () => {
   assert.deepEqual(local, { ok: true, path: "/Users/me/.local/bin/cbi" });
 });
 
+test("windows searches PATH for cbi.exe, then the user local bin, then where", () => {
+  const exe = "C:\\bin\\cbi.exe";
+  const onPath = lookup([exe])({
+    pathEnv: "C:\\Windows;C:\\bin",
+    home: "C:\\Users\\me",
+    platform: "win32",
+    where: () => { throw new Error("where should not run"); },
+  });
+  assert.deepEqual(onPath, { ok: true, path: exe });
+  const local = "C:\\Users\\me\\.local\\bin\\cbi.exe";
+  const fromHome = lookup([local])({
+    pathEnv: "C:\\Windows",
+    home: "C:\\Users\\me",
+    platform: "win32",
+    where: () => null,
+  });
+  assert.deepEqual(fromHome, { ok: true, path: local });
+  const fromWhere = lookup(["D:\\tools\\cbi.cmd"])({
+    pathEnv: "C:\\Windows",
+    home: "C:\\Users\\nobody",
+    platform: "win32",
+    where: () => "D:\\tools\\cbi.cmd",
+  });
+  assert.deepEqual(fromWhere, { ok: true, path: "D:\\tools\\cbi.cmd" });
+});
+
 test("a missing cbi explains how to install it", () => {
   const found = lookup([])({ pathEnv: "/usr/bin", home: "/Users/nobody" });
   assert.equal(found.ok, false);

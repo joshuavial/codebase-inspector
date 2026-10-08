@@ -26,6 +26,7 @@ import { linkFromArgv, validateOpen, verifyRef, viewerLocation } from "./deeplin
 import { assertRemoteArgv, FETCH_ARGV, parseRemoteRefs, REMOTES_ARGV } from "./git-remotes";
 import { agentInstruction, mapCompare, mapVersion, modelHome, rebuildViewer, taskSummary } from "./map-project";
 import { resolveProject } from "./project";
+import { commandExecutable } from "./which";
 import { RecentsStore } from "./recents";
 import { BranchPoll, WorktreeWatch } from "./rescan";
 import { ProjectSession } from "./session";
@@ -703,7 +704,7 @@ function verifyCommit(repo: string, ref: string): string | null {
   const args = verifyCommitArgv(ref);
   if (!args) return null;
   try {
-    const sha = execFileSync("git", args, {
+    const sha = execFileSync(commandExecutable("git"), args, {
       cwd: repo,
       encoding: "utf8",
       timeout: 15_000,
@@ -1861,6 +1862,9 @@ if (!singleInstance) {
     event.preventDefault();
     enqueueLink(url);
   });
+  // Windows and Linux put a cbi:// URL in argv, on first launch and on
+  // second-instance. macOS uses open-url. electron-builder `protocols`
+  // registers the scheme, including the Windows registry entry.
   app.on("second-instance", (_event, argv) => {
     if (!win || win.isDestroyed()) createWindow();
     const found = linkFromArgv(argv);

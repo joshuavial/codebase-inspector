@@ -137,6 +137,14 @@ test("status and file rows parse without a cbi process", () => {
     "-batch", "-noheader", "-separator", "|", "file:/repos/app/.cbi/model.db?immutable=1", "SELECT 1",
   ]);
   assert.ok(sqliteArgs("/repos/my app/.cbi/model.db", "SELECT 1")[4]?.includes("my%20app"));
+  assert.equal(
+    sqliteArgs("C:\\repos\\app\\.cbi\\model.db", "SELECT 1")[4],
+    "file:///C:/repos/app/.cbi/model.db?immutable=1",
+  );
+  assert.equal(
+    sqliteArgs("C:/repos/my app/.cbi/model.db", "SELECT 1")[4],
+    "file:///C:/repos/my%20app/.cbi/model.db?immutable=1",
+  );
 });
 
 test("a rebuild that only reorders a list is the same map", () => {

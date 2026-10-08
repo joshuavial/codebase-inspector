@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { commandNames, findOnPath, joinCommand } from "./which";
 
 export const INSTALL_HINT = [
   "Install the CLI from a checkout of codebase-inspector:",
@@ -7,6 +8,7 @@ export const INSTALL_HINT = [
   "  uv tool install .",
   "",
   "That puts cbi on your PATH, usually at ~/.local/bin/cbi.",
+  "On Windows the file is cbi.exe, usually in %USERPROFILE%\\.local\\bin.",
   "This app looks on PATH and in ~/.local/bin.",
   "An app opened from Finder does not inherit your shell PATH,",
   "so if cbi lives somewhere else, set its path here.",
@@ -56,7 +58,10 @@ export function findCbi(opts: {
   pathEnv?: string | null;
   home: string;
   isExecutable: (file: string) => boolean;
+  platform?: string;
+  where?: (name: string) => string | null;
 }): FindCbiResult {
+  const platform = opts.platform ?? process.platform;
   if (opts.envOverride) {
     if (opts.isExecutable(opts.envOverride)) return { ok: true, path: opts.envOverride };
     return { ok: false, error: `CBI_BIN is set to ${opts.envOverride}, but that file is not executable.\n\n${INSTALL_HINT}` };
@@ -65,12 +70,19 @@ export function findCbi(opts: {
     if (opts.isExecutable(opts.setting)) return { ok: true, path: opts.setting };
     return { ok: false, error: `The cbi path in settings is ${opts.setting}, but that file is not executable.\n\n${INSTALL_HINT}` };
   }
-  for (const dir of (opts.pathEnv ?? "").split(":")) {
-    if (!dir) continue;
-    const candidate = path.join(dir, "cbi");
-    if (opts.isExecutable(candidate)) return { ok: true, path: candidate };
-  }
-  const local = path.join(opts.home, ".local", "bin", "cbi");
-  if (opts.isExecutable(local)) return { ok: true, path: local };
+  const base = platform === "win32" ? path.win32 : path.posix;
+  const extra = commandNames("cbi", platform).map((filename) => joinCommand(
+    base.join(opts.home, ".local", "bin"),
+    filename,
+    platform,
+  ));
+  const found = findOnPath("cbi", {
+    pathEnv: opts.pathEnv,
+    platform,
+    isExecutable: opts.isExecutable,
+    where: opts.where,
+    extra,
+  });
+  if (found) return { ok: true, path: found };
   return { ok: false, error: `cbi was not found.\n\n${INSTALL_HINT}` };
 }
