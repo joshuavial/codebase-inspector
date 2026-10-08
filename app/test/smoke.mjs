@@ -1,8 +1,6 @@
-// ponytail: the smoke opens a visible Electron window that steals focus; blocked until it runs headless.
-if (process.env.CBI_ALLOW_VISIBLE_SMOKE !== "1") {
-  console.error("smoke disabled: it opens a visible window that steals focus. Use unit tests until the headless smoke lands.");
-  process.exit(1);
-}
+// main.ts keeps every window hidden when this is set. Do not launch without it.
+process.env.CBI_HEADLESS = "1";
+
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";

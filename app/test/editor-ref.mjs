@@ -1,5 +1,7 @@
 // A ref view with no checkout opens a read-only snapshot. Assert the argv.
 // The fake `code` on PATH records a launch; dry-run must leave that file empty.
+// main.ts keeps every window hidden when this is set.
+process.env.CBI_HEADLESS = "1";
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";

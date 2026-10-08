@@ -60,12 +60,28 @@ const SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 const STATUS_TIMEOUT_MS = 20_000;
 const FETCH_TIMEOUT_MS = 60_000;
 
+// Tests and smoke set CBI_HEADLESS=1. Accessory skips the dock. hide() gives
+// focus back when macOS has already activated the process.
+const headless = process.env.CBI_HEADLESS === "1";
+function yieldFocus() {
+  if (!headless || process.platform !== "darwin" || !app.isReady()) return;
+  app.hide();
+}
+if (headless && process.platform === "darwin") app.setActivationPolicy("accessory");
+if (headless) {
+  app.on("activate", () => yieldFocus());
+  app.on("browser-window-created", (_event, created) => {
+    // focusable:false on Linux pins the window above every workspace.
+    if (process.platform === "darwin") created.setFocusable(false);
+    created.on("show", () => {
+      created.hide();
+      yieldFocus();
+    });
+  });
+}
+
 app.setName("Codebase Inspector");
 if (process.env.CBI_APP_USER_DATA) app.setPath("userData", path.resolve(process.env.CBI_APP_USER_DATA));
-
-// Tests and smoke set CBI_HEADLESS=1. An accessory app is not activated on launch.
-const headless = process.env.CBI_HEADLESS === "1";
-if (headless && process.platform === "darwin") app.setActivationPolicy("accessory");
 
 interface OpenVersion {
   project: string;
@@ -1657,6 +1673,7 @@ function createWindow(fromLink = false) {
     title: "Codebase Inspector",
     icon,
     show: how === "focus",
+    focusable: !(headless && process.platform === "darwin"),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#161719" : "#f6f6f3",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1894,9 +1911,11 @@ if (!singleInstance) {
     const fromLink = pendingLinks.length > 0 || linkFromArgv(process.argv) !== null;
     createWindow(fromLink);
     flushLinks();
+    yieldFocus();
     // Dock, the app icon, and the menu bar. A link does not come through here
-    // when `open -g` launched the process.
+    // when `open -g` launched the process. Headless never shows a window.
     app.on("activate", () => {
+      if (headless) return;
       if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
       else focusWindow();
     });
