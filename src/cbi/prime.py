@@ -124,6 +124,8 @@ A folder task opens once its files and subfolders are summarised, and the worksp
   cbi submit <id> answer.json{out_flag}    # or pipe the JSON to `cbi submit <id>{out_flag} -`
 
 Repeat until `cbi tasks{out_flag}` prints "no open tasks", then run `cbi prime{out_flag}` again.
+Run `cbi build{out_flag}` after every five or so accepted answers, not only at the end,
+so the map fills in while you work.
 """]
     lines += parts.large_lines(conn, root, out_flag)
     [first] = tasks.open_tasks(conn, limit=1) or [None]

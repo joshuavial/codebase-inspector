@@ -30,6 +30,7 @@ def test_prime_with_out_names_that_directory(make_repo, monkeypatch, tmp_path, c
     flag = "--out " + shlex.quote(str(model.resolve()))
     assert flag in out
     assert f"cbi tasks {flag}" in out and f"cbi submit" in out
+    assert f"Run `cbi build {flag}` after every five" in out
     assert prime.OUT_NOTE in out
 
     conn = store.open_db(model / "model.db")
