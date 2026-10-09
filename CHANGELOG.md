@@ -13,7 +13,7 @@ First public release.
 
 - `cbi scan` maps a git repository into a model of the workspace, deployables, packages, folders, files, symbols and tests. The tool does not call a model and does not run the target's code.
 - Judgement tasks (`cbi tasks`, `cbi submit`) ask an agent for file summaries and a concept map.
-- Concepts and screen sketches, stored in the model and shown in the viewer.
+- Concepts and screen sketches (React, Vue, HTML pages and server templates), stored in the model and shown in the viewer.
 - Queries: `cbi search`, `cbi show`, `cbi tests-for` and `cbi status`. Reviewer queries: `cbi hotspots`, `cbi orphans`, `cbi cycles` and `cbi deps`.
 - `cbi context` writes a short markdown brief for an agent.
 - `cbi diff` compares two versions of the model.
