@@ -65,7 +65,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
 body {
   background: var(--bg);
   color: var(--text);
@@ -129,8 +129,26 @@ main { flex: 1; display: flex; min-height: 0; }
 #diagram { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; overscroll-behavior: none; }
 #diagram.panning { cursor: grabbing; }
 #sketch { position: absolute; inset: 0; display: none; }
+#endpoints-view { position: absolute; inset: 0; display: none; overflow: auto; padding: 22px 26px 48px; }
 #stage[data-mode="sketch"] #diagram, #stage[data-mode="sketch"] #zoom { display: none; }
 #stage[data-mode="sketch"] #sketch { display: flex; }
+#stage[data-mode="endpoints"] #diagram, #stage[data-mode="endpoints"] #sketch,
+#stage[data-mode="endpoints"] #zoom, #stage[data-mode="endpoints"] #legend { display: none; }
+#stage[data-mode="endpoints"] #endpoints-view { display: block; }
+.endpoint-tools { display: flex; gap: 10px; margin: 0 auto 18px; max-width: 980px; }
+.endpoint-tools input, .endpoint-tools select { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }
+.endpoint-tools input { flex: 1; min-width: 120px; }
+.endpoint-list { display: grid; gap: 8px; max-width: 980px; margin: 0 auto; }
+.endpoint-row { display: grid; grid-template-columns: 72px minmax(180px, 1fr) minmax(220px, 1.5fr); gap: 12px; align-items: baseline; width: 100%; padding: 12px 14px; text-align: left; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); cursor: pointer; }
+.endpoint-row:hover, .endpoint-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.http-method { width: max-content; padding: 2px 7px; border-radius: 5px; background: var(--ph); color: var(--accent); font: 700 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.endpoint-path { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.endpoint-note { color: var(--muted); }
+.endpoint-empty { max-width: 980px; margin: 36px auto; color: var(--muted); }
+@media (max-width: 760px) {
+  .endpoint-row { grid-template-columns: 64px 1fr; }
+  .endpoint-note { grid-column: 1 / -1; }
+}
 
 /* overlays */
 .envname { font: 600 10.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
@@ -442,6 +460,7 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 .group.cluster-open rect.frame { fill: none; stroke: var(--muted); stroke-dasharray: none; stroke-opacity: .5; }
 .group.cluster-open .label { fill: var(--link); }
 #drawer button.link.path { color: var(--link); }
+#drawer ul.ints button.link.path { display: block; }
 .comp-panel summary { list-style: none; cursor: pointer; }
 .comp-panel summary h5 { display: inline-block; }
 

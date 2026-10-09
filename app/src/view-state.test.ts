@@ -84,6 +84,19 @@ test("a hash update does not clear the drawer sections", () => {
   assert.equal(views.lastKey("/repos/app"), "worktree:/repos/app");
 });
 
+test("system tabs and their selections persist as ordinary viewer hashes", () => {
+  const views = store();
+  const key = "worktree:/repos/app";
+  const database = "#tab=database&table=local%3Aapp%3Atable%3Aaccounts";
+  views.set("/repos/app", key, { hash: database, drawerHidden: false, sections: [] });
+  assert.equal(views.get("/repos/app", key).hash, database);
+  const endpoints = "#tab=endpoints&endpoint=endpoint%3A123&method=GET";
+  views.updateHash("/repos/app", key, endpoints);
+  assert.equal(views.get("/repos/app", key).hash, endpoints);
+  const captured = parseCaptured(JSON.stringify({ hash: endpoints, drawerHidden: false, sections: [] }));
+  assert.equal(captured?.hash, endpoints);
+});
+
 test("a comparison keeps its own view beside the worktree it was opened from", () => {
   const views = store();
   const project = "/repos/app";

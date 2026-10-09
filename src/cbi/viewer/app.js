@@ -29,6 +29,7 @@ let restore = null; // camera to reuse instead of fitting
 let glowTimer = null;
 let refit = false; // the same view changed shape (a group opened or closed): fit again instead of keeping the camera
 const camByHash = {};
+const endpointScroll = {};
 let depth = 0; // history entries this page has pushed; Backspace will not step past the start
 let layoutGen = 0; // a newer diagram cancels an in-flight layout
 let writing = false; // ignore the hashchange that a pushState echoes in some browsers
@@ -699,12 +700,39 @@ function databaseGo(table) {
   writeHash(h.toString());
 }
 
-function jumpFromDatabase(ref) {
+function jumpFromSystem(ref, origin = view.tab) {
   if (!ref || !ref.concept) return;
   const h = new URLSearchParams();
   h.set("c", ref.concept);
   h.set("s", ref.id);
-  h.set("fromtab", "database");
+  h.set("fromtab", origin);
+  h.set("bh", location.hash.slice(1) || "-");
+  writeHash(h.toString());
+}
+
+function endpointGo(endpoint) {
+  const cur = new URLSearchParams(location.hash.slice(1));
+  const h = new URLSearchParams();
+  h.set("tab", "endpoints");
+  if (endpoint) h.set("endpoint", endpoint);
+  if (cur.get("eq")) h.set("eq", cur.get("eq"));
+  if (cur.get("method")) h.set("method", cur.get("method"));
+  writeHash(h.toString());
+}
+
+function endpointFilter(query, method) {
+  const h = new URLSearchParams();
+  h.set("tab", "endpoints");
+  if (query) h.set("eq", query);
+  if (method) h.set("method", method);
+  writeHash(h.toString(), { replace: true });
+}
+
+function jumpToTableFromEndpoints(table) {
+  const h = new URLSearchParams();
+  h.set("tab", "database");
+  h.set("table", table);
+  h.set("fromtab", "endpoints");
   h.set("bh", location.hash.slice(1) || "-");
   writeHash(h.toString());
 }
@@ -714,6 +742,7 @@ function route() {
   if (rebuilt) refit = true;
   const h = new URLSearchParams(location.hash.slice(1));
   const tab = currentTab(h);
+  if (last && last.tab === "endpoints") endpointScroll[last.hash] = document.getElementById("endpoints-view").scrollTop;
   const first = !last;
   if (!first) camByHash[last.hash] = { ...cam };
   haltAnim();
@@ -723,6 +752,8 @@ function route() {
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
     overlay: h.get("t"),
     tab, table: databaseById[h.get("table")] ? h.get("table") : null,
+    endpoint: (ENDPOINTS.endpoints || []).some((row) => row.id === h.get("endpoint")) ? h.get("endpoint") : null,
+    endpointQuery: h.get("eq") || "", endpointMethod: h.get("method") || "",
     fromTab: h.get("fromtab") === "database" || h.get("fromtab") === "endpoints" ? h.get("fromtab") : null,
   };
   // A flat box has nothing to open. Select it on its parent's diagram (the top diagram, for a deployable).
@@ -743,13 +774,13 @@ function route() {
   crumbs();
   const f = view.focus && byId[view.focus];
   const from = first ? null : last.focus;
-  last = { focus: view.focus, hash: location.hash };
+  last = { focus: view.focus, hash: location.hash, tab };
   // Going up: start zoomed on the box we came out of. Going down: start from further away.
   const up = from && from !== view.focus && ancestors(from).includes(view.focus) || (from && !view.focus);
   const down = view.focus && view.focus !== from && (!from || ancestors(view.focus).includes(from));
   const enter = first ? null : up ? { from: project(from, view.focus) } : down ? { zoomIn: true } : null;
   if (tab === "database") drawDatabase();
-  else if (tab === "endpoints") drawEndpointsPlaceholder();
+  else if (tab === "endpoints") drawEndpoints();
   else if (f && !f.children && sketchable(f) && view.mode !== "code") drawSketch(f);
   else if (f && !f.children) drawLeaf(f, enter);
   else drawConcepts(f, enter);
@@ -758,6 +789,7 @@ function route() {
 
 function up() {
   if (view.tab === "database" && view.table) return databaseGo(null);
+  if (view.tab === "endpoints" && view.endpoint) return endpointGo(null);
   if (view.focus) go(parentOf[view.focus]);
   else if (view.sel) go(null);
 }
@@ -804,6 +836,17 @@ function crumbs() {
     nav.append(el("span", "here", view.tab === "database" ? "Database" : "API endpoints"));
     if (view.table && databaseById[view.table]) {
       nav.append(el("span", "sep", "›"), el("span", "here", databaseById[view.table].name));
+    }
+    if (view.endpoint) {
+      const endpoint = (ENDPOINTS.endpoints || []).find((row) => row.id === view.endpoint);
+      if (endpoint) nav.append(el("span", "sep", "›"), el("span", "here", `${endpoint.method} ${endpoint.path}`));
+    }
+    if (view.fromTab) {
+      const name = view.fromTab === "database" ? "Database" : "API endpoints";
+      const b = el("button", "back", `← Back to ${name}`);
+      b.title = "Back (Backspace)";
+      b.onclick = back;
+      nav.append(b);
     }
     return;
   }
@@ -1631,8 +1674,57 @@ function drawDatabase() {
   layout(nodes, edges, { dir: "RIGHT", layer: 80, gap: 36 }, databaseGo, null);
 }
 
-function drawEndpointsPlaceholder() {
-  empty("API endpoint view is loading in the next slice.");
+function drawEndpoints() {
+  setStage("endpoints");
+  const root = document.getElementById("endpoints-view");
+  root.replaceChildren();
+  const tools = el("div", "endpoint-tools");
+  const input = el("input");
+  input.type = "search";
+  input.placeholder = "Filter method, path or note";
+  input.value = view.endpointQuery;
+  input.setAttribute("aria-label", "Filter API endpoints");
+  const select = el("select");
+  select.setAttribute("aria-label", "Filter endpoint method");
+  const methods = [...new Set((ENDPOINTS.endpoints || []).map((row) => row.method))].sort();
+  for (const method of ["", ...methods]) {
+    const option = el("option", "", method || "All methods");
+    option.value = method;
+    option.selected = method === view.endpointMethod;
+    select.append(option);
+  }
+  tools.append(input, select);
+  const list = el("div", "endpoint-list");
+  const paint = (query, method) => {
+    const needle = query.trim().toLowerCase();
+    const rows = (ENDPOINTS.endpoints || []).filter((endpoint) => {
+      if (method && endpoint.method !== method) return false;
+      return !needle || `${endpoint.method} ${endpoint.path} ${endpoint.note}`.toLowerCase().includes(needle);
+    });
+    list.replaceChildren();
+    if (!rows.length) list.append(el("p", "endpoint-empty",
+      ENDPOINTS.endpoints.length ? "No endpoints match this filter." : "No API endpoints were detected."));
+    for (const endpoint of rows) {
+      const row = el("button", "endpoint-row" + (endpoint.id === view.endpoint ? " on" : ""));
+      row.type = "button";
+      row.dataset.endpoint = endpoint.id;
+      row.append(el("span", "http-method", endpoint.method), el("span", "endpoint-path", endpoint.path),
+        el("span", "endpoint-note", endpoint.note));
+      row.onclick = () => endpointGo(endpoint.id);
+      list.append(row);
+    }
+  };
+  paint(input.value, select.value);
+  input.oninput = () => paint(input.value, select.value);
+  input.onkeydown = (event) => {
+    if (event.key === "Enter") endpointFilter(input.value.trim(), select.value);
+    if (event.key === "Escape") { input.value = ""; endpointFilter("", select.value); }
+  };
+  input.onchange = () => endpointFilter(input.value.trim(), select.value);
+  select.onchange = () => endpointFilter(input.value.trim(), select.value);
+  root.append(tools, list);
+  requestAnimationFrame(() => { root.scrollTop = endpointScroll[location.hash] || 0; });
+  if (new URLSearchParams(location.search).has("render")) document.title = "cbi-viewer-ready";
   drawer();
 }
 
@@ -1643,7 +1735,7 @@ function databaseCodeList(root, title, rows) {
   for (const row of rows) {
     const li = el("li");
     const where = `${row.name} · ${row.file}:${row.line}`;
-    if (row.concept) li.append(link(where, () => jumpFromDatabase(row)));
+    if (row.concept) li.append(link(where, () => jumpFromSystem(row, "database")));
     else li.append(el("span", "path", where));
     const forms = [...new Set((row.locations || []).map((location) => location.via))];
     if (forms.length) li.append(el("div", "where", forms.join(", ")));
@@ -1660,6 +1752,7 @@ function databaseCodeList(root, title, rows) {
 function databaseDrawer() {
   const d = document.getElementById("drawer");
   d.replaceChildren();
+  d.append(copyButton());
   const table = view.table && databaseById[view.table];
   if (!table) {
     d.append(el("h2", "", "Database"),
@@ -1703,6 +1796,60 @@ function databaseDrawer() {
     d.append(el("h3", "", "Defined in"));
     const ul = el("ul", "ints");
     for (const source of table.sources) ul.append(el("li", "path", `${source.path}:${source.line} · ${source.kind}`));
+    d.append(ul);
+  }
+}
+
+function systemCodeList(root, title, rows, origin) {
+  if (!rows || !rows.length) return;
+  root.append(el("h3", "", `${title} (${rows.length})`));
+  const ul = el("ul", "ints");
+  for (const row of rows) {
+    const li = el("li");
+    const label = `${row.name} · ${row.file}:${row.line}`;
+    if (row.concept) li.append(link(label, () => jumpFromSystem(row, origin)));
+    else li.append(el("span", "path", label));
+    const detail = [];
+    if (row.via) detail.push(row.via);
+    if (row.depth > 1) detail.push(`${row.depth} calls away`);
+    if (detail.length) li.append(el("div", "where", detail.join(" · ")));
+    if (typeof openInEditor === "function" && row.file) {
+      const open = link("Open in editor", () => openInEditor(row.file, row.line || 1));
+      open.classList.add("path");
+      li.append(open);
+    }
+    ul.append(li);
+  }
+  root.append(ul);
+}
+
+function endpointDrawer() {
+  const d = document.getElementById("drawer");
+  d.replaceChildren();
+  d.append(copyButton());
+  const endpoint = view.endpoint && (ENDPOINTS.endpoints || []).find((row) => row.id === view.endpoint);
+  if (!endpoint) {
+    d.append(el("h2", "", "API endpoints"),
+      el("p", "", "Select an endpoint to inspect callers, handler code and tables."));
+    d.append(el("p", "hint", `${ENDPOINTS.endpoints.length} detected endpoint${ENDPOINTS.endpoints.length === 1 ? "" : "s"}.`));
+    return;
+  }
+  d.append(link("← API endpoints", () => endpointGo(null)));
+  const heading = el("h2");
+  heading.append(el("span", "http-method", endpoint.method), " ", el("span", "endpoint-path", endpoint.path));
+  d.append(heading, el("p", "", endpoint.note));
+  systemCodeList(d, "Handler", endpoint.handler ? [endpoint.handler] : [], "endpoints");
+  systemCodeList(d, "Called by", endpoint.callers, "endpoints");
+  systemCodeList(d, "Calls", endpoint.code, "endpoints");
+  if (endpoint.tables && endpoint.tables.length) {
+    d.append(el("h3", "", `Tables (${endpoint.tables.length})`));
+    const ul = el("ul", "ints");
+    for (const table of endpoint.tables) {
+      const li = el("li");
+      li.append(link(table.name, () => jumpToTableFromEndpoints(table.id)),
+        el("span", "path", ` ${table.mode} · ${table.direct ? "direct" : `downstream (${table.depth})`}`));
+      ul.append(li);
+    }
     d.append(ul);
   }
 }
@@ -3048,7 +3195,7 @@ function setStage(mode) {
   stage.dataset.mode = mode;
   const f = view.focus && byId[view.focus];
   const toggle = document.getElementById("toggle");
-  toggle.hidden = !(f && !f.children && sketchable(f));
+  toggle.hidden = mode !== "diagram" || !(f && !f.children && sketchable(f));
   toggle.replaceChildren();
   if (!toggle.hidden) for (const [v, label] of [[null, "Sketch"], ["code", "Code"]]) {
     const b = el("button", (view.mode === "code") === (v === "code") ? "on" : "", label);
@@ -3466,6 +3613,7 @@ function drawerOpen(title, fallback) {
 
 function drawer() {
   if (view.tab === "database") return databaseDrawer();
+  if (view.tab === "endpoints") return endpointDrawer();
   hideUsagePop();
   const d = document.getElementById("drawer");
   drawerKept = drawerStamp === location.hash ? readDrawerOpen(d) : null;
@@ -3756,6 +3904,18 @@ function fold(d, title, items, open) {
 // The block is the one `cbi build` wrote from `cbi context`. A selection wins; otherwise
 // the concept in view; otherwise the workspace, which is the top of the map.
 function agentText() {
+  if (view.tab === "database") {
+    const table = view.table && databaseById[view.table];
+    if (!table) return `# ${M.workspace} database\n\n${DATABASE.tables.length} detected tables.\n`;
+    const columns = table.columns.map((column) => `- ${databaseColumnLine(table, column)}`).join("\n");
+    return `# ${table.name}\n\nTable in ${M.workspace}.\n\n${columns}\n\nRun \`cbi show ${table.id}\` for model details.\n`;
+  }
+  if (view.tab === "endpoints") {
+    const endpoint = view.endpoint && (ENDPOINTS.endpoints || []).find((row) => row.id === view.endpoint);
+    if (!endpoint) return `# ${M.workspace} API endpoints\n\n${ENDPOINTS.endpoints.length} detected endpoints.\n`;
+    const handler = endpoint.handler ? `\nHandler: \`${endpoint.handler.id}\`` : "";
+    return `# ${endpoint.method} ${endpoint.path}\n\n${endpoint.note}${handler}\n\nRun \`cbi show ${endpoint.handler ? endpoint.handler.id : endpoint.id}\` for model details.\n`;
+  }
   const blocks = (AGENT && AGENT.blocks) || {};
   if (view.sel && blocks[view.sel]) return blocks[view.sel];
   if (view.focus && blocks[view.focus]) return blocks[view.focus];
