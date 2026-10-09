@@ -144,7 +144,7 @@ def test_custom_out_and_comparison_flags(tmp_path):
     assert f"cbi show {shlex.quote(FN)} {flag} --ref head" in text
     assert f"cbi diff base head {flag}" in text
     assert shlex.quote(str(place.model_db)) in text
-    assert "refs/abc/model.db" in text or "refs/abc" in str(place.model_db)
+    assert "refs/abc/model.db" in text.replace("\\", "/")
 
 
 def test_ref_commands_name_the_ref(tmp_path):
@@ -277,7 +277,7 @@ def test_context_compare_and_bad_compare(make_repo, monkeypatch, tmp_path, capsy
     assert "comparison HEAD~1..HEAD" in text
     assert "a.ts#hi" in text
     assert "cbi diff" in text and "HEAD~1" in text and "--ref HEAD" in text
-    assert "refs/" in text
+    assert "refs/" in text.replace("\\", "/")
     assert not (root / ".cbi").exists()
     assert len(text.splitlines()) <= context.LINE_CAP
 
@@ -290,7 +290,7 @@ def test_context_compare_and_bad_compare(make_repo, monkeypatch, tmp_path, capsy
 
 def test_viewer_sources_expose_copy_for_agent():
     root = Path(__file__).resolve().parents[1]
-    app = (root / "src/cbi/viewer/app.js").read_text()
+    app = (root / "src/cbi/viewer/app.js").read_text(encoding="utf-8")
     assert "Copy for agent" in app and "copy-agent" in app
     assert 'ev.key === "c" || ev.key === "C"' in app
     assert "function cbiCopy" in app and "getSelection" in app

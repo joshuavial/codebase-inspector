@@ -5,9 +5,10 @@ import json
 import os
 import shutil
 import sqlite3
-import stat
 import subprocess
 from pathlib import Path
+
+from conftest import write_standin
 
 from cbi import files, store
 from cbi.cli import main
@@ -212,9 +213,8 @@ def _git_shim(directory):
     """A git on PATH that refuses every subcommand except read-only ones."""
     real = shutil.which("git")
     log = directory / "git.log"
-    script = directory / "git"
-    script.write_text(f"""#!/usr/bin/env python3
-import os, sys
+    script = write_standin(directory, "git", f"""#!/usr/bin/env python3
+import os, subprocess, sys
 args = sys.argv[1:]
 i = 0
 while i < len(args):
@@ -240,9 +240,15 @@ with open({str(log)!r}, "a") as fh:
     fh.write(line + " ".join(sys.argv) + "\\n")
 if not ok:
     sys.exit(99)
+if sys.platform == "win32":
+    # execv splits an unquoted path at the space in Program Files.
+    proc = subprocess.Popen(
+        [{real!r}, *sys.argv[1:]],
+        stdin=sys.stdin.buffer, stdout=sys.stdout.buffer, stderr=sys.stderr.buffer,
+    )
+    raise SystemExit(proc.wait())
 os.execv({real!r}, [{real!r}, *sys.argv[1:]])
 """)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return log
 
 

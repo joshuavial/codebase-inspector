@@ -1,11 +1,26 @@
 """The installer is not run here. These checks lock its contract."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-app.sh"
+
+
+def _bash():
+    found = shutil.which("bash")
+    if found:
+        return found
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(env_name)
+        if not root:
+            continue
+        candidate = Path(root) / "Git" / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
 
 
 def _code(text):
@@ -39,4 +54,6 @@ def test_install_script_contract():
     assert 'mv "$dest.prev" "$dest"' in code
     assert "CFBundleShortVersionString" in code
     assert 'quit app "Codebase Inspector"' in code
-    subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
+    bash = _bash()
+    assert bash, "bash is required to syntax-check scripts/install-app.sh"
+    subprocess.run([bash, "-n", str(SCRIPT)], check=True)

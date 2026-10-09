@@ -144,7 +144,9 @@ def test_out_dir(app, tmp_path, capsys):
 
 
 def test_golden_dump(app, capsys):
-    (app / "src" / "util.py").write_text("def util():\n    return 2\n")  # unstaged edit
+    (app / "src" / "util.py").write_text(
+        "def util():\n    return 2\n", encoding="utf-8", newline="\n",
+    )  # unstaged edit; LF so the working-tree hash matches the golden
     git(app / "vendor" / "lib", "commit", "-q", "--allow-empty", "-m", "drift")
     before = git(app, "status", "--porcelain")
     main(["init"])

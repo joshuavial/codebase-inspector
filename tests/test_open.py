@@ -1,9 +1,10 @@
 """cbi open builds a cbi:// link and does not touch the repository."""
 
 import os
-import stat
 import subprocess
 import urllib.parse
+
+from conftest import write_standin
 
 import pytest
 
@@ -257,13 +258,10 @@ def _second_commit(repo):
     return base, _head(repo)
 
 
-def _fake_gh(tmp_path, monkeypatch, script):
+def _fake_gh(tmp_path, monkeypatch, body):
     bin_dir = tmp_path / "ghbin"
-    bin_dir.mkdir(exist_ok=True)
-    path = bin_dir / "gh"
-    path.write_text(script)
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    path = write_standin(bin_dir, "gh", body)
+    monkeypatch.setenv("PATH", f"{path.parent}{os.pathsep}{os.environ.get('PATH', '')}")
     return path
 
 
@@ -292,9 +290,9 @@ def test_open_pr_resolves_with_gh_on_path(make_repo, monkeypatch, capsys, tmp_pa
     monkeypatch.chdir(repo)
     before = _snapshot(repo)
     calls = tmp_path / "gh-args"
-    _fake_gh(tmp_path, monkeypatch, f"""#!/bin/sh
-printf '%s\\n' "$@" > '{calls}'
-printf '%s\\n' '{{"baseRefOid":"{base}","headRefOid":"{head}"}}'
+    _fake_gh(tmp_path, monkeypatch, f"""import pathlib, sys
+pathlib.Path({str(calls)!r}).write_text("\\n".join(sys.argv[1:]) + "\\n", encoding="utf-8", newline="\\n")
+sys.stdout.write('{{"baseRefOid":"{base}","headRefOid":"{head}"}}\\n')
 """)
     code, out, err, opened = _open(monkeypatch, capsys, ["--pr", "2345"])
     assert code == 0 and err == ""
@@ -316,23 +314,23 @@ def test_open_pr_shows_gh_failures_and_does_not_guess(make_repo, monkeypatch, ca
         raise AssertionError(url)
 
     monkeypatch.setattr(open_link, "open_url", boom)
-    _fake_gh(tmp_path, monkeypatch, """#!/bin/sh
-echo 'no such pull request' >&2
-exit 1
+    _fake_gh(tmp_path, monkeypatch, """import sys
+sys.stderr.write("no such pull request\\n")
+raise SystemExit(1)
 """)
     assert main(["open", "--pr", "2345"]) == 1
     failed = capsys.readouterr()
     assert failed.out == "" and "no such pull request" in failed.err
 
-    _fake_gh(tmp_path, monkeypatch, f"""#!/bin/sh
-printf '%s\\n' '{{"baseRefOid":"{base}"}}'
+    _fake_gh(tmp_path, monkeypatch, f"""import sys
+sys.stdout.write('{{"baseRefOid":"{base}"}}\\n')
 """)
     assert main(["open", "--pr", "2345"]) == 1
     partial = capsys.readouterr()
     assert partial.out == "" and "baseRefOid and headRefOid" in partial.err
 
-    _fake_gh(tmp_path, monkeypatch, """#!/bin/sh
-printf '%s\\n' '{"baseRefOid":"main","headRefOid":"main"}'
+    _fake_gh(tmp_path, monkeypatch, """import sys
+sys.stdout.write('{"baseRefOid":"main","headRefOid":"main"}\\n')
 """)
     assert main(["open", "--pr", "2345"]) == 1
     named = capsys.readouterr()

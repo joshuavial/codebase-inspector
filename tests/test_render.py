@@ -14,6 +14,7 @@ import pytest
 
 from cbi import render, store
 from cbi.cli import main
+from conftest import write_standin
 
 APP = "c:app"
 UI = "c:ui"
@@ -388,6 +389,10 @@ def _script(path, body):
     return path
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows has no process session; kill is covered by test_chrome_process_flags_on_windows",
+)
 def test_kill_group_reaps_the_leader_and_its_child(tmp_path):
     script = _script(tmp_path / "run.sh", "#!/bin/sh\nsleep 30 &\nwait\n")
     proc = subprocess.Popen([str(script)], start_new_session=True)
@@ -398,20 +403,39 @@ def test_kill_group_reaps_the_leader_and_its_child(tmp_path):
     assert left.stdout.strip() == ""
 
 
+def _pid_dead(pid):
+    import ctypes
+    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+    if not handle:
+        return True
+    ctypes.windll.kernel32.CloseHandle(handle)
+    return False
+
+
 def test_capture_kills_a_browser_that_never_becomes_ready(tmp_path):
-    script = _script(tmp_path / "chrome", "#!/bin/sh\nsleep 30\n")
+    pidfile = tmp_path / "chrome.pid"
+    script = write_standin(tmp_path, "chrome", f"""import os, time
+open({str(pidfile)!r}, "w", encoding="utf-8").write(str(os.getpid()))
+time.sleep(30)
+""")
     page = tmp_path / "render.html"
     page.write_text("<html></html>")
     started = time.monotonic()
     with pytest.raises(render.RenderError, match="timed out"):
         render._capture(script, page, timeout=0.4)
     assert time.monotonic() - started < 5
-    left = subprocess.run(["pgrep", "-f", str(script)], capture_output=True, text=True)
-    assert left.stdout.strip() == ""
+    if sys.platform == "win32":
+        assert _pid_dead(int(pidfile.read_text(encoding="utf-8")))
+    else:
+        left = subprocess.run(["pgrep", "-f", str(script)], capture_output=True, text=True)
+        assert left.stdout.strip() == ""
 
 
 def test_capture_reports_a_browser_that_exits(tmp_path):
-    script = _script(tmp_path / "chrome", "#!/bin/sh\necho 'Chrome crashed' >&2\nexit 1\n")
+    script = write_standin(tmp_path, "chrome", """import sys
+sys.stderr.write("Chrome crashed\\n")
+raise SystemExit(1)
+""")
     page = tmp_path / "render.html"
     page.write_text("<html></html>")
     with pytest.raises(render.RenderError, match="Chrome crashed") as err:

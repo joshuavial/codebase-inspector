@@ -104,8 +104,9 @@ def test_tracer_loop(pair_repo, tmp_path, capsys):
     assert any(n["id"] == f"local:repo:{SUBJECT}#DeviceRegistry" for n in payload["nodes"])
     html = (viewer / "index.html").read_text()
     assert "app.js" in html and "data/tree.js" not in html
-    assert 's.src = "data/tree.js"' in (viewer / "app.js").read_text()
-    assert "innerHTML" not in (viewer / "app.js").read_text()
+    app = (viewer / "app.js").read_text(encoding="utf-8")
+    assert 's.src = "data/tree.js"' in app
+    assert "innerHTML" not in app
 
 
 def test_validation_errors_name_the_json_path(pair_repo, tmp_path, capsys):

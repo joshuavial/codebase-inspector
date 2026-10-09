@@ -110,14 +110,12 @@ def test_code_is_found_on_path_then_in_the_app_bundle(tmp_path):
     bundle.parent.mkdir(parents=True)
     bundle.write_text("#!/bin/sh\n")
     bundle.chmod(bundle.stat().st_mode | stat.S_IEXEC)
-    on_path = tmp_path / "bin" / "code"
-    on_path.parent.mkdir()
-    on_path.write_text("#!/bin/sh\n")
-    on_path.chmod(on_path.stat().st_mode | stat.S_IEXEC)
-    have = {str(on_path), str(bundle)}
+    # A darwin PATH is colon-separated, so a Windows drive letter cannot be an entry.
+    on_path = "/editor-bin/code"
+    have = {on_path, str(bundle)}
     check = lambda path: path in have
     mac = {"platform": "darwin"}
-    assert editor.find_program("code", path_env=str(on_path.parent), home=home, is_executable=check, **mac) == str(on_path)
+    assert editor.find_program("code", path_env="/editor-bin", home=home, is_executable=check, **mac) == on_path
     assert editor.find_program("code", path_env="", home=home, is_executable=check, **mac) == str(bundle)
     assert editor.find_program("code", path_env="", home=tmp_path / "nobody", is_executable=lambda _path: False, **mac) is None
     argv = editor.command_argv(
@@ -140,7 +138,7 @@ def test_templates_match_the_desktop_app():
         assert template in text
         if name == "vscode":
             assert f'data-command="{template}"' in html
-    app = (Path(__file__).parents[1] / "src" / "cbi" / "viewer" / "app.js").read_text()
+    app = (Path(__file__).parents[1] / "src" / "cbi" / "viewer" / "app.js").read_text(encoding="utf-8")
     found = app.split("const OPEN_KINDS = new Set([", 1)[1].split("])", 1)[0]
     kinds = {part.strip().strip('"') for part in found.split(",") if part.strip()}
     assert kinds == set(editor.OPEN_DISPLAY_KINDS)
@@ -185,7 +183,7 @@ def test_launch_does_not_use_a_shell(monkeypatch):
         seen["kwargs"] = kwargs
 
     monkeypatch.setattr(editor.subprocess, "Popen", fake_popen)
-    editor.launch(["/bin/echo", "hi"])
+    editor.launch(["/bin/echo", "hi"], platform="linux")
     assert seen["argv"] == ["/bin/echo", "hi"]
     assert seen["kwargs"]["start_new_session"] is True
     assert seen["kwargs"].get("shell") is not True
@@ -276,9 +274,9 @@ def test_open_file_prints_and_runs_argv(make_repo, monkeypatch, tmp_path, capsys
     assert argv[0] == str(code)
     assert argv[1:3] == ["--reuse-window", str(root.resolve())]
     assert argv[3] == "--goto"
-    assert argv[4].endswith("src/my app.py:2")
+    assert argv[4].replace("\\", "/").endswith("src/my app.py:2")
     assert len(argv) == 5
-    assert "src/my app.py" in out
+    assert "src/my app.py" in out.replace("\\", "/")
     capsys.readouterr()
     rc = main(["open-file", "src"])
     _out, err = capsys.readouterr()
@@ -414,7 +412,7 @@ def test_ref_snapshot_is_created_and_reused(tmp_path, monkeypatch):
         for argv in seen
     )
     monkeypatch.delenv("CBI_SNAPSHOT_DIR", raising=False)
-    assert editor.snapshot_cache(home=tmp_path / "home") == (
+    assert editor.snapshot_cache(home=tmp_path / "home", platform="darwin") == (
         tmp_path / "home" / "Library" / "Caches" / "codebase-inspector" / "snapshots"
     )
 
@@ -443,7 +441,10 @@ def test_open_file_ref_writes_a_snapshot_and_leaves_the_repo(make_repo, monkeypa
     side_text = "def greet():\n    return 2\n"
     (root / "src" / "app.py").write_text(side_text)
     _git(root, "add", "src/app.py")
-    _git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "side")
+    _git(
+        root, "-c", "user.name=test", "-c", "user.email=test@example.com",
+        "-c", "commit.gpgsign=false", "commit", "-q", "-m", "side",
+    )
     _git(root, "checkout", "-q", "main")
     assert main(["init"]) == 0
     assert main(["scan", "--ref", "side"]) == 0

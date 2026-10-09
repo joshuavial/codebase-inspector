@@ -3,9 +3,10 @@
 import json
 import os
 import sqlite3
-import stat
 import subprocess
 from pathlib import Path
+
+from conftest import write_standin
 
 import pytest
 
@@ -106,9 +107,7 @@ def fake_gh(tmp_path, monkeypatch, pr):
     state = tmp_path / "gh-state.json"
     log = tmp_path / "gh.log"
     state.write_text(json.dumps({"repo": "acme/widgets", "pr": pr, "comments": [], "next_id": 1}))
-    script = tmp_path / "bin" / "gh"
-    script.parent.mkdir()
-    script.write_text("""#!/usr/bin/env python3
+    script = write_standin(tmp_path / "bin", "gh", """#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
 state_path = Path(os.environ["CBI_FAKE_GH"])
@@ -155,7 +154,6 @@ if args[:1] == ["api"] and "--method" in args:
 sys.stderr.write("unexpected gh %s\\n" % " ".join(args))
 raise SystemExit(2)
 """)
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", str(script.parent) + os.pathsep + os.environ["PATH"])
     monkeypatch.setenv("CBI_FAKE_GH", str(state))
     monkeypatch.setenv("CBI_FAKE_GH_LOG", str(log))

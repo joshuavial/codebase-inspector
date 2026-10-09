@@ -148,8 +148,11 @@ def test_non_team_stays_ignored_and_does_not_import(make_repo, monkeypatch, caps
     assert (root / ".cbi" / ".gitignore").read_text() == "*\n"
     assert git(root, "status", "--porcelain").stdout == ""
 
-    blob = sqlite3.connect(root / ".cbi" / "model.db").execute(
-        "SELECT content_hash FROM nodes WHERE path = 'a.py'").fetchone()[0]
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    try:
+        blob = conn.execute("SELECT content_hash FROM nodes WHERE path = 'a.py'").fetchone()[0]
+    finally:
+        conn.close()  # Windows will not delete a database that still has a connection
     (root / ".cbi" / "answers.jsonl").write_text(json.dumps({
         "kind": "summarise-files", "key": blob, "protocol": 1, "answer": "Should not load.",
     }) + "\n")

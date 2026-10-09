@@ -339,7 +339,7 @@ def test_build_writes_both_data_files(tmp_path):
     assert html.index("app.js") < html.index("data/diff.js") < html.index("data/concepts.js") < html.index("data/context.js")
     assert "data/tree.js" not in html
     assert (viewer.parent / "data" / "diff.js").read_text() == 'cbiLoad("diff", null);\n'
-    app = (viewer.parent / "app.js").read_text()
+    app = (viewer.parent / "app.js").read_text(encoding="utf-8")
     assert "innerHTML" not in app
     assert "function loadTreeAfterPaint" in app and 's.src = "data/tree.js"' in app
     assert "window.cbiOnDiagram" in app and "window.cbiRender" in app
