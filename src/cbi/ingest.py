@@ -374,7 +374,8 @@ class Model:
         path = path.removeprefix("file://")
         for base in self.roots:
             full = os.path.realpath(os.path.join(base, path))
-            rel = os.path.relpath(full, self.roots[1])
+            # Stored paths use forward slashes. relpath uses the host separator.
+            rel = os.path.relpath(full, self.roots[1]).replace("\\", "/")
             if rel in self.files:
                 return self.files[rel]
         return None

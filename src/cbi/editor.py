@@ -21,7 +21,7 @@ import re
 import shlex
 import subprocess
 import sys
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from cbi import files, query
 
@@ -173,9 +173,10 @@ def _path_sep(platform):
 
 
 def _join_program(directory, filename, platform):
+    """Join with the target platform's rules, not the host's."""
     if platform == "win32":
         return str(PureWindowsPath(directory) / filename)
-    return str(Path(directory) / filename)
+    return str(PurePosixPath(directory) / filename)
 
 
 def _where_program(name):

@@ -1087,10 +1087,24 @@ def _silence_broken_pipe():
         os.close(null)
 
 
+def _is_broken_pipe(err):
+    """A closed stdout. Windows reports that as EINVAL, not EPIPE."""
+    if isinstance(err, BrokenPipeError):
+        return True
+    if sys.platform != "win32" or not isinstance(err, OSError):
+        return False
+    # 109 ERROR_BROKEN_PIPE, 232 ERROR_NO_DATA. errno 22 is the EINVAL mapping.
+    if getattr(err, "winerror", None) in (109, 232):
+        return True
+    return err.errno == 22
+
+
 def main(argv=None):
     try:
         return _main(argv)
-    except BrokenPipeError:
+    except OSError as err:
+        if not _is_broken_pipe(err):
+            raise
         _silence_broken_pipe()
         return 0
 
