@@ -44,6 +44,38 @@ function hits(a, b) {
 
 async function main() {
   const app = load("src/cbi/viewer/app.js");
+  assert.strictEqual(app.historyTickPosition(0, 15), 0);
+  assert.strictEqual(app.historyTickPosition(7, 15), 50);
+  assert.strictEqual(app.historyTickPosition(14, 15), 100);
+  assert.strictEqual(app.historyTickPosition(0, 1), 50);
+  assert.ok(app.historyTickHeight(1, 100) < app.historyTickHeight(100, 100));
+  const css = fs.readFileSync(path.join(root, "src/cbi/viewer/style.css"), "utf8");
+  assert.match(css, /#history-ticks \{[^}]*width: calc\(100% - 16px\);[^}]*margin-left: 8px;/s);
+  assert.match(css, /#history-scrub \{[^}]*width: calc\(100% - 16px\);[^}]*margin: 4px 8px;/s);
+  const historyEls = {
+    "history-back": { hidden: true },
+    "history-scrub": { value: "" },
+    "history-entry": { replaceChildren() {}, append() {} },
+  };
+  app.document.body = { classList: { toggle() {} } };
+  app.document.getElementById = (id) => historyEls[id] || null;
+  app.document.querySelectorAll = () => [];
+  app.document.createElement = () => ({
+    className: "", textContent: "", style: {}, append() {}, addEventListener() {},
+  });
+  vm.runInContext(`
+    HISTORY = {entries: [{
+      sha: "a".repeat(40), base: "b".repeat(40), date: "2026-10-10T08:00:00+13:00",
+      author: "test", change_count: 1, text: "entry", model: {concepts: [], externals: [], relationships: []},
+      diff: {changes: {groups: []}, provisional: []}
+    }]};
+    routeCalls = 0;
+    route = () => { routeCalls += 1; };
+    showHistoryEntry(0, false, false);
+  `, app);
+  assert.strictEqual(app.routeCalls, 0, "initial history selection must leave one outer route");
+  vm.runInContext("showHistoryEntry(0, false)", app);
+  assert.strictEqual(app.routeCalls, 1, "a scrub must route once and refit");
   assert.strictEqual(
     app.edgeLabelText(["reads snapshot over IPC", "opens the window for"]),
     "reads snapshot over IPC +1",

@@ -378,7 +378,8 @@ function initHistory() {
   const largest = Math.max(...entries.map((entry) => entry.change_count || 1), 1);
   entries.forEach((entry, index) => {
     const tick = el("button");
-    tick.style.height = `${7 + Math.round(21 * Math.sqrt((entry.change_count || 1) / largest))}px`;
+    tick.style.left = `${historyTickPosition(index, entries.length)}%`;
+    tick.style.setProperty("--tick-height", `${historyTickHeight(entry.change_count, largest)}px`);
     tick.title = `${entry.date.slice(0, 10)} · ${entry.change_count} changes`;
     tick.onclick = () => showHistoryEntry(index, true);
     ticks.append(tick);
@@ -388,10 +389,18 @@ function initHistory() {
   scrub.value = String(entries.length - 1);
   scrub.oninput = () => showHistoryEntry(Number(scrub.value), false);
   document.getElementById("history-back").onclick = () => showHistoryEntry(historyIndex, false);
-  showHistoryEntry(entries.length - 1, false);
+  showHistoryEntry(entries.length - 1, false, false);
 }
 
-function showHistoryEntry(index, compare) {
+function historyTickPosition(index, count) {
+  return count <= 1 ? 50 : index * 100 / (count - 1);
+}
+
+function historyTickHeight(changes, largest) {
+  return 7 + Math.round(21 * Math.sqrt(Math.max(1, changes || 1) / Math.max(1, largest)));
+}
+
+function showHistoryEntry(index, compare, reroute = true) {
   if (!HISTORY || !HISTORY.entries[index]) return;
   const entry = HISTORY.entries[index];
   historyIndex = index;
@@ -418,7 +427,7 @@ function showHistoryEntry(index, compare) {
     open.onclick = () => showHistoryEntry(index, true);
     detail.append(open);
   }
-  route();
+  if (reroute) route();
 }
 
 function copyHistoryEntry(entry) {
