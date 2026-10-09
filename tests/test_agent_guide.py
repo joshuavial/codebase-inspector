@@ -42,6 +42,15 @@ def test_prime_with_out_names_that_directory(make_repo, monkeypatch, tmp_path, c
     assert prime.OUT_NOTE in given and flag in given
     assert prime.OUT_NOTE not in own and "--out " not in own
 
+    (model / "CHANGELOG-ARCHITECTURE.md").write_text("# Architecture changelog\n")
+    conn = store.open_db(model / "model.db")
+    try:
+        with_history = prime.complete_guide(conn, root, model, "")
+    finally:
+        conn.close()
+    assert "Architecture history for agents" in with_history
+    assert "cbi history --write" in with_history
+
     db = sqlite3.connect(model / "model.db")
     open_n, blocked_n = db.execute(
         "SELECT coalesce(sum(state = 'open'), 0), coalesce(sum(state = 'blocked'), 0) FROM tasks"

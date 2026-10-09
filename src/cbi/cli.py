@@ -1,14 +1,16 @@
 """Command line entry point for cbi."""
 
 import argparse
+import datetime as dt
 import json
 import os
 import sqlite3
+import shutil
 import sys
 import time
 from pathlib import Path
 
-from cbi import build, check, concepts, context, diff, docs, editor, files, graph, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import build, check, concepts, context, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -37,6 +39,7 @@ COMMANDS = {
     "open": "Open the desktop app on this repo, at a worktree, branch, commit, comparison or node.",
     "open-file": "Open one file, symbol or test in the editor.",
     "review": "Write a review of a pull request, branch or commit.",
+    "history": "Print the architecture changelog for the default branch.",
 }
 
 
@@ -131,6 +134,15 @@ def build_parser():
                                 help="folder for review.md (default .cbi/reviews/<base>..<head>)")
     cmds["review"].add_argument("--post", action="store_true",
                                 help="post review.md as a pull request comment, or update the earlier one")
+    cmds["history"].add_argument("--out", metavar="DIR", type=Path,
+                                  help="model directory to use instead of .cbi/")
+    cmds["history"].add_argument("--format", choices=("text", "markdown", "json"), default="text")
+    cmds["history"].add_argument("--since", help="include entries on or after this date (default six months)")
+    cmds["history"].add_argument("--until", help="include entries on or before this date")
+    cmds["history"].add_argument("--concept", metavar="ID", help="only changes involving this concept")
+    cmds["history"].add_argument("--limit", type=int, help="most entries to print, newest first")
+    cmds["history"].add_argument("--write", action="store_true",
+                                  help="write .cbi/CHANGELOG-ARCHITECTURE.md")
     cmds["build"].add_argument("--compare", metavar="BASE..HEAD",
                                help="also write data/diff.js for this base..head comparison")
     cmds["ingest"].description = ingest.HELP
@@ -502,7 +514,7 @@ def scan(root, out):
     return _map(root, out, ignore_text, workspaces, tracked, states)
 
 
-def scan_ref(root, out, ref):
+def scan_ref(root, out, ref, *, seed=None, force=False):
     """Map one commit from git objects into out/refs/<sha>/model.db.
 
     Returns (sha, reused, counts, (open, blocked)). A stored model is reused when
@@ -512,13 +524,15 @@ def scan_ref(root, out, ref):
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
     db = home / "model.db"
-    if store.ref_reusable(db, files.ignore_token(ignore_text), files.PARSER_VERSION):
+    if not force and store.ref_reusable(db, files.ignore_token(ignore_text), files.PARSER_VERSION):
         conn = store.read_only(db)
         try:
             return sha, True, store.counts_by_display_kind(conn), tasks.task_counts(conn)
         finally:
             conn.close()
     home.mkdir(parents=True, exist_ok=True)
+    if seed and not db.exists():
+        shutil.copy2(seed, db)
     tree = files.CommitTree(root, sha, files.Ignore(ignore_text or ""))
     try:
         _shortcut, counts, task_counts = _map(
@@ -918,6 +932,25 @@ def cmd_review(args):
     return 0
 
 
+def cmd_history(args):
+    root, out = _paths(args)
+    try:
+        since = args.since
+        if since is None:
+            since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=history.DEFAULT_DAYS)).date().isoformat()
+        entries = history.build_history(root, out, since, args.until)
+        shown = history.select(entries, args.since, args.until, args.concept, args.limit)
+        if args.write:
+            path = history.write_changelog(out, shown)
+            print(path)
+        else:
+            sys.stdout.write(history.render(shown, args.format))
+    except history.HistoryError as err:
+        print(err, file=sys.stderr)
+        return err.code
+    return 0
+
+
 def cmd_diff(args):
     root = out = None
     if args.base and args.head and not (args.base_model or args.head_model):
@@ -1066,7 +1099,7 @@ def cmd_team(args):
 HANDLERS = {"init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
-            "review": cmd_review, "open": cmd_open, "open-file": cmd_open_file,
+            "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,
             "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps}
 HANDLERS["ingest"] = cmd_ingest
 

@@ -170,6 +170,13 @@ def _viewer_sentence(model_dir, out_flag):
     return f"`cbi build{out_flag}` {verb} the static viewer to {path}."
 
 
+def _history_sentence(model_dir, out_flag):
+    path = Path(model_dir) / "CHANGELOG-ARCHITECTURE.md"
+    if not path.is_file():
+        return ""
+    return f" Architecture history for agents is in {path}; refresh it with `cbi history{out_flag} --write`."
+
+
 def complete_guide(conn, root, model_dir, out_flag=""):
     top = conn.execute("SELECT id, name, summary FROM nodes WHERE kind = 'workspace' AND parent_id IS NULL").fetchone()
     lines = [_intro(out_flag), "## The map is complete", "", tasks.task_headline(*tasks.task_counts(conn)), ""]
@@ -209,6 +216,7 @@ rank the graph, list unreferenced code, report import cycles and check a
 layering rule with `--forbid`. After code changes, run `cbi scan{out_flag}`: it
 reparses only changed files and reopens only the tasks whose inputs
 changed (check `cbi prime{out_flag}`). {_viewer_sentence(model_dir, out_flag)}
+{_history_sentence(model_dir, out_flag)}
 """]
     lines += ["## Ingest", ""]
     lines.extend(ingest.guide_lines(conn, root, out_flag))
