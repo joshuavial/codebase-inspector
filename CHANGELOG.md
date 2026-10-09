@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-10-09
+## [0.1.0] - 2026-10-10
 
 First public release.
 
@@ -21,8 +21,10 @@ First public release.
 - `cbi ingest` reads lcov, coverage.py JSON and JUnit XML.
 - Team mode (`cbi team init`) and `cbi check` for CI. The check reads the working tree. It does not call a model or the network.
 - `cbi open` hands the desktop app a `cbi://` link. `cbi open-file` opens one file in the editor.
-- A static viewer that opens from disk, with no server: a concept map, wireframes, a comparison and a history timeline.
+- A static viewer that opens from disk, with no server: a concept map, wireframes and a comparison.
 - A desktop app for recent projects, worktrees and branches, a live rescan, the same viewer, and `cbi://` links.
+- The app and `cbi prime` say when a newer release is available, with release notes and a download link. Nothing installs itself.
+- `cbi open` and `cbi://` links open the app in the background without taking focus.
 - Languages: Python, TypeScript and JavaScript (including TSX), Vue, and C#.
 
 ### Known limits
