@@ -106,7 +106,10 @@
         "tests/test_container_edges.py",
         "tests/test_context_viewer.py",
         "tests/test_editor_page.py",
-        "tests/test_editor_url.py"
+        "tests/test_editor_url.py",
+        "src/cbi/system_views.py",
+        "tests/test_system_viewer.py",
+        "tests/test_system_views.py"
       ]
     },
     {
@@ -171,7 +174,9 @@
             "tests/test_csharp.py",
             "tests/test_http.py",
             "tests/test_routes.py",
-            "tests/test_vue.py"
+            "tests/test_vue.py",
+            "src/cbi/data.py",
+            "tests/test_data_schema.py"
           ]
         },
         {
