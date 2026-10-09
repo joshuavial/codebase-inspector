@@ -40,6 +40,9 @@ From the 0.1.0 wheel:
 uv tool install https://github.com/joshuavial/codebase-inspector/releases/download/v0.1.0/codebase_inspector-0.1.0-py3-none-any.whl
 ```
 
+On Windows, if `uv` says its executable directory is not on `PATH`, run
+`uv tool update-shell` and open a new terminal before running `cbi`.
+
 Or from git:
 
 ```

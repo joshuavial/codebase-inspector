@@ -1099,7 +1099,22 @@ def _is_broken_pipe(err):
     return err.errno == 22
 
 
+def _configure_windows_output():
+    """Use UTF-8 for redirected Windows output instead of the legacy code page."""
+    if sys.platform != "win32":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not reconfigure:
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _configure_windows_output()
     try:
         return _main(argv)
     except OSError as err:

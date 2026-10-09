@@ -1,9 +1,11 @@
+import io
 import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
+import cbi.cli as cli
 from cbi.cli import COMMANDS, main
 
 
@@ -25,6 +27,18 @@ def test_help_lists_every_command(capsys):
     out = capsys.readouterr().out
     for name in COMMANDS:
         assert name in out
+
+
+def test_windows_redirected_output_uses_utf8(monkeypatch):
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252")
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.sys, "platform", "win32")
+        patch.setattr(cli.sys, "stdout", stream)
+        patch.setattr(cli, "_main", lambda _argv: print("left → right") or 0)
+        assert cli.main([]) == 0
+        stream.flush()
+    assert raw.getvalue().decode("utf-8") == "left → right\n"
 
 
 def test_prime_prints_not_initialised_guide(make_repo, monkeypatch, capsys):
