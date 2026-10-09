@@ -6,7 +6,7 @@ import sqlite3
 from cbi import build
 from cbi.cli import main
 from cbi.http import from_pieces, score
-from cbi.parse import csharp, python, typescript
+from cbi.parse import csharp, python, symbol_nodes, typescript
 
 WS = "local:repo"
 
@@ -188,6 +188,22 @@ def load(uid, qs):
     defs, facts, err = python.parse(py.encode(), "python", False)
     assert not err
     assert _named(defs, facts["http_calls"]) == [("load", "GET", "/admin/fs/{param}/revisions")]
+
+
+def test_next_app_route_files_define_endpoints_from_exported_verbs():
+    source = b'''\
+export async function GET() { return Response.json([]); }
+export async function DELETE() { return new Response(null); }
+function POST() { return new Response(null); }
+'''
+    nodes, facts, err = symbol_nodes(
+        "file:route", WS, "teacher/app/(secure)/api/courses/[id]/route.ts", "typescript", source, False)
+    assert not err
+    names = {node["id"]: node["name"] for node in nodes}
+    assert {(names[handler], method, path) for handler, method, path, _router, _name in facts["http_routes"]} == {
+        ("DELETE", "DELETE", "/api/courses/{id}"),
+        ("GET", "GET", "/api/courses/{id}"),
+    }
 
 
 def test_csharp_attributes_and_minimal_apis():

@@ -14,3 +14,14 @@ export function typeorm(dataSource: any) {
   repo.find();
   repo.save({ id: 1 });
 }
+
+export async function supabaseReads(supabase: any) {
+  return supabase.from("accounts").select("id, email").eq("id", 1);
+}
+
+export async function supabaseWrites(supabase: any) {
+  return supabase
+    .from("invoices")
+    .update({ note: "paid" })
+    .eq("id", 1);
+}

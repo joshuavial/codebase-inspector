@@ -1,6 +1,6 @@
 # Architecture
 
-Covers PRD-01 to PRD-04 (`docs/prd-0*.md`). Living document: update it when a decision changes. The reasons behind the significant decisions are in the ADR register, `docs/adr/README.md`. Review findings that shaped it are recorded in `docs/planning/decision-log.md`.
+Covers PRD-01 to PRD-07 (`docs/prd-0*.md`). Living document: update it when a decision changes. The reasons behind the significant decisions are in the ADR register, `docs/adr/README.md`. Review findings that shaped it are recorded in `docs/planning/decision-log.md`.
 
 ## Constraints from the PRD
 
@@ -46,6 +46,8 @@ src/cbi/
   docs.py                 markdown nodes, collapse, mentions
   tasks.py                judgement task generation, validation, cache
   ingest.py               lcov, coverage.py JSON, JUnit XML
+  data.py                 schema and table-use extraction
+  system_views.py         database and endpoint viewer projections
   build.py                viewer export
   viewer/                 index.html, app.js, style.css, vendor/minisearch.min.js (copied by build)
 tests/
@@ -62,11 +64,11 @@ One SQLite file per mapped repo at `.cbi/model.db`.
 
 **nodes**: `id` (text, primary key), `parent_id`, `kind`, `display_kind`, `name`, `workspace_id`, `path`, `start_line`, `end_line`, `lang`, `loc`, `content_hash`, `signature`, `doc`, `summary`, `summary_source` (`agent`, `docstring`, null), `attrs` (JSON).
 
-- `kind` is the internal type: `workspace`, `deployable`, `package`, `group`, `file`, `symbol`, `test`, `doc`, `external`.
+- `kind` is the internal type: `workspace`, `deployable`, `package`, `group`, `file`, `symbol`, `test`, `doc`, `external`, `table`, `column`.
 - `display_kind` is what users and agents see: `class`, `method`, `function`, `component`, `interface`, `module`, `folder`, `skill`, `test case`, `doc collection`, and so on. The viewer and CLI text output only ever print `display_kind`. `--json` includes both.
 - Workspace `attrs` hold `remote`, `pinned_commit`, `checked_out_commit`, `drift` and `initialised`.
 
-**edges**: `src`, `dst`, `kind` (`imports`, `calls`, `tests`, `part_of`, `depends_on`, `mentions`, `pins`), `source` (`treesitter`, `manifest`, `naming`, `coverage`, `agent`), `confidence` (0 to 1), `weight`. Containment is `parent_id`, not an edge.
+**edges**: `src`, `dst`, `kind` (`imports`, `calls`, `tests`, `part_of`, `depends_on`, `mentions`, `pins`, `foreign_key`, `reads_table`, `writes_table`), `source` (`treesitter`, `manifest`, `naming`, `coverage`, `agent`, `data`), `confidence` (0 to 1), `weight`. Containment is `parent_id`, not an edge.
 
 **diagnostics**: `node_id`, `kind` (`parse_error`, `unresolved_entry`, `ambiguous_call`, `unmatched_test`, `unmapped_coverage`), `detail`. `cbi status` summarises them.
 
@@ -265,6 +267,17 @@ The concept viewer replaces the bare list viewer from PRD-01 deliverable 3. It i
 - When the model has no concepts yet, the viewer shows deployables, packages and externals as boxes with `depends_on` edges, so a fresh scan still opens on a diagram (PRD-02 B4).
 
 Model text is still set with `textContent` only. Wireframe text is data, rendered into plain elements with class names from the style hints, never as HTML.
+
+## System views (PRD-05)
+
+Covers `docs/prd-05-system-views.md`.
+
+- **Schema facts.** `data.py` derives tables, columns, keys and foreign keys from SQL migrations and supported ORM declarations. Repeated declarations merge by database table name and retain every source location. A scan replaces only edges with `source = 'data'` and table and column nodes.
+- **Code access.** Literal SQL and recognised ORM chains produce `reads_table` and `writes_table` edges from the innermost enclosing symbol, or from the file when no symbol contains the use. The edge attrs retain source path, line and extraction form. Extraction reads text only and never imports project code or connects to a database.
+- **Routes.** Server routes remain facts on handler nodes. Next.js app-router files add routes from exported HTTP verb functions and their file path. Existing `http_calls` edges link callers to handlers.
+- **Build projections.** `system_views.py` writes layout-free `data/database.js` and `data/endpoints.js`. Endpoint notes use existing handler, doc and file summaries. Endpoint downstream code follows resolved calls to a bounded depth, and touched tables reuse the table-use edges.
+- **Viewer.** Concept map, Database and API endpoints are hash-addressed top-level tabs. The database layout, positions and relationship routes are calculated only in browser code. Cross-view links carry an origin tab and selection so the Back chip, browser back, Backspace and Esc follow the concept-map navigation rules.
+- **Desktop.** The Electron shell stores the complete viewer hash and therefore restores system tabs and selections without a second database or endpoint implementation.
 
 ## Desktop app (PRD-03)
 

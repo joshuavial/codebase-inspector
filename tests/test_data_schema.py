@@ -178,6 +178,8 @@ def test_sql_and_orm_table_uses_attach_to_functions(make_repo, monkeypatch, caps
     assert ("writes_table", "typeorm", "invoices") in triples
     assert ("reads_table", "List", "invoices") in triples
     assert ("writes_table", "Add", "accounts") in triples
+    assert ("reads_table", "supabaseReads", "accounts") in triples
+    assert ("writes_table", "supabaseWrites", "invoices") in triples
     assert not any(source == "unrelated" for _kind, source, _table, _attrs in rows)
     report_invoices = next(attrs for kind, source, table, attrs in rows
                            if kind == "reads_table" and source == "report" and table == "invoices")

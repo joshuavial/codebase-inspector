@@ -311,8 +311,6 @@ def parse_typeorm(text, path):
         body, _end = _block(text, match.end())
         model = match.group(2)
         table = _decl(classes[model], path, text.count("\n", 0, match.start()) + 1, "typeorm", model)
-        pending_relation = None
-        pending_join = None
         decorators = []
         for line in body.splitlines():
             stripped = line.strip()
@@ -360,7 +358,6 @@ def parse_ef_core(text, path):
         body, _end = _block(text, match.end())
         table = _decl(classes[model], path, text.count("\n", 0, match.start()) + 1, "ef-core", model)
         props = list(re.finditer(r"(?:(\[Key\])\s*)?public\s+([\w?<>]+)\s+(\w+)\s*\{\s*get;\s*set;\s*\}", body))
-        names = {row.group(3) for row in props}
         for row in props:
             keyed, type_name, field = row.groups()
             if type_name.rstrip("?") in classes:
@@ -544,6 +541,21 @@ def _orm_uses(text, lookup):
         "reads_table", "ef-core")
     add(rf"\b(?:_?context|db)\.{name}\.(?:Add|AddRange|Update|Remove|RemoveRange)\b",
         "writes_table", "ef-core")
+    supabase = list(re.finditer(r"\.from\s*\(\s*(['\"])([^'\"]+)\1\s*\)", clean))
+    for index, match in enumerate(supabase):
+        table = lookup.get(match.group(2).lower())
+        if not table:
+            continue
+        end = supabase[index + 1].start() if index + 1 < len(supabase) else len(clean)
+        semicolon = clean.find(";", match.end(), end)
+        chain = clean[match.end():semicolon if semicolon >= 0 else min(end, match.end() + 2000)]
+        if re.search(r"\.(?:insert|update|upsert|delete)\s*\(", chain, re.I):
+            kind = "writes_table"
+        elif re.search(r"\.(?:select|single|maybeSingle|limit|range|order|eq|neq|in)\s*\(", chain, re.I):
+            kind = "reads_table"
+        else:
+            continue
+        found.append((kind, table, clean.count("\n", 0, match.start()) + 1, "supabase"))
     return found
 
 

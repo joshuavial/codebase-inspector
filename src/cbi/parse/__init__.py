@@ -7,6 +7,29 @@ from cbi.ids import symbol_ids
 from cbi.parse import csharp, python, typescript, vue
 
 LANGS = set(typescript.GRAMMARS) | set(python.GRAMMARS) | set(csharp.GRAMMARS) | set(vue.GRAMMARS)
+HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+NEXT_ROUTE_FILES = {"route.ts", "route.tsx", "route.js", "route.jsx", "route.mts", "route.cts"}
+
+
+def _next_route(path):
+    """Return the URL for a Next.js app-router route file, or None."""
+    parts = path.replace("\\", "/").split("/")
+    if len(parts) < 3 or parts[-1] not in NEXT_ROUTE_FILES or "app" not in parts[:-1]:
+        return None
+    start = max(index for index, part in enumerate(parts[:-1]) if part == "app")
+    route = []
+    for part in parts[start + 1:-1]:
+        if (part.startswith("(") and part.endswith(")")) or part.startswith("@"):
+            continue
+        if part.startswith("[[...") and part.endswith("]]"):
+            route.append("{" + part[5:-2] + "}")
+        elif part.startswith("[...") and part.endswith("]"):
+            route.append("{" + part[4:-1] + "}")
+        elif part.startswith("[") and part.endswith("]"):
+            route.append("{" + part[1:-1] + "}")
+        else:
+            route.append(part)
+    return "/" + "/".join(route)
 
 
 def span_hashes(source, start_line, end_line, signature):
@@ -90,6 +113,17 @@ def symbol_nodes(file_node_id, workspace_id, path, lang, source, is_test):
             rewritten.append(item)
         facts["routes"] = rewritten
     facts["http_routes"] = [[at(row[0]), *row[1:]] for row in facts.get("http_routes") or []]
+    next_path = _next_route(path) if not is_test and lang in typescript.GRAMMARS else None
+    if next_path is not None:
+        exported = facts.get("exports") or {}
+        by_name = {node["name"]: node["id"] for node in nodes}
+        existing = {(row[0], row[1], row[2]) for row in facts["http_routes"]}
+        for method in sorted(HTTP_METHODS):
+            local = exported.get(method)
+            handler = by_name.get(local) if local else None
+            route = (handler, method, next_path)
+            if handler and route not in existing:
+                facts["http_routes"].append([handler, method, next_path, None, local])
     facts["http_calls"] = [[at(row[0]), *row[1:]] for row in facts.get("http_calls") or []]
     facts.setdefault("http_routers", [])
     facts.setdefault("http_mounts", [])
