@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import build, check, concepts, context, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -487,6 +487,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
                 _parse_changed(conn, root, tracked, states, old, known)
                 store.drop_orphan_symbols(conn)
                 resolve.resolve(conn, root)
+                data.apply(conn, root)
                 manifests.apply(conn, root, _read(out / "structure.json"))
                 concepts.apply(conn, concepts_text)
                 screens.apply(conn, screens_text, root)
