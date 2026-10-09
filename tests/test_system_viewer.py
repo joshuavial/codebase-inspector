@@ -28,7 +28,7 @@ def _playwright_python():
     return None
 
 
-def _viewer(make_repo, monkeypatch, capsys):
+def _viewer(make_repo, monkeypatch, capsys, with_history=False):
     root = make_repo({path.relative_to(FIXTURE).as_posix(): path.read_text()
                       for path in FIXTURE.rglob("*") if path.is_file()}, name="system-viewer")
     monkeypatch.chdir(root)
@@ -47,7 +47,24 @@ def _viewer(make_repo, monkeypatch, capsys):
         (concept, service))
     conn.execute("UPDATE nodes SET summary = 'Lists customer accounts.' WHERE name = 'accounts' AND kind = 'symbol'")
     conn.commit()
-    return build.build(conn, root / ".cbi/viewer", root), root
+    timeline = None
+    if with_history:
+        model = build.concept_view(conn, root)
+        entries = []
+        for index in range(2):
+            sha = str(index + 1) * 40
+            entries.append({
+                "sha": sha, "base": "0" * 40, "date": f"2026-10-0{index + 1}T08:00:00+13:00",
+                "author": "Test Author", "change_count": index + 1, "text": "Fixture history.",
+                "model": model,
+                "diff": {
+                    "base": "0" * 40, "head": sha, "provisional": [], "sources": {},
+                    "changes": {"groups": []},
+                    "removed": {"concepts": [], "relationships": [], "externals": []},
+                },
+            })
+        timeline = {"entries": entries}
+    return build.build(conn, root / ".cbi/viewer", root, history=timeline), root
 
 
 DRIVER = r'''
@@ -154,6 +171,64 @@ with sync_playwright() as p:
 '''
 
 
+HISTORY_DRIVER = r'''
+import json
+import sys
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+index = sys.argv[1]
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1500, "height": 920})
+    page.goto(Path(index).resolve().as_uri())
+    page.wait_for_selector("#timeline:not([hidden])", timeout=20000)
+    if not page.locator("#compare").is_hidden():
+        raise SystemExit("comparison controls shown during history replay")
+    page.locator("#history-scrub").fill("0")
+    page.wait_for_function("() => document.querySelector('#history-entry').innerText.includes('111111111111')")
+
+    page.locator("#system-tabs button", has_text="Database").click()
+    page.wait_for_selector(".db-table", timeout=20000)
+    if not page.locator("#timeline").is_hidden() or not page.locator("#history-back").is_hidden():
+        raise SystemExit("history controls shown on database tab")
+    page.locator("#system-tabs button", has_text="Concept map").click()
+    page.wait_for_selector("#timeline:not([hidden])")
+    if "111111111111" not in page.locator("#history-entry").inner_text():
+        raise SystemExit("history replay selection was lost across tabs")
+
+    page.locator("#history-entry button", has_text="Open comparison").click()
+    page.wait_for_selector("#history-back:not([hidden])")
+    if not page.locator("#timeline").is_hidden() or page.locator("#compare").is_hidden():
+        raise SystemExit("history comparison chrome is inconsistent")
+    page.locator("#system-tabs button", has_text="API endpoints").click()
+    page.wait_for_selector(".endpoint-row", timeout=20000)
+    if not page.locator("#timeline").is_hidden() or not page.locator("#history-back").is_hidden():
+        raise SystemExit("history comparison controls shown on endpoint tab")
+    page.keyboard.press("Backspace")
+    page.wait_for_selector("#history-back:not([hidden])")
+    if page.locator("#system-tabs button", has_text="Concept map").get_attribute("class") != "on":
+        raise SystemExit("Backspace did not return to concept comparison")
+    page.locator("#history-back").click()
+    page.wait_for_selector("#timeline:not([hidden])")
+
+    page.locator("#system-tabs button", has_text="Database").click()
+    page.wait_for_selector(".db-table", timeout=20000)
+    page.keyboard.press("Backspace")
+    page.wait_for_selector("#timeline:not([hidden])")
+    if page.locator("#history-scrub").input_value() != "0":
+        raise SystemExit("history replay selection was lost after Backspace")
+
+    page.locator("#system-tabs button", has_text="Database").click()
+    table = "local:system-viewer:table:accounts"
+    page.locator('[data-id=' + json.dumps(table) + ']').click()
+    page.wait_for_function("() => new URLSearchParams(location.hash.slice(1)).has('table')")
+    page.keyboard.press("Escape")
+    page.wait_for_function("() => !new URLSearchParams(location.hash.slice(1)).has('table')")
+    browser.close()
+'''
+
+
 def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, capsys, tmp_path):
     exe = _playwright_python()
     if not exe:
@@ -167,6 +242,17 @@ def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, c
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert endpoint_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_history_replay_and_comparison_survive_system_tab_navigation(make_repo, monkeypatch, capsys, tmp_path):
+    exe = _playwright_python()
+    if not exe:
+        pytest.skip("playwright is not installed for this python")
+    viewer, _root = _viewer(make_repo, monkeypatch, capsys, with_history=True)
+    script = tmp_path / "drive_history_tabs.py"
+    script.write_text(HISTORY_DRIVER)
+    proc = subprocess.run([exe, str(script), str(viewer)], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 def test_database_capture_uses_cbi_render_path_when_chrome_is_installed(make_repo, monkeypatch, capsys, tmp_path):

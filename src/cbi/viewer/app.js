@@ -627,8 +627,15 @@ function paintSystemChrome(tab) {
   for (const button of document.querySelectorAll("#system-tabs button"))
     button.classList.toggle("on", button.dataset.tab === tab);
   const concept = tab === "concept";
-  for (const id of ["compare", "chg-toggle", "overlay", "find"])
-    document.getElementById(id).hidden = !concept || (id === "compare" && !DIFF) || (id === "chg-toggle" && !DIFF);
+  const comparing = !!DIFF && (!HISTORY || historyCompare);
+  document.getElementById("compare").hidden = !concept || !comparing;
+  document.getElementById("chg-toggle").hidden = !concept || !comparing;
+  document.getElementById("overlay").hidden = !concept;
+  document.getElementById("find").hidden = !concept;
+  const timeline = document.getElementById("timeline");
+  const historyBack = document.getElementById("history-back");
+  if (timeline) timeline.hidden = !concept || !HISTORY || historyCompare;
+  if (historyBack) historyBack.hidden = !concept || !historyCompare;
   if (!concept) {
     document.getElementById("changes").hidden = true;
     document.getElementById("toggle").hidden = true;
