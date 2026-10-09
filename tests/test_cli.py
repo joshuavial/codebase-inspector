@@ -31,7 +31,7 @@ def test_help_lists_every_command(capsys):
 
 def test_windows_redirected_output_uses_utf8(monkeypatch):
     raw = io.BytesIO()
-    stream = io.TextIOWrapper(raw, encoding="cp1252")
+    stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
     with monkeypatch.context() as patch:
         patch.setattr(cli.sys, "platform", "win32")
         patch.setattr(cli.sys, "stdout", stream)
