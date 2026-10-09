@@ -51,7 +51,7 @@ RESULT_RANK = {"fail": 0, "skipped": 1, "pass": 2}
 REEXPORT = re.compile(r"""export\s+(?!type\b)(\*|\{([^}]*)\})\s+from\s+["']([^"']+)["']""")
 
 
-def build(conn, out, root=None, compare=None, place=None, *, editor="vscode", project=None, ref_sha=None):
+def build(conn, out, root=None, compare=None, history=None, place=None, *, editor="vscode", project=None, ref_sha=None):
     """Write the viewer into out/. Returns the path of index.html.
 
     compare, when set, is the head's counterpart: {"base", "base_root", "changes",
@@ -87,6 +87,7 @@ def build(conn, out, root=None, compare=None, place=None, *, editor="vscode", pr
             compare.get("base_label") or "", compare.get("head_label") or "",
         )
     (data / "diff.js").write_text(_script("diff", payload))
+    (data / "history.js").write_text(_script("history", history))
     editor_payload = {
         "editor": editor if editor in ("vscode", "cursor", "none") else "vscode",
         "root": _project_root(root, project),

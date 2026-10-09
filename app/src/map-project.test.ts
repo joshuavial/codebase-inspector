@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
-import { agentInstruction, commandSteps, compareSteps, mapCompare, mapProject, mapVersion, modelHome, rebuildViewer, taskSummary, type Runner } from "./map-project";
+import { agentInstruction, commandSteps, compareSteps, mapCompare, mapProject, mapVersion, modelHome, rebuildViewer, refreshHistory, taskSummary, type Runner } from "./map-project";
 
 function fakeRun(script: Record<string, { code?: number; stdout?: string; stderr?: string }>): { run: Runner; calls: string[][] } {
   const calls: string[][] = [];
@@ -215,4 +215,23 @@ test("a ref model rebuilds with --ref and does not scan", async () => {
     ["build", "--ref", "side"],
     ["status", "--json", "--ref", "side"],
   ]);
+});
+
+test("history builds in the background with fixed argv", async () => {
+  const viewer = "/repos/app/.cbi/viewer/index.html";
+  const { run, calls } = fakeRun({
+    history: { stdout: '{"entries":[]}\n' },
+    build: { stdout: `${viewer}\n` },
+  });
+  assert.equal(await refreshHistory({ root: "/repos/app", cbi: "/bin/cbi", run }), viewer);
+  assert.deepEqual(calls.map((call) => call.slice(2)), [
+    ["history", "--format", "json"],
+    ["build", "--history"],
+  ]);
+});
+
+test("a failed background history leaves the current viewer alone", async () => {
+  const { run, calls } = fakeRun({ history: { code: 1, stderr: "no concepts" } });
+  assert.equal(await refreshHistory({ root: "/repos/app", cbi: "/bin/cbi", run }), null);
+  assert.deepEqual(calls.map((call) => call.slice(2)), [["history", "--format", "json"]]);
 });

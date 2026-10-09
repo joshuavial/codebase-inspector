@@ -146,6 +146,16 @@ main { flex: 1; display: flex; min-height: 0; }
   display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel);
 }
 #compare[hidden], #changes[hidden], #chg-toggle[hidden] { display: none; }
+#history-back[hidden], #timeline[hidden] { display: none; }
+#timeline { border-top: 1px solid var(--line); padding: 9px 14px 11px; background: var(--panel); }
+#history-ticks { height: 28px; display: flex; align-items: end; gap: 3px; }
+#history-ticks button { flex: 1; min-width: 4px; max-width: 28px; padding: 0; border: 0; border-radius: 2px 2px 0 0; background: var(--muted); cursor: pointer; }
+#history-ticks button.on { background: var(--accent); }
+#history-scrub { width: 100%; margin: 4px 0; }
+#history-entry { display: flex; gap: 9px; align-items: center; min-height: 25px; font-size: 12px; }
+#history-entry .summary { flex: 1; color: var(--muted); }
+#history-entry button { white-space: nowrap; }
+body.history-compare #timeline { display: none; }
 #compare button { border: 0; background: none; padding: 5px 11px; cursor: pointer; color: var(--muted); }
 #compare button + button { border-left: 1px solid var(--line); }
 #compare button.on { background: var(--accent-soft); color: var(--text); font-weight: 600; }

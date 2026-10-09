@@ -108,6 +108,16 @@ def test_history_cli_writes_markdown_and_reuses_point_models(make_repo, monkeypa
     entries = history.select(history.build_history(root, root / ".cbi", "2000-01-01"))
     assert written.read_text() == history.render(entries, "markdown")
     assert mtimes == {path: path.stat().st_mtime_ns for path in mtimes}
+    assert main(["build", "--history"]) == 0
+    script = (root / ".cbi" / "viewer" / "data" / "history.js").read_text()
+    prefix = 'cbiLoad("history", '
+    timeline = json.loads(script[len(prefix):-3])
+    assert len(timeline["entries"]) == len(entries)
+    latest = timeline["entries"][-1]
+    assert latest["model"]["concepts"]
+    assert latest["diff"]["changes"]["groups"]
+    assert "cbi diff" not in latest["text"]
+    assert (root / ".cbi" / "viewer" / "index.html").read_text().find("data/history.js") > 0
     conn = store.read_only(next(iter(mtimes)))
     try:
         assert store.get_meta(conn, "commit")

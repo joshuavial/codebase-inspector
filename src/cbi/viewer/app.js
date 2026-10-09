@@ -40,6 +40,9 @@ let HEAD_ONLY = new Set();
 let SYMBOL_MARK = new Map();
 let REMOVED_SYMS = [];
 let REL_MARK = new Map();
+let HISTORY = null;
+let historyIndex = -1;
+let historyCompare = false;
 
 function cbiLoad(name, value) {
   if (name === "context") {
@@ -49,6 +52,10 @@ function cbiLoad(name, value) {
   if (name === "diff") {
     DIFF = value || null;
     if (DIFF) indexDiff(DIFF);
+    return;
+  }
+  if (name === "history") {
+    HISTORY = value && Array.isArray(value.entries) && value.entries.length ? value : null;
     return;
   }
   if (name === "tree") {
@@ -93,6 +100,7 @@ function loadConcepts(data) {
     initCamera();
     initOverlay();
     initCompare();
+    initHistory();
   }
   route();
   if (first || shownSide) initSearch();
@@ -351,13 +359,84 @@ function initCompare() {
 }
 
 function paintCompare() {
-  const on = !!DIFF;
+  const on = !!DIFF && (!HISTORY || historyCompare);
   document.getElementById("compare").hidden = !on;
   document.getElementById("chg-toggle").hidden = !on;
   if (!on) return;
   for (const button of document.querySelectorAll("#compare button")) {
     button.classList.toggle("on", (button.dataset.side || "head") === (shownSide || "head"));
   }
+}
+
+function initHistory() {
+  const bar = document.getElementById("timeline");
+  if (!bar) return;
+  if (!HISTORY) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const entries = HISTORY.entries;
+  const ticks = document.getElementById("history-ticks");
+  const largest = Math.max(...entries.map((entry) => entry.change_count || 1), 1);
+  entries.forEach((entry, index) => {
+    const tick = el("button");
+    tick.style.height = `${7 + Math.round(21 * Math.sqrt((entry.change_count || 1) / largest))}px`;
+    tick.title = `${entry.date.slice(0, 10)} · ${entry.change_count} changes`;
+    tick.onclick = () => showHistoryEntry(index, true);
+    ticks.append(tick);
+  });
+  const scrub = document.getElementById("history-scrub");
+  scrub.max = String(entries.length - 1);
+  scrub.value = String(entries.length - 1);
+  scrub.oninput = () => showHistoryEntry(Number(scrub.value), false);
+  document.getElementById("history-back").onclick = () => showHistoryEntry(historyIndex, false);
+  showHistoryEntry(entries.length - 1, false);
+}
+
+function showHistoryEntry(index, compare) {
+  if (!HISTORY || !HISTORY.entries[index]) return;
+  const entry = HISTORY.entries[index];
+  historyIndex = index;
+  historyCompare = !!compare;
+  document.body.classList.toggle("history-compare", historyCompare);
+  document.getElementById("history-back").hidden = !historyCompare;
+  document.getElementById("history-scrub").value = String(index);
+  for (const [at, tick] of [...document.querySelectorAll("#history-ticks button")].entries())
+    tick.classList.toggle("on", at === index);
+  DIFF = entry.diff;
+  indexDiff(DIFF);
+  HEAD = entry.model;
+  shownSide = null;
+  M = null;
+  const detail = document.getElementById("history-entry");
+  detail.replaceChildren();
+  const pr = entry.pr ? ` · PR #${entry.pr}` : "";
+  detail.append(el("span", "summary", `${entry.date.slice(0, 10)} · ${entry.sha.slice(0, 12)}${pr} · ${entry.author} · ${entry.change_count} changes`));
+  const copy = el("button", "", "Copy for agent");
+  copy.onclick = () => copyHistoryEntry(entry);
+  detail.append(copy);
+  if (!historyCompare) {
+    const open = el("button", "", "Open comparison");
+    open.onclick = () => showHistoryEntry(index, true);
+    detail.append(open);
+  }
+  route();
+}
+
+function copyHistoryEntry(entry) {
+  const day = entry.date.slice(0, 10);
+  const text = `${entry.text.trim()}\n\nReproduce:\ncbi history --since ${day} --until ${day}\ncbi diff ${entry.base} ${entry.sha}\n`;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => showToast("Copied"), () => fallbackCopy(text));
+  } else fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  document.execCommand("copy");
+  area.remove();
+  showToast("Copied");
 }
 
 function groupFocus(g) {
@@ -369,8 +448,8 @@ function groupFocus(g) {
 
 function changesPanel() {
   const panel = document.getElementById("changes");
-  panel.hidden = !DIFF;
-  if (!DIFF) return;
+  panel.hidden = !DIFF || (!!HISTORY && !historyCompare);
+  if (panel.hidden) return;
   panel.replaceChildren();
   panel.append(el("h2", "", "Changes"));
   const base = DIFF.base ? String(DIFF.base).slice(0, 12) : "base";

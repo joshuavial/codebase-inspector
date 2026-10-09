@@ -145,6 +145,8 @@ def build_parser():
                                   help="write .cbi/CHANGELOG-ARCHITECTURE.md")
     cmds["build"].add_argument("--compare", metavar="BASE..HEAD",
                                help="also write data/diff.js for this base..head comparison")
+    cmds["build"].add_argument("--history", action="store_true",
+                               help="include the default-branch timeline and replay data")
     cmds["ingest"].description = ingest.HELP
     cmds["ingest"].add_argument("--out", metavar="DIR", type=Path,
                                 help="model directory to use instead of .cbi/ in the repo root")
@@ -970,8 +972,13 @@ def cmd_diff(args):
 
 
 def cmd_build(args):
+    if args.compare and args.history:
+        print("pass --compare or --history, not both", file=sys.stderr)
+        return 2
     if args.compare:
         return _cmd_build_compare(args)
+    if args.history:
+        return _cmd_build_history(args)
     root, out = _paths(args)
     _root, home, path, sha = _locate(args)
     conn = _model(args)
@@ -983,6 +990,56 @@ def cmd_build(args):
     finally:
         if source:
             source.close()
+        conn.close()
+    return 0
+
+
+def _cmd_build_history(args):
+    if args.ref:
+        print("pass --history or --ref, not both", file=sys.stderr)
+        return 2
+    root, out = _paths(args)
+    index = out / "history" / "index.json"
+    if not index.is_file():
+        print("history has not been built. Run `cbi history` first.", file=sys.stderr)
+        return 1
+    try:
+        entries = json.loads(index.read_text()).get("entries") or []
+    except (OSError, json.JSONDecodeError) as err:
+        print(f"cannot read history index: {err}", file=sys.stderr)
+        return 1
+    payload = []
+    for entry in entries:
+        base_conn = head_conn = base_src = head_src = None
+        try:
+            base_conn = diff.open_model(out / "refs" / entry["base"] / "model.db")
+            head_conn = diff.open_model(out / "refs" / entry["sha"] / "model.db")
+            base_src = files.CommitTree(root, entry["base"], files.Ignore(""))
+            head_src = files.CommitTree(root, entry["sha"], files.Ignore(""))
+            comparison = build.compare_payload(
+                head_conn, base_conn, entry["changes"], head_src, base_src, entry["base"], entry["sha"])
+            payload.append({
+                "sha": entry["sha"], "base": entry["base"], "date": entry["date"],
+                "author": entry["author"], "pr": entry.get("pr"), "title": entry.get("title"),
+                "change_count": entry["change_count"], "narrative": entry.get("narrative"),
+                "text": history.render([entry], "text"), "model": build.concept_view(head_conn, head_src),
+                "diff": comparison,
+            })
+        except diff.DiffError as err:
+            print(err, file=sys.stderr)
+            return err.code
+        finally:
+            for source in (base_src, head_src):
+                if source:
+                    source.close()
+            for conn in (base_conn, head_conn):
+                if conn:
+                    conn.close()
+    conn = _model(args)
+    try:
+        print(build.build(conn, out / "viewer", root, history={"entries": payload},
+                          editor=args.editor, project=root))
+    finally:
         conn.close()
     return 0
 

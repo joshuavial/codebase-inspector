@@ -169,3 +169,15 @@ export function rebuildViewer(opts: {
 }): Promise<MapResult> {
   return runSteps(opts, commandSteps({ needsInit: false, ref: opts.ref, rebuild: true }));
 }
+
+/** Build the default-branch history after the current map is already usable. */
+export async function refreshHistory(opts: {
+  root: string;
+  cbi: string;
+  run: Runner;
+}): Promise<string | null> {
+  const made = await opts.run(opts.cbi, ["history", "--format", "json"], opts.root, () => undefined);
+  if (made.code !== 0) return null;
+  const built = await opts.run(opts.cbi, ["build", "--history"], opts.root, () => undefined);
+  return built.code === 0 ? lastLine(built.stdout) || null : null;
+}

@@ -36,7 +36,7 @@ import { isCommitSha, parsePrOids, planCompare, prViewArgs, readCompareForm } fr
 import { linkFromArgv, validateOpen, verifyRef, viewerLocation } from "./deeplink";
 import { revealFor, revealWindow } from "./reveal";
 import { assertRemoteArgv, FETCH_ARGV, parseRemoteRefs, REMOTES_ARGV } from "./git-remotes";
-import { agentInstruction, mapCompare, mapVersion, modelHome, rebuildViewer, taskSummary } from "./map-project";
+import { agentInstruction, mapCompare, mapVersion, modelHome, rebuildViewer, refreshHistory, taskSummary } from "./map-project";
 import { resolveProject } from "./project";
 import { commandExecutable } from "./which";
 import { RecentsStore } from "./recents";
@@ -639,7 +639,7 @@ async function readFileStates(db: string): Promise<Map<string, string>> {
 async function fingerprintViewer(index: string): Promise<string> {
   const dir = path.dirname(index);
   const sources: string[] = [];
-  for (const name of ["data/concepts.js", "data/tree.js", "data/diff.js"]) {
+  for (const name of ["data/concepts.js", "data/tree.js", "data/diff.js", "data/history.js"]) {
     try {
       sources.push(await fs.promises.readFile(path.join(dir, name), "utf8"));
     } catch {
@@ -1016,6 +1016,16 @@ async function loadVersion(gen: number, opts: {
   if (listed) adoptInventory(listed);
   publishProject();
   sendProgress({ phase: "ready" });
+  if (!ref) {
+    void refreshHistory({
+      root: cwd,
+      cbi: opts.cbi,
+      run: (bin, args, dir, onLine) => runCbi(bin, args, dir, onLine, SCAN_TIMEOUT_MS),
+    }).then(async (rebuilt) => {
+      if (gen !== generation || !rebuilt || !version || version.key !== key) return;
+      await offerBuilt(rebuilt, modelDbPath(cwd, opts.project, ref, head));
+    });
+  }
 }
 
 async function showBuilt(gen: number, opts: {

@@ -15,6 +15,7 @@
     <button type="button" data-side="base">Base</button>
   </div>
   <button id="chg-toggle" type="button" hidden>Changes</button>
+  <button id="history-back" type="button" class="back" hidden>← Back to timeline</button>
   <div id="overlay" role="group" aria-label="Test overlay">
     <button data-t="" class="on">map</button>
     <button data-t="links">tests</button>
@@ -38,12 +39,18 @@
   </section>
   <aside id="drawer"></aside>
 </main>
+<section id="timeline" hidden aria-label="Architecture history">
+  <div id="history-ticks"></div>
+  <input id="history-scrub" type="range" min="0" max="0" value="0" aria-label="Replay architecture history">
+  <div id="history-entry"></div>
+</section>
 <div id="toast" role="status" hidden>Copied</div>
 <script src="vendor/elk.bundled.js"></script>
 <script src="open-editor.js"></script>
 <script src="app.js"></script>
 <script src="data/editor.js"></script>
 <script src="data/diff.js"></script>
+<script src="data/history.js"></script>
 <script src="data/concepts.js"></script>
 <script src="data/context.js"></script>
 </body>
