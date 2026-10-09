@@ -428,7 +428,7 @@ def _server_usage(files, root):
     cache, routes, rendered_by, handlers = {}, defaultdict(set), defaultdict(set), defaultdict(set)
     django = defaultdict(set)
     for info in files.values():
-        if info["role"] not in ("code", "test"):
+        if info["role"] != "code":
             continue
         text = _read(root, info["path"], cache)
         if not text:
@@ -473,6 +473,8 @@ def _templates(conn, files, root):
         text = _read(root, info["path"], cache) or ""
         kind = _template_kind(info["path"], text)
         callers = _template_lookup(rendered_by, info["path"])
+        if kind == "HTML" and 'id="svg-out"' in text and posixpath.basename(info["path"]).lower() == "render.html":
+            continue
         is_page = not _partial_template(info["path"])
         if not is_page and not callers:
             continue

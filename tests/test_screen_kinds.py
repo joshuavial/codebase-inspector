@@ -16,10 +16,24 @@ VUE_FILES = {
         'export const router = createRouter({ routes: [{ path: "/settings", component: Settings }] });\n'
     ),
     "src/Settings.vue": (
-        '<template><main><h1>Settings</h1><SaveButton /></main></template>\n'
-        '<script setup lang="ts">\nimport SaveButton from "./SaveButton.vue";\n</script>\n'
+        '<template>\n'
+        '  <div class="dashboard">\n'
+        '    <header><h1>Operations</h1><button>Refresh</button></header>\n'
+        '    <nav><button>Overview</button><button>Alerts</button></nav>\n'
+        '    <StatusBanner v-if="offline" message="Connection lost" />\n'
+        '    <main><MetricCard title="Open incidents" /><ActivityList /></main>\n'
+        '    <aside><h2>Details</h2><button>Close</button></aside>\n'
+        '  </div>\n'
+        '</template>\n'
+        '<script setup lang="ts">\n'
+        'import StatusBanner from "./StatusBanner.vue";\n'
+        'import MetricCard from "./MetricCard.vue";\n'
+        'import ActivityList from "./ActivityList.vue";\n'
+        '</script>\n'
     ),
-    "src/SaveButton.vue": '<template><button>Save</button></template>\n',
+    "src/StatusBanner.vue": '<template><p>Connection lost</p></template>\n',
+    "src/MetricCard.vue": '<template><section><h2>Open incidents</h2><strong>12</strong></section></template>\n',
+    "src/ActivityList.vue": '<template><section><h2>Recent activity</h2><ol /></section></template>\n',
 }
 
 DJANGO_FILES = {
@@ -48,6 +62,8 @@ HTML_FILES = {
     ),
     "app/src/renderer.js": 'document.body.dataset.ready = "yes";\n',
     "app/src/theme.css": "body { color: black; }\n",
+    "tests/decoy.test.js": 'window.loadFile("app/src/index.html");\n',
+    "src/render.html": '<html><body><script type="text/plain" id="svg-out"></script></body></html>\n',
 }
 
 
@@ -115,12 +131,48 @@ def test_vue_route_template_brief_and_answer(make_repo, monkeypatch, capsys, tmp
     root, brief = prepare(make_repo, monkeypatch, capsys, tmp_path, VUE_FILES)
     settings = next(item for item in brief["components"] if item["ref"] == "src/Settings.vue#Settings")
     assert settings["template_file"] == "src/Settings.vue"
-    assert "<h1>Settings</h1>" in settings["template"]
+    assert "<h1>Operations</h1>" in settings["template"]
+    assert "Connection lost" in settings["template"] and "Open incidents" in settings["template"]
     assert settings["routes"] == ["/settings"]
-    assert settings["renders"] == ["src/SaveButton.vue#SaveButton"]
+    assert settings["renders"] == [
+        "src/ActivityList.vue#ActivityList",
+        "src/MetricCard.vue#MetricCard",
+        "src/StatusBanner.vue#StatusBanner",
+    ]
     assert any(item["component"] == settings["ref"] and item["route"] == "/settings" for item in brief["entries"])
-    accept_one(capsys, tmp_path, brief, settings["ref"], "Settings")
-    payload = build.concept_view(sqlite3.connect(root / ".cbi" / "model.db"), root)
+    submit(capsys, tmp_path, brief["id"], {
+        "input_hash": brief["input_hash"],
+        "screens": [{
+            "id": "settings", "name": "Operations", "device": "desktop",
+            "root": {
+                "id": "dashboard", "layout": "column", "component": settings["ref"],
+                "children": [
+                    {"id": "topbar", "layout": "row", "children": [
+                        {"id": "title", "layout": "column", "style": ["heading"], "text": "Operations"},
+                        {"id": "refresh", "layout": "row", "style": ["button"], "text": "Refresh"},
+                    ]},
+                    {"id": "tabs", "layout": "row", "style": ["tabs"], "text": "Overview  Alerts"},
+                    {"id": "offline", "layout": "row", "component": "src/StatusBanner.vue#StatusBanner",
+                     "style": ["banner"], "when": "offline", "text": "Connection lost"},
+                    {"id": "content", "layout": "grid", "cols": 2, "children": [
+                        {"id": "metric", "layout": "column", "component": "src/MetricCard.vue#MetricCard",
+                         "style": ["card"], "text": "Open incidents\n12"},
+                        {"id": "activity", "layout": "column", "component": "src/ActivityList.vue#ActivityList",
+                         "style": ["list"], "text": "Recent activity\nDeployment finished\nAlert assigned"},
+                    ]},
+                    {"id": "drawer", "layout": "column", "style": ["panel"], "children": [
+                        {"id": "drawer-title", "layout": "row", "style": ["heading"], "text": "Details"},
+                        {"id": "close", "layout": "row", "style": ["button"], "text": "Close"},
+                    ]},
+                ],
+            },
+        }],
+    })
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    try:
+        payload = build.concept_view(conn, root)
+    finally:
+        conn.close()
     assert payload["screens"][0]["root"]["component"] == settings["id"]
 
 
@@ -144,9 +196,27 @@ def test_template_detection_brief_answer_and_viewer(
     assert included in page["includes"]
     if renderer:
         assert renderer in page["rendered_by"]
+    assert "tests/decoy.test.js" not in page["rendered_by"]
+    assert all(item["ref"] != "src/render.html" for item in brief["templates"])
     assert all(not item["ref"].endswith(("_nav.html", "_Nav.cshtml", "base.html")) for item in brief["templates"])
     assert any(item["component"] == target and item.get("route") == route for item in brief["entries"])
-    accept_one(capsys, tmp_path, brief, target, kind)
+    if kind == "HTML":
+        submit(capsys, tmp_path, brief["id"], {
+            "input_hash": brief["input_hash"],
+            "screens": [{
+                "id": "desktop", "name": "HTML", "device": "desktop",
+                "root": {"id": "window", "layout": "column", "component": target, "children": [
+                    {"id": "topbar", "layout": "row", "text": "Projects  Compare", "style": ["card"]},
+                    {"id": "banner", "layout": "row", "text": "Judgement tasks waiting", "style": ["banner"]},
+                    {"id": "workspace", "layout": "row", "children": [
+                        {"id": "map", "layout": "column", "text": "Architecture map", "style": ["panel"]},
+                        {"id": "drawer", "layout": "column", "text": "Details", "style": ["panel"]},
+                    ]},
+                ]},
+            }],
+        })
+    else:
+        accept_one(capsys, tmp_path, brief, target, kind)
 
     conn = sqlite3.connect(root / ".cbi" / "model.db")
     try:
@@ -155,6 +225,9 @@ def test_template_detection_brief_answer_and_viewer(
         conn.close()
     screen = next(item for item in payload["screens"] if item["name"] == kind)
     assert screen["root"]["component"].endswith(":" + target)
+    if kind == "HTML":
+        assert [item["id"] for item in screen["root"]["children"]] == ["topbar", "banner", "workspace"]
+        assert [item["id"] for item in screen["root"]["children"][2]["children"]] == ["map", "drawer"]
     leaf = payload["concepts"][0]
     virtual = next(item for item in leaf["symbols"] if item["id"] == screen["root"]["component"])
     assert virtual["kind"] == "component" and virtual["template"] is True
