@@ -13,7 +13,7 @@ import re
 import shutil
 from pathlib import Path
 
-from cbi import context
+from cbi import context, system_views
 
 ASSETS = Path(__file__).parent / "viewer"
 TREE_FIELDS = ("id", "parent_id", "kind", "display_kind", "name", "path", "start_line", "end_line", "loc",
@@ -77,6 +77,8 @@ def build(conn, out, root=None, compare=None, history=None, place=None, *, edito
     (data / "tree.js").write_text(_script("tree", {"nodes": _tree(conn)}))
     concepts = concept_view(conn, root)
     (data / "concepts.js").write_text(_script("concepts", concepts))
+    (data / "database.js").write_text(_script("database", system_views.database_view(conn)))
+    (data / "endpoints.js").write_text(_script("endpoints", system_views.endpoint_view(conn)))
     if place is None:
         place = context.infer_place(out, root, compare)
     (data / "context.js").write_text(_script("context", context.embed(conn, concepts, place)))
