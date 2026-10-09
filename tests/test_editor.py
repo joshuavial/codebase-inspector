@@ -462,7 +462,7 @@ def test_open_file_ref_writes_a_snapshot_and_leaves_the_repo(make_repo, monkeypa
     snap = Path(goto.rsplit(":", 1)[0])
     assert snap.read_text() == side_text
     assert stat.S_IMODE(snap.stat().st_mode) == 0o444
-    assert "src/app.py" in out
+    assert "src/app.py" in out.replace("\\", "/")
     assert (root / "src" / "app.py").read_text() != side_text
     after = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
     assert after == before
