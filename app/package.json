@@ -1,9 +1,15 @@
 {
   "name": "codebase-inspector-app",
   "productName": "Codebase Inspector",
+  "desktopName": "com.codebaseinspector.app",
   "version": "0.1.0",
   "private": true,
   "description": "Desktop shell that opens a git repository and shows the cbi concept map.",
+  "homepage": "https://github.com/joshuavial/codebase-inspector",
+  "author": {
+    "name": "Joshua Vial",
+    "email": "git@codewithjv.com"
+  },
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.mjs",
@@ -42,7 +48,9 @@
     "linux": {
       "target": ["AppImage", "deb"],
       "icon": "build/icon.png",
-      "category": "Development"
+      "category": "Development",
+      "maintainer": "Joshua Vial <git@codewithjv.com>",
+      "syncDesktopName": true
     },
     "protocols": [
       {
