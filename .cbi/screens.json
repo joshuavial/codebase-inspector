@@ -1,0 +1,174 @@
+{
+  "screens": [
+    {
+      "id": "desktop-start",
+      "name": "Project picker",
+      "device": "desktop",
+      "root": {
+        "id": "start-root",
+        "layout": "column",
+        "component": "app/src/index.html",
+        "children": [
+          {
+            "id": "start-heading",
+            "label": "Codebase Inspector",
+            "layout": "column",
+            "text": "Open a git repository to see its map.",
+            "style": [
+              "heading"
+            ]
+          },
+          {
+            "id": "open-project",
+            "layout": "column",
+            "text": "Open folder or drop a folder here",
+            "style": [
+              "card",
+              "button"
+            ]
+          },
+          {
+            "id": "recent-projects",
+            "label": "Recent",
+            "layout": "column",
+            "text": "{recent projects}",
+            "style": [
+              "list"
+            ]
+          },
+          {
+            "id": "settings",
+            "layout": "grid",
+            "cols": 2,
+            "children": [
+              {
+                "id": "cbi-settings",
+                "label": "cbi",
+                "layout": "column",
+                "text": "Path to cbi  Save  Choose",
+                "style": [
+                  "card",
+                  "input"
+                ]
+              },
+              {
+                "id": "editor-settings",
+                "label": "Editor",
+                "layout": "column",
+                "text": "Editor choice and command template",
+                "style": [
+                  "card",
+                  "input"
+                ]
+              },
+              {
+                "id": "update-settings",
+                "label": "Updates",
+                "layout": "column",
+                "text": "Check for updates automatically",
+                "style": [
+                  "card"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "desktop-project",
+      "name": "Mapped project",
+      "device": "desktop",
+      "root": {
+        "id": "project-root",
+        "layout": "column",
+        "component": "app/src/index.html",
+        "children": [
+          {
+            "id": "project-topbar",
+            "layout": "row",
+            "text": "Projects  {project name}  {path}  {version}  Compare  {scan status}",
+            "style": [
+              "heading"
+            ]
+          },
+          {
+            "id": "task-panel",
+            "layout": "row",
+            "text": "Judgement tasks waiting  {task counts}  Copy instruction",
+            "style": [
+              "card"
+            ]
+          },
+          {
+            "id": "map-stage",
+            "layout": "column",
+            "text": "{architecture viewer}",
+            "style": [
+              "canvas"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "architecture-map",
+      "name": "Architecture map",
+      "device": "desktop",
+      "root": {
+        "id": "viewer-root",
+        "layout": "column",
+        "component": "src/cbi/viewer/index.html",
+        "children": [
+          {
+            "id": "viewer-toolbar",
+            "layout": "row",
+            "text": "{breadcrumbs}  Details  Head Base  Changes  map tests cover results  Search",
+            "style": [
+              "toolbar",
+              "input"
+            ]
+          },
+          {
+            "id": "viewer-main",
+            "layout": "row",
+            "children": [
+              {
+                "id": "changes-panel",
+                "layout": "column",
+                "text": "{changes}",
+                "style": [
+                  "list"
+                ]
+              },
+              {
+                "id": "diagram",
+                "layout": "column",
+                "text": "{concept map or screen sketch}",
+                "style": [
+                  "canvas"
+                ]
+              },
+              {
+                "id": "details-drawer",
+                "layout": "column",
+                "text": "{selected node details}",
+                "style": [
+                  "drawer"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "history-timeline",
+            "layout": "column",
+            "text": "{architecture history timeline}",
+            "style": [
+              "timeline"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

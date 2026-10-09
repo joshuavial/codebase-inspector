@@ -226,7 +226,7 @@ def _json_findings(conn, root, out):
     for name, checker in (
         ("structure.json", _structure_errors),
         ("concepts.json", _concept_errors),
-        ("screens.json", _screen_errors),
+        ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
         if not path.is_file() or not path.read_text().strip():
@@ -297,7 +297,7 @@ def _concept_errors(conn, text):
     return failed
 
 
-def _screen_errors(conn, text):
+def _screen_errors(conn, text, root=None):
     data, errors = _object(text)
     if data is None:
         return errors
@@ -307,7 +307,7 @@ def _screen_errors(conn, text):
     if errors:
         return errors
     try:
-        return screens.problems(conn, body)
+        return screens.problems(conn, body, root)
     except (KeyError, TypeError) as err:
         return [f"failed its checks ({err})"]
 

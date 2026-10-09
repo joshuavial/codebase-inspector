@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from cbi import build
+from cbi import build, check, store
 from cbi.cli import main
 
 
@@ -226,6 +226,12 @@ def test_template_detection_brief_answer_and_viewer(
     screen = next(item for item in payload["screens"] if item["name"] == kind)
     assert screen["root"]["component"].endswith(":" + target)
     if kind == "HTML":
+        conn = store.open_db(root / ".cbi" / "model.db")
+        try:
+            findings = check._json_findings(conn, root, root / ".cbi")
+        finally:
+            conn.close()
+        assert not [item for item in findings if "render.html" in str(item)], findings
         assert [item["id"] for item in screen["root"]["children"]] == ["topbar", "banner", "workspace"]
         assert [item["id"] for item in screen["root"]["children"][2]["children"]] == ["map", "drawer"]
     leaf = payload["concepts"][0]

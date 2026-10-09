@@ -99,6 +99,7 @@
         "tests/layout_check.js",
         "tests/test_compare_viewer.py",
         "tests/test_layout.py",
+        "tests/drawer_open_check.js",
         "tests/test_viewer.py",
         "src/cbi/viewer/open-editor.js",
         "tests/sketch_check.js",
@@ -212,7 +213,8 @@
             "src/cbi/concepts.py",
             "src/cbi/screens.py",
             "tests/test_concepts.py",
-            "tests/test_screens.py"
+            "tests/test_screens.py",
+            "tests/test_screen_kinds.py"
           ]
         },
         {
@@ -256,6 +258,16 @@
               "files": [
                 "src/cbi/review.py",
                 "tests/test_change_review.py"
+              ]
+            },
+            {
+              "id": "history",
+              "name": "Architecture history",
+              "summary": "Builds an architectural timeline from immutable default-branch models, projects the current concepts onto historical files, compares successive points, and renders cached narratives as a changelog.",
+              "role": "core",
+              "files": [
+                "src/cbi/history.py",
+                "tests/test_history.py"
               ]
             }
           ]
@@ -762,6 +774,32 @@
       "label": "GETs the latest release for the CLI notice",
       "via": "HTTP",
       "at": "src/cbi/update_check.py:fetch_release"
+    },
+    {
+      "from": "cli",
+      "to": "history",
+      "label": "builds, filters and renders architecture history"
+    },
+    {
+      "from": "history",
+      "to": "cli",
+      "label": "scans immutable history points through the CLI",
+      "minor": true
+    },
+    {
+      "from": "history",
+      "to": "diff",
+      "label": "compares consecutive historical models"
+    },
+    {
+      "from": "history",
+      "to": "review",
+      "label": "opens and retrieves change narrative tasks"
+    },
+    {
+      "from": "history",
+      "to": "tasks",
+      "label": "reads cached narratives for history entries"
     }
   ]
 }
