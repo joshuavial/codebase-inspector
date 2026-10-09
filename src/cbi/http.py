@@ -11,6 +11,16 @@ import json
 from collections import defaultdict
 
 VERBS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+TEST_DIRS = {"test", "tests", "__tests__"}
+
+
+def _test_helper(file_row):
+    _workspace, path, role = file_row
+    parts = path.replace("\\", "/").split("/")
+    stem = parts[-1].rsplit(".", 1)[0].lower()
+    helper_dirs = {"fixtures", "mocks", "test_helpers"}
+    helper_name = stem.startswith(("fake_", "mock_", "stub_")) or stem.endswith(("_fake", "_mock", "_stub"))
+    return role == "test" or bool(TEST_DIRS & set(parts)) or bool(helper_dirs & set(parts)) or helper_name
 
 
 def segments(path):
@@ -286,7 +296,7 @@ def link(model):
     raw_routes = []
     raw_calls = []
     for fid, facts in model.facts.items():
-        if fid not in model.files or model.files[fid][2] == "test":
+        if fid not in model.files or _test_helper(model.files[fid]):
             continue
         for row in facts.get("http_routers") or []:
             name, prefix, kind = _pad(row, 3)[:3]

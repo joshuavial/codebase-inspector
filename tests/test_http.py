@@ -206,6 +206,68 @@ function POST() { return new Response(null); }
     }
 
 
+def test_factory_router_prefixes_and_testclient_only_apps(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        "api.py": '''\
+from fastapi import APIRouter
+
+def routes():
+    router = APIRouter(prefix="/v1/operations")
+
+    @router.post("/consume")
+    def consume():
+        return {}
+
+    return router
+''',
+        "diagnose.py": '''\
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI()
+
+@app.get("/")
+def diagnostic():
+    return {}
+
+client = TestClient(app)
+''',
+        "tests/helpers.py": '''\
+from fastapi import FastAPI
+helper_app = FastAPI()
+@helper_app.get("/fixture-only")
+def fixture_only():
+    return {}
+''',
+        "integration/fake_engine.py": '''\
+from fastapi import FastAPI
+fake_app = FastAPI()
+@fake_app.post("/fake-only")
+def fake_only():
+    return {}
+''',
+        "server.ts": '''\
+const app = express();
+const router = express.Router();
+router.get("/items", listItems);
+app.use("/api", router);
+function listItems() {}
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    routes = {(method, path) for method, path in conn.execute(
+        "SELECT json_extract(route.value, '$.method'), json_extract(route.value, '$.path') "
+        "FROM nodes n, json_each(n.attrs, '$.http_routes') route")}
+    assert ("POST", "/v1/operations/consume") in routes
+    assert ("GET", "/api/items") in routes
+    assert ("GET", "/") not in routes
+    assert ("GET", "/fixture-only") not in routes
+    assert ("POST", "/fake-only") not in routes
+
+
 def test_csharp_attributes_and_minimal_apis():
     source = FILES["api/LeasesController.cs"] + "\n" + FILES["api/Program.cs"]
     _defs, facts, err = csharp.parse(source.encode(), "csharp", False)

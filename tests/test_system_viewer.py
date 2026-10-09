@@ -130,6 +130,29 @@ if errors:
 print("ok")
 '''
 
+LARGE_DRIVER = r'''
+import sys
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+index = sys.argv[1]
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1600, "height": 1000})
+    page.goto(Path(index).resolve().as_uri() + "?render=1#tab=database")
+    page.wait_for_function("() => document.title === 'cbi-viewer-ready'", timeout=60000)
+    if int(page.locator("#diagram").get_attribute("data-database-groups") or "0") < 2:
+        raise SystemExit("large schema was not grouped")
+    boxes = page.locator(".db-table .name").evaluate_all(
+        "els => els.map(el => el.getBoundingClientRect().height).filter(Boolean)")
+    if len(boxes) != 92 or min(boxes) < 8:
+        diagram = page.locator("#diagram")
+        raise SystemExit("table names are not legible at fit: " + repr((
+            len(boxes), min(boxes or [0]), diagram.get_attribute("data-layout"),
+            diagram.get_attribute("viewBox"))))
+    browser.close()
+'''
+
 
 def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, capsys, tmp_path):
     exe = _playwright_python()
@@ -154,3 +177,26 @@ def test_database_capture_uses_cbi_render_path_when_chrome_is_installed(make_rep
     assert png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n") and png.stat().st_size > 1000
     endpoint_png = render.viewer_png(viewer, "tab=endpoints", tmp_path / "endpoints-render.png")
     assert endpoint_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n") and endpoint_png.stat().st_size > 1000
+
+
+def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypatch, capsys, tmp_path):
+    exe = _playwright_python()
+    if not exe:
+        pytest.skip("playwright is not installed for this python")
+    statements = []
+    for prefix, count in (("core", 52), ("billing", 23)):
+        for index in range(count):
+            foreign = f", previous_id INTEGER REFERENCES {prefix}_{index - 1}(id)" if index else ""
+            statements.append(f"CREATE TABLE {prefix}_{index} (id INTEGER PRIMARY KEY{foreign});")
+    for index in range(17):
+        statements.append(f"CREATE TABLE lookup_{index} (id INTEGER PRIMARY KEY);")
+    root = make_repo({"migrations/001.sql": "\n".join(statements)}, name="large-schema")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+    assert main(["build"]) == 0
+    viewer = Path(capsys.readouterr().out.strip())
+    script = tmp_path / "drive_large_database.py"
+    script.write_text(LARGE_DRIVER)
+    proc = subprocess.run([exe, str(script), str(viewer)], capture_output=True, text=True, timeout=90)
+    assert proc.returncode == 0, proc.stdout + proc.stderr

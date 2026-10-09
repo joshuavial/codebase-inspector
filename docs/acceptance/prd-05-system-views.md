@@ -7,7 +7,7 @@ Checked on 10 October 2026 against the read-only sample-apps and sample-saas rep
 | Repository | Scan | Tables | Foreign keys | Reads | Writes | Endpoints | Endpoints with callers | Endpoints with tables |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | sample-apps | 10.1 s | 22 | 28 | 132 | 108 | 40 | 6 | 18 |
-| sample-saas | 29.7 s | 92 | 118 | 1,396 | 1,151 | 466 | 204 | 228 |
+| sample-saas | 31.2 s | 92 | 118 | 1,396 | 1,151 | 456 | 202 | 228 |
 
 The sample-apps check found two conventions that needed focused support. Next.js app-router endpoints are exported HTTP verb functions in `app/**/route.ts`, with the URL derived from the file path. Supabase table calls use `.from("table")` followed by select or mutation methods. Both now have fixture tests. The endpoint list includes routes inside an initialised content submodule because those files are part of the mapped workspace.
 
@@ -19,7 +19,7 @@ Four 1600 by 1000 PNGs were captured through `cbi.render.viewer_png`, which uses
 
 - sample-apps Database overview, with 22 readable table cards, key labels and routed foreign-key lines.
 - sample-apps API endpoint list, with method, path, note and the three top-level tabs visible.
-- sample-saas Database overview, with all 92 tables fit into the canvas and pan and zoom controls visible.
+- sample-saas Database overview, with all 92 table names legible at fit in connected-component clusters and pan and zoom controls visible.
 - sample-saas API endpoint list, with notes from existing summaries and the method filter visible.
 
 All four images were inspected. Focused browser tests separately select a table and an endpoint, check their drawers, exercise pan, zoom, fit, filtering, code and table jumps, the return chip and Esc.
@@ -27,5 +27,5 @@ All four images were inspected. Focused browser tests separately select a table 
 ## Verification
 
 - Focused schema, HTTP, projection and browser tests: 28 passed after the target-repository findings were added.
-- Full Python suite: 445 passed, 1 skipped.
+- Full Python suite: 447 passed, 1 skipped.
 - Desktop suite: 153 passed.

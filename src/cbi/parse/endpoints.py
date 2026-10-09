@@ -106,9 +106,20 @@ def _bind(found, defs):
 
 def _collect(root, lang):
     """Routers, mounts, routes and client calls. Wrappers are known before calls."""
-    state = {"routers": [], "mounts": [], "routes": [], "calls": [], "known": set(), "wrappers": {}}
+    state = {"routers": [], "mounts": [], "routes": [], "calls": [], "known": set(), "wrappers": {},
+             "test_clients": set()}
     _walk(root, lang, state, None, True)
     _walk(root, lang, state, None, False)
+    if state["test_clients"]:
+        blocked = set(state["test_clients"])
+        changed = True
+        while changed:
+            changed = False
+            for parent, child, _extra in state["mounts"]:
+                if parent in blocked and child not in blocked:
+                    blocked.add(child)
+                    changed = True
+        state["routes"] = [row for row in state["routes"] if row[3] not in blocked]
     return state
 
 
@@ -171,10 +182,14 @@ def _walk_body(node, lang, state, frame, func, routes_only):
             _function(value, lang, state, _text(name), _ts_params(value), node, routes_only)
             return
         _note_local(frame, _text(name) if name is not None and name.type == "identifier" else None, value, lang)
+        if routes_only:
+            _assign(node, lang, state, "value")
     if lang == "python" and node.type == "assignment":
         left = node.child_by_field_name("left")
         if left is not None and left.type == "identifier":
             _note_local(frame, _text(left), node.child_by_field_name("right"), lang)
+            if routes_only:
+                _assign(node, lang, state, "right")
     if not routes_only and lang == "typescript" and node.type == "jsx_attribute":
         _jsx_href(state, node)
     if _is_call(node, lang):
@@ -438,6 +453,12 @@ def _route_call(node, lang, state, func):
     if node.type == "new_expression":
         return
     obj, name = _callee(node, lang)
+    if lang == "python" and name == "TestClient":
+        first = next((value for kind, _key, value in _args(node, lang) if kind == "pos"), None)
+        target = _expr_text(first, lang)
+        if target:
+            state["test_clients"].add(target)
+        return
     if name == "include_router" and obj:
         _mount(node, lang, state, obj)
         return

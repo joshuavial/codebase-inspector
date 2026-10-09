@@ -1647,6 +1647,153 @@ function databaseColumnLine(table, column) {
   return `${marks ? marks + "  " : "    "}${column.name}  ${type}${column.nullable ? "" : "  not null"}`;
 }
 
+function databaseGroups(nodes, edges) {
+  const byNode = Object.fromEntries(nodes.map((node) => [node.id, node]));
+  const adjacent = Object.fromEntries(nodes.map((node) => [node.id, new Set()]));
+  for (const edge of edges) {
+    if (!adjacent[edge.a] || !adjacent[edge.b]) continue;
+    adjacent[edge.a].add(edge.b);
+    adjacent[edge.b].add(edge.a);
+  }
+  const seen = new Set(), groups = [], singletons = [];
+  for (const node of nodes) {
+    if (seen.has(node.id)) continue;
+    const ids = [], queue = [node.id];
+    seen.add(node.id);
+    while (queue.length) {
+      const id = queue.pop();
+      ids.push(id);
+      for (const other of adjacent[id]) if (!seen.has(other)) { seen.add(other); queue.push(other); }
+    }
+    if (ids.length === 1) { singletons.push(byNode[ids[0]]); continue; }
+    const schemas = new Set(ids.map((id) => byNode[id].name.includes(".") ? byNode[id].name.split(".", 1)[0] : ""));
+    const schema = schemas.size === 1 ? [...schemas][0] : "";
+    groups.push({ id: `db-group:${groups.length}`, cls: "group db-group",
+      label: schema ? `${schema} schema · ${ids.length} tables` : `${ids.length} connected tables`,
+      children: ids.map((id) => byNode[id]) });
+  }
+  if (singletons.length > 3) groups.push({ id: `db-group:${groups.length}`, cls: "group db-group",
+    label: `${singletons.length} standalone tables`, children: singletons });
+  else groups.push(...singletons);
+  return groups;
+}
+
+function databaseGrid(groups, edges, avail) {
+  const gap = 18, frameX = 20, frameTop = 40, frameBottom = 20;
+  const laid = groups.map((group) => {
+    const children = group.children || [group];
+    const averageWidth = children.reduce((sum, node) => sum + node.w, 0) / children.length;
+    const columns = Math.max(1, Math.ceil(Math.sqrt(children.length * (avail.w / avail.h) * 38 / averageWidth)));
+    const widths = Array(columns).fill(0);
+    for (let index = 0; index < children.length; index++) widths[index % columns] = Math.max(widths[index % columns], children[index].w);
+    const starts = widths.map((_width, index) => frameX + widths.slice(0, index).reduce((sum, width) => sum + width + gap, 0));
+    const rows = Math.ceil(children.length / columns);
+    const placed = children.map((node, index) => ({ ...node, x: starts[index % columns],
+      y: frameTop + Math.floor(index / columns) * (38 + gap), width: node.w, height: node.h }));
+    const width = frameX * 2 + widths.reduce((sum, value) => sum + value, 0) + gap * (columns - 1);
+    const height = frameTop + rows * 38 + Math.max(0, rows - 1) * gap + frameBottom;
+    if (!group.children) return { ...placed[0], width: group.w, height: group.h, children: null, meta: group };
+    return { id: group.id, width, height, children: placed, meta: group };
+  }).sort((left, right) => right.width * right.height - left.width * left.height);
+  const totalArea = laid.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
+  const targets = [Math.max(...laid.map((item) => item.width)), Math.sqrt(totalArea * avail.w / avail.h),
+    laid.reduce((sum, item) => sum + item.width + gap, -gap) / 2];
+  let best = null;
+  for (const target of targets) {
+    let x = 12, y = 12, rowHeight = 0, width = 0;
+    const children = [];
+    for (const item of laid) {
+      if (x > 12 && x + item.width > target) { x = 12; y += rowHeight + gap; rowHeight = 0; }
+      children.push({ ...item, x, y });
+      x += item.width + gap;
+      rowHeight = Math.max(rowHeight, item.height);
+      width = Math.max(width, x - gap + 12);
+    }
+    const height = y + rowHeight + 12;
+    const scale = Math.min(avail.w / width, avail.h / height);
+    if (!best || scale > best.scale) best = { children, width, height, scale };
+  }
+  const at = {};
+  for (const group of best.children) {
+    if (group.children) for (const node of group.children) at[node.id] = {
+      x: group.x + node.x, y: group.y + node.y, width: node.width, height: node.height };
+    else at[group.id] = group;
+  }
+  const routed = edges.map((edge) => {
+    const a = at[edge.a], b = at[edge.b];
+    if (!a || !b) return { id: edge.id, sections: [], labels: [] };
+    const ac = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
+    const bc = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    const horizontal = Math.abs(bc.x - ac.x) >= Math.abs(bc.y - ac.y);
+    let start, end, bends;
+    if (horizontal) {
+      const sign = bc.x >= ac.x ? 1 : -1, mid = (ac.x + bc.x) / 2;
+      start = { x: ac.x + sign * a.width / 2, y: ac.y };
+      end = { x: bc.x - sign * b.width / 2, y: bc.y };
+      bends = [{ x: mid, y: ac.y }, { x: mid, y: bc.y }];
+    } else {
+      const sign = bc.y >= ac.y ? 1 : -1, mid = (ac.y + bc.y) / 2;
+      start = { x: ac.x, y: ac.y + sign * a.height / 2 };
+      end = { x: bc.x, y: bc.y - sign * b.height / 2 };
+      bends = [{ x: ac.x, y: mid }, { x: bc.x, y: mid }];
+    }
+    return { id: edge.id, sections: [{ startPoint: start, endPoint: end, bendPoints: bends }], labels: [] };
+  });
+  return { id: "root", width: best.width, height: best.height, children: best.children,
+    edges: routed, mode: "grid" };
+}
+
+async function layoutDatabase(nodes, edges) {
+  const gen = ++layoutGen, avail = availSize();
+  const compact = nodes.length > 60;
+  const groups = databaseGroups(nodes, edges);
+  const tries = [], modes = [
+    ["RIGHT", null, 1], ["RIGHT", "MULTI_EDGE", 0.55], ["RIGHT", "MULTI_EDGE", 0.85],
+    ["RIGHT", "MULTI_EDGE", 1.2], ["RIGHT", "SINGLE_EDGE", 0.85], ["DOWN", null, 1],
+  ];
+  const toElk = (node, dir, wrapping, ratio) => node.children ? {
+    id: node.id,
+    children: node.children.map((child) => ({ id: child.id, width: child.w, height: child.h })),
+    layoutOptions: {
+      ...elkOptions({ dir, layer: compact ? 42 : 80, gap: compact ? 18 : 36 }),
+      ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping,
+        "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}),
+      "elk.padding": "[top=40,left=20,bottom=20,right=20]",
+    },
+  } : { id: node.id, width: node.w, height: node.h };
+  let firstError = null;
+  if (compact) tries.push({ dir: "GRID", wrapping: null, ratio: 1,
+    out: databaseGrid(groups, edges, avail) });
+  for (const [dir, wrapping, ratio] of modes) {
+    try {
+      const graph = {
+        id: "root",
+        layoutOptions: {
+          ...elkOptions({ dir, layer: compact ? 42 : 80, gap: compact ? 18 : 36 }),
+          ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping,
+            "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}),
+          "elk.aspectRatio": String((avail.w / avail.h) * ratio),
+        },
+        children: groups.map((node) => toElk(node, dir, wrapping, ratio)),
+        edges: edges.map(elkEdge),
+      };
+      const out = await elk.layout(graph);
+      tries.push({ dir, wrapping, ratio, out });
+    } catch (err) {
+      if (!firstError) firstError = err;
+    }
+  }
+  if (gen !== layoutGen) return;
+  if (!tries.length) return empty("Layout failed: " + (firstError ? firstError.message : "no layout"));
+  const score = ({ out }) => Math.min(avail.w / out.width, avail.h / out.height);
+  const best = tries.reduce((left, right) => score(right) > score(left) ? right : left);
+  const diagram = document.getElementById("diagram");
+  diagram.dataset.layout = `database ${best.dir.toLowerCase()} ${best.wrapping || "unwrapped"} ${best.ratio}`;
+  diagram.dataset.databaseGroups = String(groups.filter((node) => node.children).length);
+  externalGroups = {};
+  render(best.out, groups, edges, databaseGo, null);
+}
+
 function drawDatabase() {
   const tables = DATABASE.tables || [];
   view.sel = view.table;
@@ -1654,12 +1801,13 @@ function drawDatabase() {
     empty("No database schema detected. Add SQL migrations or supported ORM models, then scan again.");
     return databaseDrawer();
   }
+  const compact = tables.length > 60;
   const nodes = tables.map((table) => {
-    const lines = (table.columns || []).map((column) => databaseColumnLine(table, column));
+    const lines = compact ? [] : (table.columns || []).map((column) => databaseColumnLine(table, column));
     const width = Math.max(190, textW(table.name, 600, 14) + 32,
       ...lines.map((line) => textW(line, 400, 11, true) + 32));
     return { id: table.id, cls: "node db-table", name: table.name, lines,
-      w: Math.min(width, 420), h: 58 + lines.length * 16 };
+      w: Math.min(width, 420), h: compact ? 38 : 58 + lines.length * 16 };
   });
   const seen = new Set();
   const edges = [];
@@ -1671,10 +1819,11 @@ function drawDatabase() {
     edges.push({ id: "db" + edges.length, a: rel.from, b: rel.to,
       text: column ? column.name : "references", cls: "foreign-key" });
   }
-  layout(nodes, edges, { dir: "RIGHT", layer: 80, gap: 36 }, databaseGo, null);
+  layoutDatabase(nodes, edges);
 }
 
 function drawEndpoints() {
+  layoutGen++;
   setStage("endpoints");
   const root = document.getElementById("endpoints-view");
   root.replaceChildren();
@@ -3281,13 +3430,17 @@ function legendFromDiagram(svg) {
   if (overlay) sec(overlay[0], overlay[1]);
   else if (svg) {
     sec("Area", legendInside ? [[miniArea(`boundary role-${legendInside.role}`), `Inside ${legendInside.name}`], [miniArea("outside-area"), "Outside"]] : []);
-    sec("Parts", [
-      ...Object.entries(ROLES).filter(([k]) => has(`.node.role-${k}, .group.role-${k}, .boundary.role-${k} .sym:not(.ghost), .dot.role-${k}`)).map(([k, label]) => [miniBox(`node role-${k}`, true), label]),
-      ...(has(".sym.ghost, .group") ? [[miniBox("sym ghost"), "In another concept"]] : []),
-    ]);
+    if (view.tab === "database") {
+      sec("Groups", has(".db-group") ? [[miniBox("sym ghost"), "Connected tables"]] : []);
+    } else {
+      sec("Parts", [
+        ...Object.entries(ROLES).filter(([k]) => has(`.node.role-${k}, .group.role-${k}, .boundary.role-${k} .sym:not(.ghost), .dot.role-${k}`)).map(([k, label]) => [miniBox(`node role-${k}`, true), label]),
+        ...(has(".sym.ghost, .group") ? [[miniBox("sym ghost"), "In another concept"]] : []),
+      ]);
+    }
     sec("Outside systems", Object.entries(KINDS).filter(([k]) => has(`.kind-${k}`)).map(([k, label]) => [miniBox(`node ext kind-${k}`), label]));
     sec("Lines", [
-      has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)") && [miniLine(""), "Uses or calls"],
+      has(".edge:not(.integration):not(.port):not(.ghosted):not(.reexport)") && [miniLine(""), view.tab === "database" ? "Foreign key" : "Uses or calls"],
       has(".edge.port:not(.stated), .edge.ghosted") && [miniLine("port"), "Crosses the boundary"],
       has(".edge.integration") && [miniLine("integration"), "Integration point"],
       has(".edge.stated") && [miniLine("port stated"), "Stated by the concept map; no direct call resolved"],
