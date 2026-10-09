@@ -204,13 +204,13 @@ test("a path that leaves the project is refused, including through a symlink", (
 });
 
 test("code is taken from PATH, then the app bundle", () => {
-  const home = path.join(tmp, "home");
-  const bundle = path.join(home, "Applications", "Visual Studio Code.app/Contents/Resources/app/bin/code");
-  const onPath = path.join(tmp, "pathbin", "code");
+  const home = "/Users/me";
+  const bundle = "/Users/me/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+  const onPath = "/opt/bin/code";
   const mac = { platform: "darwin" as const };
-  assert.equal(findProgram("code", { pathEnv: path.dirname(onPath), home, isExecutable: (file) => file === onPath, ...mac }), onPath);
+  assert.equal(findProgram("code", { pathEnv: "/opt/bin", home, isExecutable: (file) => file === onPath, ...mac }), onPath);
   assert.equal(findProgram("code", { pathEnv: "", home, isExecutable: (file) => file === bundle, ...mac }), bundle);
-  assert.equal(findProgram("code", { pathEnv: "", home: path.join(tmp, "nobody"), isExecutable: () => false, ...mac }), null);
+  assert.equal(findProgram("code", { pathEnv: "", home: "/Users/nobody", isExecutable: () => false, ...mac }), null);
   const argv = commandArgv("vscode", null, "/proj", "/proj/a.ts", 2, {
     pathEnv: "", home, isExecutable: (file) => file === bundle, ...mac,
   });

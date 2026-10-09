@@ -1,5 +1,4 @@
-import path from "node:path";
-import { usableRef, type Inventory } from "./switcher";
+import { samePath, usableRef, type Inventory } from "./switcher";
 
 /** `gh pr view <n> --json` fields. Both are required; nothing is filled in. */
 export const PR_JSON = "baseRefOid,headRefOid";
@@ -117,7 +116,7 @@ function resolveSide(side: SideChoice, inventory: Inventory | null): ResolvedSid
   }
   if (!inventory) return { error: "Could not list worktrees." };
   if (side.kind === "worktree") {
-    const found = inventory.worktrees.find((worktree) => path.resolve(worktree.path) === path.resolve(side.value));
+    const found = inventory.worktrees.find((worktree) => samePath(worktree.path, side.value));
     if (!found) return { error: `unknown worktree ${side.value}` };
     if (!isCommitSha(found.head)) return { error: `unknown ref ${found.head}` };
     return { ref: found.head, label: found.lane || found.branch || "detached" };

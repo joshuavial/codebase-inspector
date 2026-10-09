@@ -110,7 +110,7 @@ export function fillTemplate(template: string, project: string, file: string, li
 export function macCandidates(name: string, home: string): string[] {
   const rel = MAC_APP[name];
   if (!rel) return [];
-  return [path.join("/Applications", rel), path.join(home, "Applications", rel)];
+  return [path.posix.join("/Applications", rel), path.posix.join(home, "Applications", rel)];
 }
 
 export function findProgram(name: string, opts: {

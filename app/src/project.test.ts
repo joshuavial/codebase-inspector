@@ -49,7 +49,7 @@ test("a folder inside a repository resolves to that repository", () => {
   const result = resolveProject(path.join(root, "src", "nested"), record(calls));
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.main, fs.realpathSync(root));
+  assert.equal(result.main, fs.realpathSync.native(root));
   assert.equal(result.branch, "main");
   assertAllowed(calls);
   assert.equal(porcelain(root), "");
@@ -61,7 +61,7 @@ test("a file inside a repository resolves to the repository", () => {
   const result = resolveProject(path.join(root, "README.md"));
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.main, fs.realpathSync(root));
+  assert.equal(result.main, fs.realpathSync.native(root));
   assert.equal(porcelain(root), "");
 });
 
@@ -75,7 +75,7 @@ test("a linked worktree resolves to the main worktree", () => {
   const result = resolveProject(path.join(lane, "nested"), record(calls));
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.main, fs.realpathSync(root));
+  assert.equal(result.main, fs.realpathSync.native(root));
   assert.equal(result.branch, "main");
   assertAllowed(calls);
   assert.equal(porcelain(root), "");
@@ -90,7 +90,7 @@ test("a detached main worktree is labelled detached", () => {
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.branch, "detached");
-  assert.equal(result.main, fs.realpathSync(root));
+  assert.equal(result.main, fs.realpathSync.native(root));
   assert.equal(porcelain(root), "");
 });
 
@@ -105,10 +105,10 @@ test("a submodule resolves to the submodule, including from its linked worktree"
   git(path.join(sup, "lib"), ["worktree", "add", "-q", "-b", "lane", lane]);
   const fromCheckout = resolveProject(path.join(sup, "lib"));
   const fromLane = resolveProject(lane);
-  const main = fs.realpathSync(path.join(sup, "lib"));
+  const main = fs.realpathSync.native(path.join(sup, "lib"));
   assert.equal(fromCheckout.ok && fromCheckout.main, main);
   assert.equal(fromLane.ok && fromLane.main, main);
-  assert.notEqual(fromLane.ok && fromLane.main, fs.realpathSync(sup));
+  assert.notEqual(fromLane.ok && fromLane.main, fs.realpathSync.native(sup));
 });
 
 test("a separate git dir resolves to its working tree", () => {
@@ -124,7 +124,7 @@ test("a separate git dir resolves to its working tree", () => {
   const result = resolveProject(work);
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.main, fs.realpathSync(work));
+  assert.equal(result.main, fs.realpathSync.native(work));
   assert.equal(result.branch, "main");
 });
 

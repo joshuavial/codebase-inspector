@@ -36,9 +36,10 @@ test("the saved path wins over PATH and is not replaced when it is wrong", () =>
 });
 
 test("PATH is searched, then ~/.local/bin/cbi", () => {
-  const onPath = lookup(["/opt/bin/cbi", "/Users/me/.local/bin/cbi"])({ pathEnv: "/usr/bin:/opt/bin", home: "/Users/me" });
+  const posix = { platform: "linux" };
+  const onPath = lookup(["/opt/bin/cbi", "/Users/me/.local/bin/cbi"])({ pathEnv: "/usr/bin:/opt/bin", home: "/Users/me", ...posix });
   assert.deepEqual(onPath, { ok: true, path: "/opt/bin/cbi" });
-  const local = lookup(["/Users/me/.local/bin/cbi"])({ pathEnv: "/usr/bin", home: "/Users/me" });
+  const local = lookup(["/Users/me/.local/bin/cbi"])({ pathEnv: "/usr/bin", home: "/Users/me", ...posix });
   assert.deepEqual(local, { ok: true, path: "/Users/me/.local/bin/cbi" });
 });
 

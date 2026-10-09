@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { usableRef } from "./switcher";
+import { samePath, usableRef } from "./switcher";
 
 /** A viewer that is already on disk, so the window can show it before any scan. */
 export interface InstantOpen {
@@ -26,7 +26,7 @@ export function instantOpen(opts: {
 }): InstantOpen | null {
   const project = path.resolve(opts.project);
   const picked = path.resolve(opts.picked);
-  if (picked !== project) {
+  if (!samePath(picked, project)) {
     const lane = path.join(picked, ".cbi", "viewer", "index.html");
     if (opts.exists(lane)) {
       return { index: lane, cwd: picked, ref: null, kind: "worktree", branchName: null, commit: null };

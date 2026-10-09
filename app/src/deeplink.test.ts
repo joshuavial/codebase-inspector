@@ -131,7 +131,7 @@ test("argv carries a cbi link for a second instance", () => {
   assert.equal(slash.ok, true);
   if (!slash.ok) return;
   assert.equal(slash.query.repo, "C:/src/repo");
-  assert.equal(parseOpenUrl(win).ok, false);
+  assert.equal(parseOpenUrl(win).ok, process.platform === "win32");
 });
 
 test("git argv for a link is read-only", () => {
@@ -152,8 +152,8 @@ test("a worktree link resolves and a bad link is refused", () => {
   const opened = validateOpen(link({ repo, ref: lane, node: "local:repo:deployable:web" }), record(calls));
   assert.equal(opened.ok, true);
   if (!opened.ok) return;
-  assert.equal(opened.opened.project, fs.realpathSync(repo));
-  assert.equal(opened.opened.cwd, fs.realpathSync(lane));
+  assert.equal(opened.opened.project, fs.realpathSync.native(repo));
+  assert.equal(opened.opened.cwd, fs.realpathSync.native(lane));
   assert.equal(opened.opened.branch, "lane");
   assert.deepEqual(opened.opened.refArgs, []);
   assert.equal(opened.opened.watch, true);
@@ -216,7 +216,7 @@ test("a compare link resolves both refs and a pr link uses gh", () => {
   const opened = validateOpen(link({ repo, compare: `${base}..${head}`, node: "local:repo:deployable:web" }), record(calls));
   assert.equal(opened.ok, true);
   if (!opened.ok) return;
-  assert.equal(opened.opened.project, fs.realpathSync(repo));
+  assert.equal(opened.opened.project, fs.realpathSync.native(repo));
   assert.equal(opened.opened.watch, false);
   assert.deepEqual(opened.opened.refArgs, []);
   assert.equal(opened.opened.node, "local:repo:deployable:web");

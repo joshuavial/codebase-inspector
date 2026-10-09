@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 import {
   canonicalValue,
@@ -18,39 +19,43 @@ import {
 } from "./fast-open";
 
 const exists = (files: string[]) => (file: string) => files.includes(file);
+const project = path.resolve("/repos/app");
+const lane = path.resolve("/repos/app-lane");
+const viewer = path.join(project, ".cbi", "viewer", "index.html");
+const laneViewer = path.join(lane, ".cbi", "viewer", "index.html");
 
 test("a mapped main checkout opens its viewer without a scan", () => {
   const opened = instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app",
+    project,
+    picked: project,
     lastKey: null,
     branchCommit: null,
-    exists: exists(["/repos/app/.cbi/viewer/index.html"]),
+    exists: exists([viewer]),
   });
-  assert.equal(opened?.index, "/repos/app/.cbi/viewer/index.html");
+  assert.equal(opened?.index, viewer);
   assert.equal(opened?.kind, "worktree");
   assert.equal(opened?.ref, null);
 });
 
 test("a saved worktree opens that worktree's viewer", () => {
   const opened = instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app",
-    lastKey: "worktree:/repos/app-lane",
+    project,
+    picked: project,
+    lastKey: `worktree:${lane}`,
     branchCommit: null,
-    exists: exists(["/repos/app-lane/.cbi/viewer/index.html", "/repos/app/.cbi/viewer/index.html"]),
+    exists: exists([laneViewer, viewer]),
   });
-  assert.equal(opened?.cwd, "/repos/app-lane");
-  assert.equal(opened?.index, "/repos/app-lane/.cbi/viewer/index.html");
+  assert.equal(opened?.cwd, lane);
+  assert.equal(opened?.index, laneViewer);
 });
 
 test("a picked lane does not fall back to the main viewer", () => {
   const opened = instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app-lane",
-    lastKey: "worktree:/repos/app",
+    project,
+    picked: lane,
+    lastKey: `worktree:${project}`,
     branchCommit: null,
-    exists: exists(["/repos/app/.cbi/viewer/index.html"]),
+    exists: exists([viewer]),
   });
   assert.equal(opened, null);
 });
@@ -58,11 +63,11 @@ test("a picked lane does not fall back to the main viewer", () => {
 test("a saved branch opens the ref viewer for that commit", () => {
   const sha = "a".repeat(40);
   const opened = instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app",
+    project,
+    picked: project,
     lastKey: "branch:side",
     branchCommit: sha,
-    exists: exists([`/repos/app/.cbi/refs/${sha}/viewer/index.html`]),
+    exists: exists([path.join(project, ".cbi", "refs", sha, "viewer", "index.html")]),
   });
   assert.equal(opened?.kind, "branch");
   assert.equal(opened?.ref, "side");
@@ -71,20 +76,20 @@ test("a saved branch opens the ref viewer for that commit", () => {
 
 test("a branch without a commit falls back to the worktree viewer", () => {
   const opened = instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app",
+    project,
+    picked: project,
     lastKey: "branch:side",
     branchCommit: null,
-    exists: exists(["/repos/app/.cbi/viewer/index.html"]),
+    exists: exists([viewer]),
   });
   assert.equal(opened?.kind, "worktree");
-  assert.equal(opened?.index, "/repos/app/.cbi/viewer/index.html");
+  assert.equal(opened?.index, viewer);
 });
 
 test("an unmapped project has no instant viewer", () => {
   assert.equal(instantOpen({
-    project: "/repos/app",
-    picked: "/repos/app",
+    project,
+    picked: project,
     lastKey: null,
     branchCommit: null,
     exists: exists([]),
@@ -105,17 +110,18 @@ test("a ref viewer path yields its commit", () => {
 
 test("a ref viewer is used only when the head is a sha", () => {
   const sha = "b".repeat(40);
+  const refViewer = path.join(project, ".cbi", "refs", sha, "viewer", "index.html");
   const found = viewerForTarget({
-    cwd: "/repos/app",
-    project: "/repos/app",
+    cwd: project,
+    project,
     ref: "side",
     head: sha,
-    exists: (file) => file.endsWith(`${sha}/viewer/index.html`),
+    exists: (file) => file === refViewer,
   });
-  assert.equal(found, `/repos/app/.cbi/refs/${sha}/viewer/index.html`);
+  assert.equal(found, refViewer);
   assert.equal(viewerForTarget({
-    cwd: "/repos/app",
-    project: "/repos/app",
+    cwd: project,
+    project,
     ref: "side",
     head: "",
     exists: () => true,

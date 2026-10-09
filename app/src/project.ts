@@ -72,7 +72,7 @@ function text(result: GitResult): string {
 export function resolveProject(
   input: string,
   git: GitRunner = realGit,
-  realpath: (file: string) => string = fs.realpathSync,
+  realpath: (file: string) => string = fs.realpathSync.native,
 ): ResolveResult {
   let folder = input;
   try {

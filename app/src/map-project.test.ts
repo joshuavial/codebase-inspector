@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 import { agentInstruction, commandSteps, compareSteps, mapCompare, mapProject, mapVersion, modelHome, rebuildViewer, taskSummary, type Runner } from "./map-project";
 
@@ -114,14 +115,15 @@ test("mapping commands never include a git verb, and a ref stays one argument", 
 
 test("a branch map passes --ref and records the commit and the viewer path", async () => {
   const sha = "c".repeat(40);
-  const viewer = "/repos/app/.cbi/refs/" + sha + "/viewer/index.html";
+  const root = path.resolve("/repos/app");
+  const viewer = path.join(root, ".cbi", "refs", sha, "viewer", "index.html");
   const { run, calls } = fakeRun({
     scan: { stdout: `${sha}\nscanned in 0.1 s\n` },
     build: { stdout: `${viewer}\n` },
     status: { stdout: status },
   });
   const result = await mapVersion({
-    root: "/repos/app",
+    root,
     cbi: "/bin/cbi",
     needsInit: false,
     ref: "side",
@@ -133,7 +135,7 @@ test("a branch map passes --ref and records the commit and the viewer path", asy
   if (!result.ok) return;
   assert.equal(result.commit, sha);
   assert.equal(result.viewer, viewer);
-  assert.equal(modelHome(viewer), "/repos/app/.cbi/refs/" + sha);
+  assert.equal(modelHome(viewer), path.join(root, ".cbi", "refs", sha));
   assert.deepEqual(calls.map((call) => call.slice(2)), [
     ["scan", "--ref", "side"],
     ["build", "--ref", "side"],

@@ -46,7 +46,9 @@ export interface SwitcherEntry {
 }
 
 export function samePath(a: string, b: string): boolean {
-  return path.resolve(a) === path.resolve(b);
+  const left = path.resolve(a);
+  const right = path.resolve(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 /** A ref we will pass as one argv element to `cbi --ref`. */
@@ -167,11 +169,13 @@ function checkoutOf(inventory: Inventory, branch: string): WorktreeInfo | null {
  */
 export function worktreeForFolder(inventory: Inventory, folder: string): WorktreeInfo | null {
   const picked = path.resolve(folder);
+  const pickedKey = process.platform === "win32" ? picked.toLowerCase() : picked;
   let best: WorktreeInfo | null = null;
   let bestLen = -1;
   for (const worktree of inventory.worktrees) {
     const root = path.resolve(worktree.path);
-    if (picked !== root && !picked.startsWith(root + path.sep)) continue;
+    const rootKey = process.platform === "win32" ? root.toLowerCase() : root;
+    if (pickedKey !== rootKey && !pickedKey.startsWith(rootKey + path.sep)) continue;
     if (root.length > bestLen) {
       best = worktree;
       bestLen = root.length;

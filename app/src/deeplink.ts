@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { allowedGhArgs, parsePrOids, prViewArgs } from "./compare";
 import { realGit, resolveProject, type GitResult, type GitRunner } from "./project";
+import { samePath } from "./switcher";
 import { commandExecutable } from "./which";
 
 export type GhRunner = (cwd: string, args: string[]) => GitResult;
@@ -171,7 +172,7 @@ export function validateOpen(raw: string, git: GitRunner = realGit, gh: GhRunner
   const ref = query.ref ?? query.repo;
   if (path.isAbsolute(ref)) {
     const other = resolveProject(ref, git);
-    if (!other.ok || other.main !== resolved.main) {
+    if (!other.ok || !samePath(other.main, resolved.main)) {
       return { ok: false, error: "That path is not a worktree of this repository." };
     }
     const cwd = toplevel(ref, git);
@@ -303,7 +304,7 @@ function toplevel(input: string, git: GitRunner): string | null {
   if (result.code !== 0 || !found) return null;
   const resolved = path.resolve(found);
   try {
-    return fs.realpathSync(resolved);
+    return fs.realpathSync.native(resolved);
   } catch {
     return resolved;
   }
