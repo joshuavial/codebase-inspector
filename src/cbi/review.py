@@ -683,7 +683,8 @@ def _counts(result):
 
 
 def open_link(root, base_sha, head_sha):
-    repo = quote(str(Path(root).resolve()), safe="/")
+    # A Windows path keeps its drive colon and backslashes. The default quote hides the repo.
+    repo = quote(str(Path(root).resolve()), safe="/:\\")
     return f"cbi://open?repo={repo}&compare={base_sha}..{head_sha}"
 
 

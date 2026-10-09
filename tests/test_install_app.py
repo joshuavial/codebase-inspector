@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,17 +11,24 @@ SCRIPT = ROOT / "scripts" / "install-app.sh"
 
 
 def _bash():
-    found = shutil.which("bash")
-    if found:
-        return found
-    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
-        root = os.environ.get(env_name)
-        if not root:
-            continue
-        candidate = Path(root) / "Git" / "bin" / "bash.exe"
-        if candidate.is_file():
-            return str(candidate)
-    return None
+    """Git bash. `bash` on PATH is the system32 stub, which strips backslashes out of the script path."""
+    if sys.platform == "win32":
+        for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+            root = os.environ.get(env_name)
+            if not root:
+                continue
+            candidate = Path(root) / "Git" / "bin" / "bash.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return None
+    return shutil.which("bash")
+
+
+def _bash_script(path):
+    text = str(path)
+    if sys.platform == "win32" and len(text) > 2 and text[1] == ":":
+        return "/" + text[0].lower() + text[2:].replace("\\", "/")
+    return text
 
 
 def _code(text):
@@ -56,4 +64,7 @@ def test_install_script_contract():
     assert 'quit app "Codebase Inspector"' in code
     bash = _bash()
     assert bash, "bash is required to syntax-check scripts/install-app.sh"
-    subprocess.run([bash, "-n", str(SCRIPT)], check=True)
+    env = os.environ.copy()
+    if sys.platform == "win32":
+        env["MSYS_NO_PATHCONV"] = "1"
+    subprocess.run([bash, "-n", _bash_script(SCRIPT)], check=True, env=env)

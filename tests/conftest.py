@@ -29,6 +29,21 @@ def _python_standin(name):
     return None
 
 
+def _interpreter():
+    """The real interpreter. A venv python.exe only launches it, so killing the venv leaves the script alive."""
+    return getattr(sys, "_base_executable", None) or sys.executable
+
+
+def _git_argv(argv, prog):
+    """Windows Git checks out CRLF unless this invocation says otherwise. A new clone does not copy the repo config."""
+    if Path(prog).name.lower() not in ("git", "git.exe"):
+        return argv
+    rest = list(argv[1:])
+    if rest[:2] == ["-c", "core.autocrlf=false"]:
+        return argv
+    return [prog, "-c", "core.autocrlf=false", *rest]
+
+
 def _rewrite_argv(argv):
     """Run a Windows test stand-in. CreateProcess ignores a shebang and PATHEXT skips `name.py`."""
     if sys.platform != "win32" or isinstance(argv, (str, bytes)) or not argv:
@@ -39,17 +54,28 @@ def _rewrite_argv(argv):
         return argv
     if not isinstance(prog, str):
         return argv
+    argv = _git_argv(argv, prog)
+    prog = os.fspath(argv[0])
     rest = list(argv[1:])
+    python = _interpreter()
     if prog.lower().endswith(".py"):
-        return [sys.executable, prog, *rest]
+        return [python, prog, *rest]
     script = _python_standin(prog)
     if script:
-        return [sys.executable, script, *rest]
+        return [python, script, *rest]
     return argv
 
 
 _REAL_RUN = subprocess.run
 _REAL_POPEN = subprocess.Popen
+_REAL_WRITE_TEXT = Path.write_text
+
+
+def _write_text_lf(self, data, encoding=None, errors=None, newline=None):
+    """Working-tree hashes are raw bytes. Windows text mode would store CRLF and miss the goldens."""
+    if newline is None:
+        newline = "\n"
+    return _REAL_WRITE_TEXT(self, data, encoding=encoding, errors=errors, newline=newline)
 
 
 def _run_with_timeout(argv, *args, **kwargs):
@@ -88,6 +114,8 @@ def subprocess_defaults(monkeypatch):
     """Bound every subprocess.run in a test, and let Windows stand-ins be real programs."""
     monkeypatch.setattr(subprocess, "run", _run_with_timeout)
     monkeypatch.setattr(subprocess, "Popen", _popen_rewritten)
+    if sys.platform == "win32":
+        monkeypatch.setattr(Path, "write_text", _write_text_lf)
 
 
 @pytest.fixture(autouse=True)
