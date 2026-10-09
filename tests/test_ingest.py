@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,25 @@ def test_reingest_replaces_only_its_own_rows_and_suites_merge(repo, tmp_path):
     assert ingest.coverage(conn, f"{WS}:registry.ts") == (1, 2)
     assert len(_unmapped(conn)) == unmapped_before - 1
     assert conn.execute("SELECT count(*) FROM edges WHERE source = 'coverage'").fetchone() == edges_before
+
+
+def test_a_path_on_another_drive_is_unmapped(repo, monkeypatch):
+    """Windows relpath raises when the report and the repo are on different drives."""
+    real = os.path.relpath
+    artifact = os.path.realpath(INGEST)
+
+    def relpath(path, start=os.curdir):
+        full = os.path.realpath(path)
+        if full == artifact or full.startswith(artifact + os.sep):
+            raise ValueError("path is on mount 'D:', start on mount 'C:'")
+        return real(path, start)
+
+    monkeypatch.setattr(os.path, "relpath", relpath)
+    _, conn = repo
+    r = _load(repo, "registry.lcov")
+    assert (r["format"], r["files"], r["lines"], r["unmapped"]) == ("lcov", 1, 5, 1)
+    assert ingest.coverage(conn, f"{WS}:registry.ts#DeviceRegistry.put") == (1, 1)
+    assert len(_unmapped(conn)) == 1 and "dist/gone.ts" in _unmapped(conn)[0]
 
 
 def test_cli_prints_counts_and_rejects_unknown_files(repo, tmp_path, capsys):

@@ -375,7 +375,13 @@ class Model:
         for base in self.roots:
             full = os.path.realpath(os.path.join(base, path))
             # Stored paths use forward slashes. relpath uses the host separator.
-            rel = os.path.relpath(full, self.roots[1]).replace("\\", "/")
+            # On Windows a coverage file on another drive raises ValueError here.
+            # That path is outside the repo, so it stays unmapped.
+            try:
+                rel = os.path.relpath(full, self.roots[1])
+            except ValueError:
+                continue
+            rel = rel.replace("\\", "/")
             if rel in self.files:
                 return self.files[rel]
         return None
