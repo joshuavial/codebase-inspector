@@ -1,5 +1,6 @@
 """Architecture history points, projection, output and incremental reuse."""
 
+import datetime as dt
 import json
 import sqlite3
 import subprocess
@@ -41,6 +42,7 @@ def test_points_prefer_merges_and_fall_back_to_first_parent(make_repo):
     points = history.history_points(plain, since="2000-01-01")
     assert [point["sha"] for point in points][-1] == second
     assert points[-1]["pr"] == 12
+    assert history.history_points(plain, since=dt.date.today().isoformat())
 
     merged = make_repo({"a.py": "x = 1\n"}, name="merged")
     git(merged, "checkout", "-q", "-b", "feature")

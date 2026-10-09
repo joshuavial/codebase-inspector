@@ -46,9 +46,9 @@ def history_points(root, since=None, until=None):
     branch = default_branch(root)
     common = ["log", "--first-parent", "--format=%H%x00%P%x00%cI%x00%an%x00%s"]
     if since:
-        common.append(f"--since={since}")
+        common.append(f"--since={_git_date(since, end=False)}")
     if until:
-        common.append(f"--until={until}")
+        common.append(f"--until={_git_date(until, end=True)}")
     merged = _git(root, *common, "--merges", branch).stdout
     raw = merged or _git(root, *common, branch).stdout
     points = []
@@ -64,6 +64,13 @@ def history_points(root, since=None, until=None):
         })
     points.reverse()
     return points
+
+
+def _git_date(value, *, end):
+    """Make a date-only CLI boundary inclusive and unambiguous to git."""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value or ""):
+        return value + ("T23:59:59" if end else "T00:00:00")
+    return value
 
 
 def _pull_requests(root, out):
