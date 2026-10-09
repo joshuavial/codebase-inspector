@@ -180,7 +180,7 @@ INSTRUCTIONS = {
         "Read the structural diff below and write a short narrative of what the change does to the "
         "architecture and what a reviewer should look at. A few sentences, not a restatement of every "
         "row. Answer with JSON matching `answer_schema` and copy `input_hash`. The narrative is shown "
-        "in the review once you submit it. It is never required for the review to be written."
+        "in the review or history entry once you submit it. It is never required for either to be written."
     ),
 }
 SCHEMAS["define-concepts"] = concepts.ANSWER_SCHEMA

@@ -123,3 +123,34 @@ def test_history_cli_writes_markdown_and_reuses_point_models(make_repo, monkeypa
         assert store.get_meta(conn, "commit")
     finally:
         conn.close()
+
+
+def test_narrative_uses_summarise_change_and_appears_in_outputs(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({"a.py": "def a():\n    return 1\n"}, name="narrative-repo")
+    commit(root, "add b (#3)", **{"b.py": "def b():\n    return 2\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    (root / ".cbi" / "concepts.json").write_text(json.dumps(concept_map(["a.py", "b.py"])))
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+    assert main(["history", "--since", "2000-01-01", "--format", "json"]) == 0
+    entry = json.loads(capsys.readouterr().out)["entries"][0]
+
+    assert main(["history", "--narrate", entry["sha"][:8]]) == 0
+    line = capsys.readouterr().out.strip()
+    task_id = line.split()[1]
+    assert line == f"summarise-change {task_id} open"
+    assert main(["task", task_id, "--ref", entry["sha"], "--json"]) == 0
+    brief = json.loads(capsys.readouterr().out)
+    answer = tmp_path / "narrative.json"
+    answer.write_text(json.dumps({"input_hash": brief["input_hash"],
+                                  "narrative": "This introduces the second architectural function."}))
+    assert main(["submit", task_id, str(answer), "--ref", entry["sha"]]) == 0
+    capsys.readouterr()
+
+    assert main(["history", "--since", "2000-01-01", "--format", "markdown"]) == 0
+    assert "This introduces the second architectural function." in capsys.readouterr().out
+    assert main(["build", "--history"]) == 0
+    capsys.readouterr()
+    assert "This introduces the second architectural function." in (
+        root / ".cbi" / "viewer" / "data" / "history.js").read_text()

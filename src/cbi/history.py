@@ -11,7 +11,7 @@ import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from cbi import diff, store
+from cbi import diff, review, store, tasks
 
 VERSION = 1
 DEFAULT_DAYS = 183
@@ -220,6 +220,16 @@ def _write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def _narrative(out, entry):
+    conn = store.read_only(Path(out) / "refs" / entry["sha"] / "model.db")
+    try:
+        tasks.attach_cache(conn, readonly=True)
+        answer = tasks._cached_answer(conn, review.change_hash(entry["base"], entry["sha"]))
+        return answer.get("narrative") if isinstance(answer, dict) else None
+    finally:
+        conn.close()
+
+
 def _project_model(root, out, sha, current_text, current_conn, seed=None):
     """Scan one immutable ref, then apply today's concepts to its file set."""
     from cbi.cli import scan_ref
@@ -298,6 +308,13 @@ def build_history(root, out, since=None, until=None):
                     cached = {**point, "version": VERSION, "concepts": token, "base": previous_sha,
                               "changes": changes, "change_count": sum(len(g["changes"]) for g in changes["groups"])}
                     _write_json(entry_path, cached)
+                narrative = _narrative(out, cached)
+                if narrative != cached.get("narrative"):
+                    if narrative:
+                        cached["narrative"] = narrative
+                    else:
+                        cached.pop("narrative", None)
+                    _write_json(entry_path, cached)
                 if _has_changes(cached["changes"]):
                     entries.append(cached)
             previous_sha, previous_db = resolved, point_db
@@ -362,3 +379,21 @@ def write_changelog(out, entries):
     path.write_text(render(entries, "markdown"))
     return path
 
+
+def narrate(out, sha):
+    """Open the existing summarise-change protocol for one history entry."""
+    out = Path(out)
+    index_path = out / "history" / "index.json"
+    if not index_path.is_file():
+        raise HistoryError("history has not been built. Run `cbi history` first.")
+    entries = json.loads(index_path.read_text()).get("entries") or []
+    matches = [entry for entry in entries if entry["sha"].startswith(sha)]
+    if len(matches) != 1:
+        state = "ambiguous" if matches else "not found"
+        raise HistoryError(f"history entry {sha!r} is {state}", code=2)
+    entry = matches[0]
+    narrative, task, _define = review._open_tasks(
+        out / "refs" / entry["sha"] / "model.db", entry["base"], entry["sha"], entry["changes"])
+    if narrative:
+        return f"{entry['sha'][:12]} already has a narrative"
+    return f"summarise-change {task['id']} {task['state']}" if task else "could not open summarise-change"

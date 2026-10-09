@@ -143,6 +143,8 @@ def build_parser():
     cmds["history"].add_argument("--limit", type=int, help="most entries to print, newest first")
     cmds["history"].add_argument("--write", action="store_true",
                                   help="write .cbi/CHANGELOG-ARCHITECTURE.md")
+    cmds["history"].add_argument("--narrate", metavar="SHA",
+                                  help="open a summarise-change task for one entry")
     cmds["build"].add_argument("--compare", metavar="BASE..HEAD",
                                help="also write data/diff.js for this base..head comparison")
     cmds["build"].add_argument("--history", action="store_true",
@@ -937,6 +939,9 @@ def cmd_review(args):
 def cmd_history(args):
     root, out = _paths(args)
     try:
+        if args.narrate:
+            print(history.narrate(out, args.narrate))
+            return 0
         since = args.since
         if since is None:
             since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=history.DEFAULT_DAYS)).date().isoformat()
