@@ -207,11 +207,12 @@ test("code is taken from PATH, then the app bundle", () => {
   const home = path.join(tmp, "home");
   const bundle = path.join(home, "Applications", "Visual Studio Code.app/Contents/Resources/app/bin/code");
   const onPath = path.join(tmp, "pathbin", "code");
-  assert.equal(findProgram("code", { pathEnv: path.dirname(onPath), home, isExecutable: (file) => file === onPath }), onPath);
-  assert.equal(findProgram("code", { pathEnv: "", home, isExecutable: (file) => file === bundle }), bundle);
-  assert.equal(findProgram("code", { pathEnv: "", home: path.join(tmp, "nobody"), isExecutable: () => false }), null);
+  const mac = { platform: "darwin" as const };
+  assert.equal(findProgram("code", { pathEnv: path.dirname(onPath), home, isExecutable: (file) => file === onPath, ...mac }), onPath);
+  assert.equal(findProgram("code", { pathEnv: "", home, isExecutable: (file) => file === bundle, ...mac }), bundle);
+  assert.equal(findProgram("code", { pathEnv: "", home: path.join(tmp, "nobody"), isExecutable: () => false, ...mac }), null);
   const argv = commandArgv("vscode", null, "/proj", "/proj/a.ts", 2, {
-    pathEnv: "", home, isExecutable: (file) => file === bundle,
+    pathEnv: "", home, isExecutable: (file) => file === bundle, ...mac,
   });
   assert.deepEqual(argv, [bundle, "--reuse-window", "/proj", "--goto", "/proj/a.ts:2"]);
 });
