@@ -1,0 +1,16 @@
+model Account {
+  id       Int       @id @default(autoincrement())
+  email    String    @unique
+  invoices Invoice[]
+
+  @@map("accounts")
+}
+
+model Invoice {
+  id        Int      @id
+  accountId Int      @map("account_id")
+  account   Account  @relation(fields: [accountId], references: [id])
+  note      String?
+
+  @@map("invoices")
+}

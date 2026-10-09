@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 14
+PARSER_VERSION = 15
 
 CODE_LANGS = {
     ".py": "python",

@@ -23,6 +23,9 @@ _CONSTRAINT = re.compile(r"^(?:CONSTRAINT\s+\S+\s+)?(PRIMARY\s+KEY|FOREIGN\s+KEY
 _STOP_TYPE = re.compile(
     r"\s+(?:CONSTRAINT|PRIMARY\s+KEY|NOT\s+NULL|NULL|UNIQUE|DEFAULT|REFERENCES|CHECK|COLLATE|GENERATED)\b",
     re.I)
+_PY_CLASS = re.compile(r"^class\s+(\w+)\s*\(([^)]*)\)\s*:", re.M)
+_CS_CLASS = re.compile(r"(?:\[Table\(\"([^\"]+)\"\)\]\s*)?(?:public\s+)?class\s+(\w+)[^{]*\{", re.M)
+_TS_ENTITY = re.compile(r"@Entity\s*\(\s*(?:[\"']([^\"']+)[\"'])?[^)]*\)\s*(?:export\s+)?class\s+(\w+)\s*\{", re.M)
 
 
 def _unquote(value):
@@ -173,6 +176,222 @@ def parse_sql(text, path):
     return tables
 
 
+def _block(text, start, indent=None):
+    """A brace block, or a Python indentation block after ``start``."""
+    if indent is None:
+        opening = start if text[start:start + 1] == "{" else start - 1 if text[start - 1:start] == "{" else text.find("{", start)
+        if opening < 0:
+            return "", start
+        body, end = _balanced(text, opening)
+        return body, end
+    lines = text[start:].splitlines(True)
+    kept = []
+    offset = start
+    for line in lines:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        kept.append(line)
+        offset += len(line)
+    return "".join(kept), offset
+
+
+def _decl(name, path, line, framework, model=None):
+    return {"name": name, "path": path, "line": line, "framework": framework,
+            "model": model, "columns": [], "constraints": []}
+
+
+def _orm_column(name, type_name, *, nullable=True, primary=False, unique=False, reference=None):
+    return {"name": name, "type": type_name, "nullable": nullable, "default": None,
+            "primary_key": primary, "unique": unique, "reference": reference}
+
+
+def parse_sqlalchemy(text, path):
+    found = []
+    for match in _PY_CLASS.finditer(text):
+        if not any(base.strip().endswith(("Base", "DeclarativeBase")) for base in match.group(2).split(",")):
+            continue
+        indent = len(text[text.rfind("\n", 0, match.start()) + 1:match.start()])
+        body, _end = _block(text, match.end(), indent)
+        named = re.search(r"^\s*__tablename__\s*=\s*[\"']([^\"']+)[\"']", body, re.M)
+        table = _decl(named.group(1) if named else match.group(1).lower(), path,
+                      text.count("\n", 0, match.start()) + 1, "sqlalchemy", match.group(1))
+        for row in re.finditer(r"^\s*(\w+)\s*(?::[^=\n]+)?=\s*(?:Column|mapped_column)\s*\(([^\n]*)", body, re.M):
+            args = row.group(2)
+            type_match = re.match(r"\s*([\w.]+(?:\([^)]*\))?)", args)
+            type_name = type_match.group(1) if type_match and not type_match.group(1).startswith("ForeignKey") else ""
+            foreign = re.search(r"ForeignKey\s*\(\s*[\"']([^\"']+)\.([^\"']+)[\"']", args)
+            table["columns"].append(_orm_column(
+                row.group(1), type_name,
+                nullable=not bool(re.search(r"nullable\s*=\s*False|primary_key\s*=\s*True", args)),
+                primary=bool(re.search(r"primary_key\s*=\s*True", args)),
+                unique=bool(re.search(r"unique\s*=\s*True", args)),
+                reference=(foreign.group(1), foreign.group(2)) if foreign else None))
+        found.append(table)
+    return found
+
+
+def parse_django(text, path):
+    found = []
+    models = {}
+    for match in _PY_CLASS.finditer(text):
+        if "models.Model" not in match.group(2) and match.group(2).strip() != "Model":
+            continue
+        indent = len(text[text.rfind("\n", 0, match.start()) + 1:match.start()])
+        body, _end = _block(text, match.end(), indent)
+        named = re.search(r"^\s*db_table\s*=\s*[\"']([^\"']+)[\"']", body, re.M)
+        name = named.group(1) if named else match.group(1).lower()
+        models[match.group(1)] = name
+        table = _decl(name, path, text.count("\n", 0, match.start()) + 1, "django", match.group(1))
+        for row in re.finditer(r"^\s*(\w+)\s*=\s*models\.(\w+)\s*\(([^\n]*)", body, re.M):
+            field, kind, args = row.groups()
+            primary = "primary_key=True" in args.replace(" ", "")
+            unique = "unique=True" in args.replace(" ", "")
+            nullable = "null=True" in args.replace(" ", "") and not primary
+            reference = None
+            column = field
+            if kind in ("ForeignKey", "OneToOneField"):
+                target = re.match(r"\s*(?:[\"']([^\"']+)[\"']|(\w+))", args)
+                if target:
+                    target_model = (target.group(1) or target.group(2)).rsplit(".", 1)[-1]
+                    reference = (target_model.lower(), "id")
+                db_column = re.search(r"db_column\s*=\s*[\"']([^\"']+)[\"']", args)
+                column = db_column.group(1) if db_column else field + "_id"
+            table["columns"].append(_orm_column(
+                column, kind.removesuffix("Field"), nullable=nullable,
+                primary=primary, unique=unique or kind == "OneToOneField", reference=reference))
+        if not any(column["primary_key"] for column in table["columns"]):
+            table["columns"].insert(0, _orm_column("id", "Auto", nullable=False, primary=True))
+        found.append(table)
+    for table in found:
+        for column in table["columns"]:
+            ref = column.get("reference")
+            if ref and ref[0] in {name.lower(): db for name, db in models.items()}:
+                column["reference"] = ({name.lower(): db for name, db in models.items()}[ref[0]], ref[1])
+    return found
+
+
+def parse_prisma(text, path):
+    found = []
+    models = {match.group(1): (re.search(r'@@map\(\s*"([^"]+)"\s*\)', match.group(2)) or [None, match.group(1)])[1]
+              for match in re.finditer(r"\bmodel\s+(\w+)\s*\{(.*?)\}", text, re.S)}
+    for match in re.finditer(r"\bmodel\s+(\w+)\s*\{(.*?)\}", text, re.S):
+        model, body = match.groups()
+        table = _decl(models[model], path, text.count("\n", 0, match.start()) + 1, "prisma", model)
+        relations = []
+        field_names = {}
+        for line in body.splitlines():
+            line = line.split("//", 1)[0].strip()
+            row = re.match(r"(\w+)\s+([\w\[\]]+)([?]?)\s*(.*)", line)
+            if not row or row.group(1).startswith("@@"):
+                continue
+            field, type_name, optional, attrs = row.groups()
+            relation = re.search(r"@relation\s*\(.*?fields\s*:\s*\[([^]]+)\].*?references\s*:\s*\[([^]]+)\]", attrs)
+            if relation and type_name.rstrip("[]") in models:
+                relations.append((_names(relation.group(1)), models[type_name.rstrip("[]")], _names(relation.group(2))))
+                continue
+            if type_name.rstrip("[]") in models:
+                continue
+            mapped = re.search(r'@map\(\s*"([^"]+)"\s*\)', attrs)
+            column_name = mapped.group(1) if mapped else field
+            field_names[field] = column_name
+            table["columns"].append(_orm_column(
+                column_name, type_name, nullable=bool(optional),
+                primary="@id" in attrs, unique="@unique" in attrs))
+        for locals_, target, targets in relations:
+            table["constraints"].append({"kind": "foreign", "columns": [field_names.get(name, name) for name in locals_],
+                                         "table": target, "targets": targets})
+        found.append(table)
+    return found
+
+
+def parse_typeorm(text, path):
+    found = []
+    classes = {match.group(2): match.group(1) or match.group(2).lower() for match in _TS_ENTITY.finditer(text)}
+    for match in _TS_ENTITY.finditer(text):
+        body, _end = _block(text, match.end())
+        model = match.group(2)
+        table = _decl(classes[model], path, text.count("\n", 0, match.start()) + 1, "typeorm", model)
+        pending_relation = None
+        pending_join = None
+        decorators = []
+        for line in body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("@"):
+                decorators.append(stripped)
+                continue
+            prop = re.match(r"(?:public\s+)?(\w+)[!?]?\s*:\s*([^;=]+)", stripped)
+            if not prop:
+                continue
+            joined = " ".join(decorators)
+            decorators = []
+            field, type_name = prop.group(1), prop.group(2).strip()
+            rel = re.search(r"@(?:ManyToOne|OneToOne)\s*\(\s*\(\)\s*=>\s*(\w+)", joined)
+            if rel:
+                join = re.search(r"@JoinColumn\s*\(\s*\{[^}]*name\s*:\s*[\"']([^\"']+)", joined)
+                target = classes.get(rel.group(1), rel.group(1).lower())
+                table["columns"].append(_orm_column(join.group(1) if join else field + "Id", "relation",
+                                                     reference=(target, "id")))
+                continue
+            if not re.search(r"@(Column|PrimaryColumn|PrimaryGeneratedColumn)\b", joined):
+                continue
+            named = re.search(r"@(?!JoinColumn)\w*Column\s*\(\s*[\"']([^\"']+)[\"']", joined)
+            table["columns"].append(_orm_column(
+                named.group(1) if named else field, type_name,
+                nullable=bool(re.search(r"nullable\s*:\s*true", joined)),
+                primary=bool(re.search(r"@Primary(?:Generated)?Column", joined)),
+                unique=bool(re.search(r"unique\s*:\s*true", joined))))
+        found.append(table)
+    return found
+
+
+def parse_ef_core(text, path):
+    sets = {typ: name for typ, name in re.findall(r"DbSet\s*<\s*(\w+)\s*>\s+(\w+)", text)}
+    classes = {}
+    matches = list(_CS_CLASS.finditer(text))
+    for match in matches:
+        if match.group(2).endswith("Context"):
+            continue
+        classes[match.group(2)] = match.group(1) or sets.get(match.group(2)) or match.group(2)
+    found = []
+    for match in matches:
+        model = match.group(2)
+        if model not in classes:
+            continue
+        body, _end = _block(text, match.end())
+        table = _decl(classes[model], path, text.count("\n", 0, match.start()) + 1, "ef-core", model)
+        props = list(re.finditer(r"(?:(\[Key\])\s*)?public\s+([\w?<>]+)\s+(\w+)\s*\{\s*get;\s*set;\s*\}", body))
+        names = {row.group(3) for row in props}
+        for row in props:
+            keyed, type_name, field = row.groups()
+            if type_name.rstrip("?") in classes:
+                continue
+            primary = bool(keyed) or field in ("Id", model + "Id")
+            ref_model = field[:-2] if field.endswith("Id") and field[:-2] in classes else None
+            table["columns"].append(_orm_column(
+                field, type_name.rstrip("?"), nullable=type_name.endswith("?") and not primary,
+                primary=primary, reference=(classes[ref_model], "Id") if ref_model else None))
+        found.append(table)
+    return found
+
+
+def parse_orm(text, path):
+    """Return ORM schema declarations recognised in one tracked file."""
+    lower = text.lower()
+    out = []
+    if path.endswith(".prisma"):
+        out.extend(parse_prisma(text, path))
+    elif path.endswith(".py"):
+        if "column(" in lower or "mapped_column(" in lower:
+            out.extend(parse_sqlalchemy(text, path))
+        if "models.model" in lower:
+            out.extend(parse_django(text, path))
+    elif path.endswith((".ts", ".tsx", ".js", ".jsx")) and "@entity" in lower:
+        out.extend(parse_typeorm(text, path))
+    elif path.endswith(".cs") and ("dbset<" in lower or "[table(" in lower):
+        out.extend(parse_ef_core(text, path))
+    return out
+
+
 def _source(root, workspace_root, path):
     try:
         rel = "/".join(part for part in (workspace_root, path) if part)
@@ -185,10 +404,13 @@ def _merge(declarations):
     tables = {}
     for item in declarations:
         table = tables.setdefault(item["name"].lower(), {
-            "name": item["name"], "sources": [], "columns": {}, "foreign": []})
-        source = {"path": item["path"], "line": item["line"], "kind": "sql"}
+            "name": item["name"], "sources": [], "models": [], "columns": {}, "foreign": []})
+        source = {"path": item["path"], "line": item["line"],
+                  "kind": item.get("framework") or "sql"}
         if source not in table["sources"]:
             table["sources"].append(source)
+        if item.get("model") and item["model"] not in table["models"]:
+            table["models"].append(item["model"])
         for raw in item["columns"]:
             column = table["columns"].setdefault(raw["name"].lower(), dict(raw, sources=[]))
             for key in ("type", "default", "reference"):
@@ -228,10 +450,13 @@ def apply(conn, root):
         for wid, attrs in conn.execute("SELECT id, attrs FROM nodes WHERE kind = 'workspace'")}
     by_workspace = defaultdict(list)
     for _fid, wid, path in conn.execute(
-            "SELECT id, workspace_id, path FROM nodes WHERE kind = 'file' AND lower(path) LIKE '%.sql' ORDER BY id"):
+            "SELECT id, workspace_id, path FROM nodes WHERE kind = 'file' ORDER BY id"):
         text = _source(root, workspace_roots.get(wid, ""), path)
         if text is not None:
-            by_workspace[wid].extend(parse_sql(text, path))
+            if path.lower().endswith(".sql"):
+                by_workspace[wid].extend(parse_sql(text, path))
+            if path.lower().endswith((".py", ".prisma", ".ts", ".tsx", ".js", ".jsx", ".cs")):
+                by_workspace[wid].extend(parse_orm(text, path))
 
     conn.execute("DELETE FROM edges WHERE source = 'data'")
     conn.execute("DELETE FROM nodes WHERE kind IN ('table', 'column')")
@@ -240,7 +465,7 @@ def apply(conn, root):
         for table in list(tables.values()):
             for _local, target_name, target_col, source in table["foreign"]:
                 target = tables.setdefault(target_name.lower(), {
-                    "name": target_name, "sources": [], "columns": {}, "foreign": []})
+                    "name": target_name, "sources": [], "models": [], "columns": {}, "foreign": []})
                 target["columns"].setdefault(target_col.lower(), {
                     "name": target_col, "type": "", "nullable": True, "default": None,
                     "primary_key": False, "unique": False, "reference": None, "sources": [source]})
@@ -248,6 +473,8 @@ def apply(conn, root):
             tid = table_id(wid, table["name"])
             first = min(table["sources"], key=lambda row: (row["path"], row["line"])) if table["sources"] else {}
             attrs = {"sources": sorted(table["sources"], key=lambda row: (row["path"], row["line"]))}
+            if table["models"]:
+                attrs["models"] = sorted(table["models"])
             conn.execute(
                 "INSERT INTO nodes (id, parent_id, kind, display_kind, name, workspace_id, path, start_line, attrs) "
                 "VALUES (?, ?, 'table', 'table', ?, ?, ?, ?, ?)",
