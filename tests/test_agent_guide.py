@@ -50,6 +50,15 @@ def test_prime_with_out_names_that_directory(make_repo, monkeypatch, tmp_path, c
         conn.close()
     assert "Architecture history for agents" in with_history
     assert "cbi history --write" in with_history
+    conn = store.open_db(model / "model.db")
+    try:
+        counts = conn.execute(
+            "SELECT kind, sum(state = 'open'), sum(state = 'blocked') FROM tasks GROUP BY kind ORDER BY kind"
+        ).fetchall()
+        pending_history = prime.pending_guide(conn, root, model, counts, "")
+    finally:
+        conn.close()
+    assert "Architecture history for agents" in pending_history
 
     db = sqlite3.connect(model / "model.db")
     open_n, blocked_n = db.execute(

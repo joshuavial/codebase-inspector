@@ -97,7 +97,7 @@ def run(out=None):
         ).fetchall()
         pending = [c for c in counts if c[1] or c[2]]
         flag = "" if out is None else " --out " + shlex.quote(str(db.parent))
-        guide = pending_guide(conn, root, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
+        guide = pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
         print(guide, end="")
     finally:
         parts.unbind(token)
@@ -105,7 +105,7 @@ def run(out=None):
     return 0
 
 
-def pending_guide(conn, root, counts, out_flag=""):
+def pending_guide(conn, root, model_dir, counts, out_flag=""):
     open_n, blocked_n = tasks.task_counts(conn)
     lines = [_intro(out_flag), f"## {tasks.task_headline(open_n, blocked_n)}", "",
              "Summaries come from you: cbi never calls a model. Tasks by kind:", ""]
@@ -160,6 +160,9 @@ read what the brief lists and `cbi submit <id>{out_flag}` the answer.
 """)
     lines += ["## Ingest", ""]
     lines.extend(ingest.guide_lines(conn, root, out_flag))
+    note = _history_sentence(model_dir, out_flag)
+    if note:
+        lines += ["", note.strip()]
     lines.append("")
     return "\n".join(lines)
 
