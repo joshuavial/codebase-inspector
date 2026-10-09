@@ -232,6 +232,58 @@ Outcome: choose two sides in the app, `cbi open --compare` and `--pr`. Depends o
 
 Checks: PRD-04 D4a.
 
+# PRD-05 system views
+
+Read `docs/prd-05-system-views.md` and the PRD-02 two-way navigation requirements first. Each slice below ends with its focused tests, the full tests that cover touched code, and one commit.
+
+## 49. PRD and thin-slice plan
+
+Outcome: the system-views PRD fixes the semantic model, user journeys, navigation rules, acceptance criteria and boundaries before implementation.
+
+Checks: documentation style check and a clean diff limited to the PRD and this plan.
+
+## 50. SQL schema model
+
+Outcome: stable table and column nodes, key and foreign-key facts, and source evidence from SQL `CREATE TABLE` and `ALTER TABLE` migrations. Data facts are replaced safely on rescan and contain no layout fields.
+
+Checks: a small migration fixture with composite declarations, inline and table constraints, quoted names and an added foreign key; rescan and stable-ID tests; a model-shape test that refuses layout keys.
+
+## 51. ORM schema model
+
+Outcome: the same table, column and relationship model from SQLAlchemy, Django, Prisma, TypeORM and EF Core declarations, reconciled with migration facts when both exist.
+
+Checks: one small fixture repository per framework, including explicit table names, inferred names, primary keys, nullable fields and one relationship; duplicate declarations merge into one table.
+
+## 52. Table reads and writes
+
+Outcome: `reads_table` and `writes_table` edges from the innermost code symbol or file, extracted from literal SQL and common calls in the five supported ORMs.
+
+Checks: focused SQL and ORM fixture operations, mixed read and write use, multiline SQL, false positives in comments and unrelated methods, and rescan replacement.
+
+## 53. System-view build payloads
+
+Outcome: `data/database.js` and `data/endpoints.js` export layout-free schema and endpoint records. Endpoint notes reuse summaries and docstrings; callers reuse `http_calls`; downstream code and tables follow bounded resolved call paths with direct evidence marked.
+
+Checks: payload unit tests for unmatched routes, note fallback order, callers, direct and downstream table use, stable sorting, and absence of layout fields.
+
+## 54. Database viewer
+
+Outcome: top-level tabs and a zoomable, pannable ERD with automatic browser-side layout, table selection, keys, relationships, Reads and Writes, editor links and concept-map jumps. The existing concept map stays unchanged inside its tab.
+
+Checks: DOM and navigation tests from `file://`, layout helper tests, injection checks, and headless Chrome screenshots of a fixture schema at the overview and selected-table states.
+
+## 55. Endpoint viewer and desktop state
+
+Outcome: the API endpoint list, method and text filters, endpoint details, links to callers, handlers, downstream code and tables, plus cross-view Back and Esc behaviour. Desktop saved state and deep links preserve the selected system tab.
+
+Checks: DOM tests for catalogue content and filters, two-way cross-view navigation and Esc, existing open-in-editor behaviour, desktop state unit tests, a headless Chrome screenshot, `uv run pytest`, and `npm test` in `app/`.
+
+## 56. Target repository check
+
+Outcome: sample-apps and sample-saas are mapped read-only into temporary output directories. Findings needed by their migration and ORM styles are folded into the focused extractors and recorded in acceptance notes.
+
+Checks: both source working trees remain clean; captured database and endpoint screenshots are inspected; final full Python and desktop unit suites pass.
+
 # PRD-07 team mode
 
 Read `docs/prd-07-team-mode.md`, ADR-0023 and "Team mode (PRD-07)" in `docs/architecture.md`. Built before PRD-06.
