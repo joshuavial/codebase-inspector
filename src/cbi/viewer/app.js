@@ -3085,9 +3085,10 @@ function integrationPoints(c) {
 function integrationList(d, points, open = true) {
   if (!points.length) return;
   const det = el("details");
-  det.open = open;
+  const title = `Integration points (${points.length})`;
+  det.open = drawerOpen(title, open);
   const sum = el("summary");
-  sum.append(el("h3", "", `Integration points (${points.length})`));
+  sum.append(el("h3", "", title));
   det.append(sum);
   d.append(det);
   const ul = el("ul", "ints");
@@ -3121,9 +3122,10 @@ function envList(d, c, open = true) {
   const env = c ? envOf(c) : M.concepts.flatMap(envOf);
   if (!env.length) return;
   const det = el("details");
-  det.open = open;
+  const title = `Environment (${env.length})`;
+  det.open = drawerOpen(title, open);
   const sum = el("summary");
-  sum.append(el("h3", "", `Environment (${env.length})`));
+  sum.append(el("h3", "", title));
   det.append(sum);
   d.append(det);
   const ul = el("ul", "ints");
@@ -3147,9 +3149,39 @@ function envList(d, c, open = true) {
   det.append(ul);
 }
 
+// Layout draws the drawer once up front and again when the diagram is ready.
+// The shell restores open sections between those two draws. A later draw of the
+// same hash keeps them. A new hash starts from the defaults.
+let drawerStamp = null;
+let drawerKept = null;
+
+function drawerSectionName(text) {
+  return String(text || "").replace(/\s*\(\d+\)\s*$/, "").trim();
+}
+
+function readDrawerOpen(root) {
+  const kept = {};
+  if (!root || !root.querySelectorAll) return kept;
+  for (const details of root.querySelectorAll("details")) {
+    const summary = details.querySelector ? details.querySelector("summary") : null;
+    const name = drawerSectionName(summary && summary.textContent);
+    if (name) kept[name] = details.open === true;
+  }
+  return kept;
+}
+
+function drawerOpen(title, fallback) {
+  if (!drawerKept) return fallback;
+  const name = drawerSectionName(title);
+  if (!Object.prototype.hasOwnProperty.call(drawerKept, name)) return fallback;
+  return drawerKept[name];
+}
+
 function drawer() {
   hideUsagePop();
   const d = document.getElementById("drawer");
+  drawerKept = drawerStamp === location.hash ? readDrawerOpen(d) : null;
+  drawerStamp = location.hash;
   d.replaceChildren();
   d.append(copyButton());
   const s = view.sel && symById[view.sel];
@@ -3423,7 +3455,7 @@ function list(d, title, items) {
 function fold(d, title, items, open) {
   if (!items.length) return;
   const det = el("details");
-  det.open = open;
+  det.open = drawerOpen(title, open);
   const sum = el("summary", "", "");
   sum.append(el("h3", "", title));
   det.append(sum);
