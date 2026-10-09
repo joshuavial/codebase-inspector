@@ -286,8 +286,8 @@ map), sketch-screens (region trees for UI screens) and summarise-change
 (a short narrative of one diff, cached by the two commits). Tasks run
 bottom-up: a group or workspace task is blocked, and not listed, until
 its children are summarised. define-concepts opens once confirm-structure
-is done; sketch-screens opens once that map is done and the repo has
-React components. A review can open define-concepts for the new files on
+is done; sketch-screens opens once that map is done and the repo has UI
+components or screen templates. A review can open define-concepts for the new files on
 a ref model, and summarise-change for that commit pair.
 
 --json prints a list of {id, kind, node_id, node_display_kind, node_path,
@@ -303,7 +303,7 @@ deployables, packages and bare directories; for summarise-deployable, its
 entry points and member summaries), the input_hash your answer must copy,
 and the JSON Schema of the answer. define-concepts also prints its checks,
 the files to assign and the import and call pairs. sketch-screens prints
-its checks, the component JSX, render edges and screen entry points. A
+its checks, component templates, render edges, screen template files and routes. A
 blocked task lists
 what it waits on. Then write the answer to a file and run
 `cbi submit <id> <file>`.
@@ -473,7 +473,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
                 resolve.resolve(conn, root)
                 manifests.apply(conn, root, _read(out / "structure.json"))
                 concepts.apply(conn, concepts_text)
-                screens.apply(conn, screens_text)
+                screens.apply(conn, screens_text, root)
                 tasks.refresh(conn, root, out)
                 # ponytail: full search rebuild per scan; index only changed nodes if it gets slow.
                 store.reindex(conn)

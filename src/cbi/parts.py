@@ -307,8 +307,9 @@ def _reachable(roots, renders, by_ref):
     return seen
 
 
-def _screen_body(full, components, name, screens_doc=None):
-    refs = {comp["ref"] for comp in components}
+def _screen_body(full, components, name, screens_doc=None, templates=None):
+    templates = templates or []
+    refs = {comp["ref"] for comp in components} | {item["ref"] for item in templates}
     entries = [entry for entry in full.get("entries") or [] if entry.get("component") in refs]
     states = [state for state in full.get("states") or [] if any(ref in refs for ref in state.get("set_in") or [])]
     kept_concepts = []
@@ -321,6 +322,7 @@ def _screen_body(full, components, name, screens_doc=None):
         "input_hash": full["input_hash"], "instructions": full["instructions"],
         "answer_schema": full["answer_schema"], "checks": full["checks"],
         "entries": entries, "states": states, "concepts": kept_concepts, "components": components,
+        "templates": templates,
         "screens": screens_doc, "part": {"index": 1, "count": 999, "name": name},
     }
 
@@ -330,6 +332,7 @@ def _screen_chunks(conn, brief, root):
     for key in ("id", "kind", "state", "node_id", "input_hash", "instructions", "answer_schema"):
         full[key] = brief[key]
     components = list(full.get("components") or [])
+    templates = list(full.get("templates") or [])
     by_ref = {comp["ref"]: comp for comp in components}
     renders = {comp["ref"]: [ref for ref in comp.get("renders") or [] if ref in by_ref] for comp in components}
     dep_of = _deployable_by_path(conn)
@@ -374,6 +377,15 @@ def _screen_chunks(conn, brief, root):
         for index, subset in enumerate(subsets, 1):
             name = label if width == 1 else f"{label} {index}/{width}"
             chunks.append({"name": name, "brief": _screen_body(full, subset, name)})
+    if templates:
+        def render_templates(subset):
+            return screens.format_brief(_screen_body(full, [], "screen templates", templates=subset))
+
+        subsets = _fit(templates, render_templates)
+        width = len(subsets)
+        for index, subset in enumerate(subsets, 1):
+            name = "screen templates" if width == 1 else f"screen templates {index}/{width}"
+            chunks.append({"name": name, "brief": _screen_body(full, [], name, templates=subset)})
     document = full.get("screens")
     if document and chunks:
         last = chunks[-1]["brief"]

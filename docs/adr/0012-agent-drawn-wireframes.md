@@ -22,4 +22,4 @@ Live, Storybook-style rendering of real components is a later increment in the v
 
 ## Consequences
 
-Wireframe text is data. Style hints are class names the viewer defines, not a copy of the target's CSS. An agent cannot put markup through the sketch. The task opens after concepts exist, and only when the repository has React components. Greyscale keeps the sketch distinct from a finished UI.
+Wireframe text is data. Style hints are class names the viewer defines, not a copy of the target's CSS. An agent cannot put markup through the sketch. The task opens after concepts exist, when the repository has parsed UI components or detected screen templates. Greyscale keeps the sketch distinct from a finished UI.

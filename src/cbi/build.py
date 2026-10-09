@@ -8,6 +8,7 @@ deployable and a package share files. A box drills into its folders.
 
 import json
 import os
+import posixpath
 import re
 import shutil
 from pathlib import Path
@@ -244,13 +245,29 @@ def _concepts(conn, nodes, edges, concepts, root=None):
             continue
         shown[node["id"]] = _symbol(node, leaf)
 
+    # A detected HTML or server template is a file rather than a parsed symbol. A sketch edge
+    # makes it a component-shaped viewer target so the existing wireframe UI can open it.
+    screen_parent = {n["id"]: n["parent_id"] for n in nodes.values() if n["kind"] == "screen"}
+    for edge in edges:
+        node = nodes.get(edge["dst"])
+        if edge["kind"] != "sketches" or not node or node["kind"] != "file" or node["id"] in shown:
+            continue
+        leaf = owner.get(node["id"]) or screen_parent.get(edge["src"])
+        if leaf not in leaves:
+            continue
+        shown[node["id"]] = {
+            "id": node["id"], "name": posixpath.basename(node["path"] or "template"),
+            "kind": "component", "file": node["path"] or "", "line": 1,
+            "concept": leaf, "tests": [], "props": [], "template": True,
+        }
+
     _attach_tests(conn, nodes, edges, shown, top_of)
     _attach_coverage(conn, nodes, shown, by_path)
     module_env = _attach_env(nodes, edges, shown, owner, file_of, top_of)
     calls = _leaf_calls(edges, symbols, shown, top_of)
     records = _code_records(nodes, edges, symbols, shown, owner, file_of, top_of, test_file)
     imports = _import_sides(edges, nodes, owner, test_file)
-    screens = _screens(nodes, symbols)
+    screens = _screens(nodes, shown)
     _attach_http(nodes, edges, symbols, shown, top_of)
 
     def build(node):
@@ -803,9 +820,14 @@ def _screens(nodes, symbols):
     by_ref, by_name = {}, {}
     ids = set(symbols)
     for node in symbols.values():
-        if node["display_kind"] != "component":
+        kind = node.get("display_kind") or node.get("kind")
+        if kind != "component":
             continue
-        by_ref[f"{node['path']}#{node['name']}"] = node["id"]
+        path = node.get("path") or node.get("file") or ""
+        if nodes.get(node["id"], {}).get("kind") == "file":
+            by_ref[path] = node["id"]
+        else:
+            by_ref[f"{path}#{node['name']}"] = node["id"]
         by_name.setdefault(node["name"], []).append(node["id"])
 
     def resolve(ref):

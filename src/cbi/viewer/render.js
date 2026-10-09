@@ -30,6 +30,38 @@ window.cbiLoad = function (name, value) {
 };
 window.cbiOnDiagram = finish;
 
+function finishSketch() {
+  if (finished) return;
+  const stage = document.getElementById("stage");
+  const pane = document.getElementById("sketch");
+  if (!stage || stage.dataset.mode !== "sketch" || !pane || !pane.children.length) return;
+  finished = true;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("xmlns", SVG_NS);
+  svg.setAttribute("width", String(innerWidth));
+  svg.setAttribute("height", String(innerHeight));
+  svg.setAttribute("viewBox", `0 0 ${innerWidth} ${innerHeight}`);
+  const style = document.createElementNS(SVG_NS, "style");
+  style.textContent = document.getElementById("cbi-viewer-css").textContent;
+  const foreign = document.createElementNS(SVG_NS, "foreignObject");
+  foreign.setAttribute("width", "100%");
+  foreign.setAttribute("height", "100%");
+  const body = document.createElement("div");
+  body.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  body.append(pane.cloneNode(true));
+  foreign.append(body);
+  svg.append(style, foreign);
+  document.getElementById("svg-out").textContent = svg.outerHTML.replace(/<\/script/gi, "<\\/script");
+  document.title = "cbi-render-ready";
+}
+
+if (typeof MutationObserver !== "undefined") {
+  const sketchObserver = new MutationObserver(() => {
+    requestAnimationFrame(() => requestAnimationFrame(finishSketch));
+  });
+  sketchObserver.observe(document.getElementById("stage"), { attributes: true, attributeFilter: ["data-mode"] });
+}
+
 function finish(svg) {
   if (finished) return;
   finished = true;

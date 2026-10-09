@@ -53,6 +53,27 @@ def _added_ui():
     }
 
 
+def _sketch_payload(target, title):
+    leaf = _box(UI, "UI")
+    leaf.pop("children")
+    leaf.update({
+        "role": "ui", "files": [target], "calls": [], "ghosts": {}, "tests": [], "env": [],
+        "symbols": [{
+            "id": target, "name": title, "kind": "component", "file": target,
+            "line": 1, "concept": UI, "tests": [], "props": [],
+        }],
+    })
+    return {
+        "workspace": "fixture", "summary": "", "concepts": [leaf], "externals": [],
+        "relationships": [],
+        "screens": [{
+            "id": "screen", "name": title, "device": "desktop",
+            "root": {"id": "root", "layout": "column", "component": target,
+                     "children": [{"id": "title", "layout": "row", "text": title, "style": ["heading"]}]},
+        }],
+    }
+
+
 def _exe(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\n")
@@ -494,6 +515,21 @@ def test_render_fixture_when_chrome_is_installed(tmp_path):
     assert ">Added</text>" in text
     raw = png.read_bytes()
     assert raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) > 0
+
+
+@pytest.mark.parametrize(
+    ("target", "title"),
+    [("src/Settings.vue#Settings", "Vue settings"), ("app/src/index.html", "HTML inspector")],
+    ids=("vue", "html"),
+)
+def test_render_sketch_when_chrome_is_installed(tmp_path, target, title):
+    if render.find_chrome() is None:
+        pytest.skip("no system Chrome or Chromium")
+    png, svg = tmp_path / f"{title}.png", tmp_path / f"{title}.svg"
+    render.render_view(_sketch_payload(target, title), None, UI, "head", png, svg)
+    assert title in svg.read_text(encoding="utf-8")
+    raw = png.read_bytes()
+    assert raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) > 10_000
 
 
 def test_parallel_renders_finish_together(tmp_path):

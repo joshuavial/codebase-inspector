@@ -114,7 +114,7 @@ def pending_guide(conn, root, counts, out_flag=""):
 Tasks run bottom-up. File summaries and confirm-structure are both open first, and they do not wait on each other.
 Accepting confirm-structure opens define-concepts beside any file summaries still open.
 summarise-deployable stays blocked until confirm-structure is done and that deployable's member files are summarised.
-sketch-screens opens after define-concepts is done, when the repo has React components.
+sketch-screens opens after define-concepts is done, when the repo has UI components or screen templates.
 A folder task opens once its files and subfolders are summarised, and the workspace task opens last.
 """, f"""\
 ## The loop

@@ -1373,7 +1373,6 @@ def check(conn, task_id, text, root=None):
 
     root is accepted so callers can pass the same arguments as submit. The checks read the model.
     """
-    del root
     task, answer = _validated(conn, task_id, text)
     if task["kind"] == "define-concepts":
         errors, warnings = concepts.problems(conn, answer)
@@ -1381,7 +1380,7 @@ def check(conn, task_id, text, root=None):
             raise AnswerError("\n".join(errors + warnings))
         return warnings
     if task["kind"] == "sketch-screens":
-        errors = screens.problems(conn, answer)
+        errors = screens.problems(conn, answer, root)
         if errors:
             raise AnswerError("\n".join(errors))
     return []

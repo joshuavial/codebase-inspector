@@ -317,7 +317,7 @@ def test_prime_pending_and_complete(repo, tmp_path, capsys):
     assert "summarise-group      0 open, 2 blocked" in out and "summarise-workspace  0 open, 1 blocked" in out
     assert "Accepting confirm-structure opens define-concepts beside any file summaries still open." in out
     assert "summarise-deployable stays blocked until confirm-structure is done and that deployable's member files are summarised." in out
-    assert "sketch-screens opens after define-concepts is done, when the repo has React components." in out
+    assert "sketch-screens opens after define-concepts is done, when the repo has UI components or screen templates." in out
     assert "Pass `--out DIR` on every command" not in out and "--out " not in out
     assert "## Ingest" in out and "No test runner detected in package.json or pyproject.toml." in out
     first = run_json(capsys, "tasks")[0]
