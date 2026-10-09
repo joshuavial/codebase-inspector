@@ -155,3 +155,44 @@ def test_migration_and_model_declarations_merge(make_repo, monkeypatch, capsys):
     tables, _fks = _schema(root)
     assert list(name for name in tables if name == "accounts") == ["accounts"]
     assert {source["kind"] for source in tables["accounts"]["attrs"]["sources"]} == {"sql", "sqlalchemy"}
+
+
+def test_sql_and_orm_table_uses_attach_to_functions(make_repo, monkeypatch, capsys):
+    root = _fixture_repo(make_repo, "usage")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    rows = [(kind, src_name, table_name, json.loads(attrs)) for kind, src_name, table_name, attrs in conn.execute(
+        "SELECT e.kind, s.name, t.name, e.attrs FROM edges e "
+        "JOIN nodes s ON s.id = e.src JOIN nodes t ON t.id = e.dst "
+        "WHERE e.kind IN ('reads_table', 'writes_table') ORDER BY e.kind, s.name, t.name")]
+    triples = {(kind, source, table) for kind, source, table, _attrs in rows}
+    assert ("reads_table", "report", "accounts") in triples
+    assert ("reads_table", "report", "invoices") in triples
+    assert ("writes_table", "change", "accounts") in triples
+    assert ("writes_table", "change", "invoices") in triples
+    assert ("reads_table", "prismaReads", "invoices") in triples
+    assert ("writes_table", "prismaWrites", "accounts") in triples
+    assert ("reads_table", "typeorm", "invoices") in triples
+    assert ("writes_table", "typeorm", "invoices") in triples
+    assert ("reads_table", "List", "invoices") in triples
+    assert ("writes_table", "Add", "accounts") in triples
+    assert not any(source == "unrelated" for _kind, source, _table, _attrs in rows)
+    report_invoices = next(attrs for kind, source, table, attrs in rows
+                           if kind == "reads_table" and source == "report" and table == "invoices")
+    assert {location["via"] for location in report_invoices["locations"]} == {"orm", "sql"}
+
+    before = conn.execute(
+        "SELECT e.weight FROM edges e JOIN nodes s ON s.id = e.src JOIN nodes t ON t.id = e.dst "
+        "WHERE e.kind = 'writes_table' AND s.name = 'change' AND t.name = 'invoices'").fetchone()[0]
+    conn.close()
+    operation = root / "operations.py"
+    operation.write_text(operation.read_text().replace("session.add(Invoice())", "pass"))
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    after = conn.execute(
+        "SELECT e.weight FROM edges e JOIN nodes s ON s.id = e.src JOIN nodes t ON t.id = e.dst "
+        "WHERE e.kind = 'writes_table' AND s.name = 'change' AND t.name = 'invoices'").fetchone()[0]
+    assert after == before - 1

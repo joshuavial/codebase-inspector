@@ -453,7 +453,7 @@ def _calls(defs, facts):
 
 
 def test_parser_versions_stay_put():
-    assert PARSER_VERSION == 15
+    assert PARSER_VERSION == 16
     assert SCHEMA_VERSION == 6
     assert "property" not in SHOWN
     assert "constructor" not in SHOWN

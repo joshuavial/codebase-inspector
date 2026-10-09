@@ -392,6 +392,167 @@ def parse_orm(text, path):
     return out
 
 
+def _string_literals(text):
+    """Yield (literal contents, one-based line) while skipping source comments."""
+    index = 0
+    line = 1
+    while index < len(text):
+        if text.startswith("//", index) or text[index] == "#":
+            end = text.find("\n", index)
+            if end < 0:
+                return
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            end = len(text) if end < 0 else end + 2
+            line += text.count("\n", index, end)
+            index = end
+            continue
+        quote = text[index]
+        if quote not in ("'", '"', "`"):
+            if quote == "\n":
+                line += 1
+            index += 1
+            continue
+        start_line = line
+        triple = quote != "`" and text.startswith(quote * 3, index)
+        mark = quote * 3 if triple else quote
+        index += len(mark)
+        out = []
+        while index < len(text):
+            if text.startswith(mark, index):
+                index += len(mark)
+                break
+            char = text[index]
+            if char == "\\" and quote != "`" and index + 1 < len(text):
+                out.extend((char, text[index + 1]))
+                index += 2
+                continue
+            out.append(char)
+            if char == "\n":
+                line += 1
+            index += 1
+        yield "".join(out), start_line
+
+
+def _without_comments(text):
+    """Mask comments while retaining line offsets and string contents."""
+    chars = list(text)
+    index = 0
+    quote = None
+    while index < len(chars):
+        if quote:
+            if chars[index] == "\\" and quote != "`":
+                index += 2
+                continue
+            if chars[index] == quote:
+                quote = None
+            index += 1
+            continue
+        if chars[index] in ("'", '"', "`"):
+            quote = chars[index]
+            index += 1
+            continue
+        if text.startswith("//", index) or chars[index] == "#":
+            end = text.find("\n", index)
+            end = len(text) if end < 0 else end
+            for pos in range(index, end):
+                chars[pos] = " "
+            index = end
+            continue
+        if text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            end = len(text) if end < 0 else end + 2
+            for pos in range(index, end):
+                if chars[pos] != "\n":
+                    chars[pos] = " "
+            index = end
+            continue
+        index += 1
+    return "".join(chars)
+
+
+def _table_lookup(tables):
+    lookup = {}
+    for key, table in tables.items():
+        names = {key, table["name"].lower(), table["name"].rsplit(".", 1)[-1].lower()}
+        for model in table.get("models", []):
+            names.update((model.lower(), model[:1].lower() + model[1:]))
+        for name in list(names):
+            if name.endswith("s"):
+                names.add(name[:-1])
+            else:
+                names.add(name + "s")
+        for name in names:
+            lookup.setdefault(name.lower(), table)
+    return lookup
+
+
+def _sql_uses(text, lookup):
+    found = []
+    for literal, line in _string_literals(text):
+        for match in re.finditer(rf"\b(?:FROM|JOIN)\s+({_QUALIFIED})", literal, re.I):
+            table = lookup.get(_name(match.group(1)).lower())
+            if table:
+                found.append(("reads_table", table, line + literal.count("\n", 0, match.start()), "sql"))
+        for pattern in (rf"\bINSERT\s+INTO\s+({_QUALIFIED})", rf"\bUPDATE\s+({_QUALIFIED})",
+                        rf"\bDELETE\s+FROM\s+({_QUALIFIED})"):
+            for match in re.finditer(pattern, literal, re.I):
+                table = lookup.get(_name(match.group(1)).lower())
+                if table:
+                    found.append(("writes_table", table, line + literal.count("\n", 0, match.start()), "sql"))
+    return found
+
+
+def _orm_uses(text, lookup):
+    clean = _without_comments(text)
+    found = []
+
+    def add(pattern, kind, via, flags=0, table_group=1):
+        for match in re.finditer(pattern, clean, flags):
+            table = lookup.get(match.group(table_group).lower())
+            if table:
+                found.append((kind, table, clean.count("\n", 0, match.start()) + 1, via))
+
+    name = r"([A-Za-z_]\w*)"
+    add(rf"\b(?:select|query)\s*\(\s*{name}\b", "reads_table", "orm", re.I)
+    add(rf"\b{name}\.objects\.(?:all|filter|get|exclude|values|values_list|select_related|prefetch_related|count|exists)\b",
+        "reads_table", "django", re.I)
+    add(rf"\b{name}\.query\.(?:all|filter|get|first|one|count)\b", "reads_table", "sqlalchemy", re.I)
+    add(rf"\b{name}\.objects\.(?:create|bulk_create|update|get_or_create|update_or_create)\b",
+        "writes_table", "django", re.I)
+    add(rf"\b(?:session|db)\.(?:add|merge|delete)\s*\(\s*{name}\b", "writes_table", "sqlalchemy", re.I)
+    add(rf"\b(?:prisma|client|db)\.{name}\.(?:find\w*|count|aggregate|groupBy)\b",
+        "reads_table", "prisma", re.I)
+    add(rf"\b(?:prisma|client|db)\.{name}\.(?:create\w*|update\w*|delete\w*|upsert)\b",
+        "writes_table", "prisma", re.I)
+    add(rf"\bgetRepository\s*\(\s*{name}\s*\)\.(?:find\w*|count|exist)\b",
+        "reads_table", "typeorm", re.I)
+    add(rf"\bgetRepository\s*\(\s*{name}\s*\)\.(?:save|insert|update|delete|remove|upsert)\b",
+        "writes_table", "typeorm", re.I)
+    repositories = {var: model for var, model in re.findall(
+        r"\b(\w+)\s*=\s*(?:\w+\.)?getRepository\s*\(\s*(\w+)\s*\)", clean)}
+    for var, method in re.findall(r"\b(\w+)\.(find\w*|count|exist|save|insert|update|delete|remove|upsert)\s*\(", clean, re.I):
+        model = repositories.get(var)
+        table = lookup.get(model.lower()) if model else None
+        if table:
+            kind = "reads_table" if method.lower().startswith(("find", "count", "exist")) else "writes_table"
+            at = re.search(rf"\b{re.escape(var)}\.{re.escape(method)}\s*\(", clean, re.I)
+            found.append((kind, table, clean.count("\n", 0, at.start()) + 1, "typeorm"))
+    add(rf"\b(?:_?context|db)\.{name}\.(?:Where|Select|Find|First|Single|Any|Count|ToList|AsNoTracking)\b",
+        "reads_table", "ef-core")
+    add(rf"\b(?:_?context|db)\.{name}\.(?:Add|AddRange|Update|Remove|RemoveRange)\b",
+        "writes_table", "ef-core")
+    return found
+
+
+def parse_uses(text, tables):
+    """Return (edge kind, table record, line, extraction form) for one code file."""
+    lookup = _table_lookup(tables)
+    return _sql_uses(text, lookup) + _orm_uses(text, lookup)
+
+
 def _source(root, workspace_root, path):
     try:
         rel = "/".join(part for part in (workspace_root, path) if part)
@@ -443,13 +604,24 @@ def _clean_attrs(attrs):
     return json.dumps(attrs, sort_keys=True)
 
 
+def _owner(conn, workspace_id, path, line, file_id):
+    rows = conn.execute(
+        "SELECT id, start_line, end_line FROM nodes WHERE workspace_id = ? AND path = ? "
+        "AND kind = 'symbol' AND start_line <= ? AND end_line >= ?",
+        (workspace_id, path, line, line)).fetchall()
+    if not rows:
+        return file_id
+    return min(rows, key=lambda row: ((row[2] or line) - (row[1] or line), row[0]))[0]
+
+
 def apply(conn, root):
     """Replace derived SQL schema nodes and edges in ``conn``."""
     workspace_roots = {
         wid: (json.loads(attrs or "{}").get("root") or "")
         for wid, attrs in conn.execute("SELECT id, attrs FROM nodes WHERE kind = 'workspace'")}
     by_workspace = defaultdict(list)
-    for _fid, wid, path in conn.execute(
+    code_sources = defaultdict(list)
+    for fid, wid, path in conn.execute(
             "SELECT id, workspace_id, path FROM nodes WHERE kind = 'file' ORDER BY id"):
         text = _source(root, workspace_roots.get(wid, ""), path)
         if text is not None:
@@ -457,6 +629,8 @@ def apply(conn, root):
                 by_workspace[wid].extend(parse_sql(text, path))
             if path.lower().endswith((".py", ".prisma", ".ts", ".tsx", ".js", ".jsx", ".cs")):
                 by_workspace[wid].extend(parse_orm(text, path))
+            if path.lower().endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".cs")):
+                code_sources[wid].append((fid, path, text))
 
     conn.execute("DELETE FROM edges WHERE source = 'data'")
     conn.execute("DELETE FROM nodes WHERE kind IN ('table', 'column')")
@@ -500,3 +674,20 @@ def apply(conn, root):
                     "INSERT INTO edges (src, dst, kind, source, confidence, weight, attrs, ordinal) "
                     "VALUES (?, ?, 'foreign_key', 'data', 1, 1, ?, ?)",
                     (src, dst, _clean_attrs({"source": source}), slot))
+        uses = {}
+        for fid, path, text in code_sources.get(wid, []):
+            for kind, table, line, via in parse_uses(text, tables):
+                src = _owner(conn, wid, path, line, fid)
+                dst = table_id(wid, table["name"])
+                key = (src, dst, kind)
+                use = uses.setdefault(key, {"weight": 0, "locations": []})
+                use["weight"] += 1
+                location = {"path": path, "line": line, "via": via}
+                if location not in use["locations"]:
+                    use["locations"].append(location)
+        for (src, dst, kind), use in sorted(uses.items()):
+            conn.execute(
+                "INSERT INTO edges (src, dst, kind, source, confidence, weight, attrs) "
+                "VALUES (?, ?, ?, 'data', 1, ?, ?)",
+                (src, dst, kind, use["weight"], _clean_attrs({
+                    "locations": sorted(use["locations"], key=lambda row: (row["path"], row["line"], row["via"]))})))
