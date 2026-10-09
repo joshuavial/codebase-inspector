@@ -14,6 +14,9 @@ const symById = {}; // symbol id -> symbol (with .leaf)
 const ghostById = {}; // foreign symbol id -> { name, kind, concept }
 let fileOwner = null; // repo path -> leaf concept id, for code edges that name a file
 let M = null;
+let DATABASE = { tables: [], relationships: [] };
+let ENDPOINTS = { endpoints: [] };
+let databaseById = {};
 let AGENT = { workspace: "", blocks: {} };
 let toastTimer = 0;
 let view = { focus: null, sel: null, mode: null, screen: null, overlay: null };
@@ -68,6 +71,15 @@ function cbiLoad(name, value) {
     if (typeof cbiSetEditor === "function") cbiSetEditor(value);
     return;
   }
+  if (name === "database") {
+    DATABASE = value || DATABASE;
+    databaseById = Object.fromEntries((DATABASE.tables || []).map((table) => [table.id, table]));
+    return;
+  }
+  if (name === "endpoints") {
+    ENDPOINTS = value || ENDPOINTS;
+    return;
+  }
   if (name === "concepts") loadConcepts(value);
 }
 
@@ -101,6 +113,7 @@ function loadConcepts(data) {
     initOverlay();
     initCompare();
     initHistory();
+    initSystemTabs();
   }
   route();
   if (first || shownSide) initSearch();
@@ -592,6 +605,36 @@ function writeHash(hash, { replace = false } = {}) {
   route();
 }
 
+function currentTab(params = new URLSearchParams(location.hash.slice(1))) {
+  const tab = params.get("tab");
+  return tab === "database" || tab === "endpoints" ? tab : "concept";
+}
+
+function initSystemTabs() {
+  for (const button of document.querySelectorAll("#system-tabs button")) {
+    button.onclick = () => {
+      const tab = button.dataset.tab;
+      if (tab === currentTab()) return;
+      const hash = new URLSearchParams();
+      if (tab !== "concept") hash.set("tab", tab);
+      writeHash(hash.toString());
+    };
+  }
+}
+
+function paintSystemChrome(tab) {
+  for (const button of document.querySelectorAll("#system-tabs button"))
+    button.classList.toggle("on", button.dataset.tab === tab);
+  const concept = tab === "concept";
+  for (const id of ["compare", "chg-toggle", "overlay", "find"])
+    document.getElementById(id).hidden = !concept || (id === "compare" && !DIFF) || (id === "chg-toggle" && !DIFF);
+  if (!concept) {
+    document.getElementById("changes").hidden = true;
+    document.getElementById("toggle").hidden = true;
+    document.getElementById("legend").hidden = true;
+  }
+}
+
 // The concept a jump came from. "~" is the workspace, whose focus is null.
 function originFocus() { return view.from === "~" ? null : view.from; }
 
@@ -607,6 +650,10 @@ function go(focus, sel, extra = {}) {
   const keep = view.from && (focus || null) !== originFocus() && !("from" in extra);
   if (keep) {
     h.set("from", view.from);
+    h.set("bh", view.backHash);
+  }
+  if (view.fromTab && !("fromtab" in extra)) {
+    h.set("fromtab", view.fromTab);
     h.set("bh", view.backHash);
   }
   for (const [k, v] of Object.entries(extra)) if (k !== "t" && k !== "side" && v) h.set(k, v);
@@ -637,7 +684,7 @@ function jump(target, sel, { force = false, extra = {} } = {}) {
 }
 
 function back() {
-  if (!view.from) return;
+  if (!view.from && !view.fromTab) return;
   // One step, the same step browser back takes. A shared link has no step behind it, so use the saved hash.
   if (depth > 0) history.back();
   else writeHash(view.backHash === "-" ? "" : view.backHash, { replace: true });
@@ -645,10 +692,28 @@ function back() {
 
 const originName = (id) => (id === "~" ? M.workspace : byId[id].name);
 
+function databaseGo(table) {
+  const h = new URLSearchParams();
+  h.set("tab", "database");
+  if (table) h.set("table", table);
+  writeHash(h.toString());
+}
+
+function jumpFromDatabase(ref) {
+  if (!ref || !ref.concept) return;
+  const h = new URLSearchParams();
+  h.set("c", ref.concept);
+  h.set("s", ref.id);
+  h.set("fromtab", "database");
+  h.set("bh", location.hash.slice(1) || "-");
+  writeHash(h.toString());
+}
+
 function route() {
   const rebuilt = ensureModel();
   if (rebuilt) refit = true;
   const h = new URLSearchParams(location.hash.slice(1));
+  const tab = currentTab(h);
   const first = !last;
   if (!first) camByHash[last.hash] = { ...cam };
   haltAnim();
@@ -657,6 +722,8 @@ function route() {
     focus: byId[h.get("c")] ? h.get("c") : null, sel: h.get("s"), mode: h.get("v"), screen: h.get("w"),
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
     overlay: h.get("t"),
+    tab, table: databaseById[h.get("table")] ? h.get("table") : null,
+    fromTab: h.get("fromtab") === "database" || h.get("fromtab") === "endpoints" ? h.get("fromtab") : null,
   };
   // A flat box has nothing to open. Select it on its parent's diagram (the top diagram, for a deployable).
   if (view.focus && byId[view.focus].flat) {
@@ -667,6 +734,7 @@ function route() {
   paintOverlay();
   paintCompare();
   changesPanel();
+  paintSystemChrome(tab);
   if (first) glow = !!view.from;
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
@@ -680,13 +748,16 @@ function route() {
   const up = from && from !== view.focus && ancestors(from).includes(view.focus) || (from && !view.focus);
   const down = view.focus && view.focus !== from && (!from || ancestors(view.focus).includes(from));
   const enter = first ? null : up ? { from: project(from, view.focus) } : down ? { zoomIn: true } : null;
-  if (f && !f.children && sketchable(f) && view.mode !== "code") drawSketch(f);
+  if (tab === "database") drawDatabase();
+  else if (tab === "endpoints") drawEndpointsPlaceholder();
+  else if (f && !f.children && sketchable(f) && view.mode !== "code") drawSketch(f);
   else if (f && !f.children) drawLeaf(f, enter);
   else drawConcepts(f, enter);
   drawer();
 }
 
 function up() {
+  if (view.tab === "database" && view.table) return databaseGo(null);
   if (view.focus) go(parentOf[view.focus]);
   else if (view.sel) go(null);
 }
@@ -710,7 +781,7 @@ function onKey(ev) {
   if (ev.key === "Escape") up();
   else if (ev.key === "Backspace") {
     ev.preventDefault();
-    if (view.from) back();
+    if (view.from || view.fromTab) back();
     else if (depth > 0) history.back();
   }
   else if (ev.key === "/") { document.getElementById("q").focus(); ev.preventDefault(); }
@@ -729,6 +800,13 @@ function ancestors(id) {
 function crumbs() {
   const nav = document.getElementById("crumbs");
   nav.replaceChildren();
+  if (view.tab !== "concept") {
+    nav.append(el("span", "here", view.tab === "database" ? "Database" : "API endpoints"));
+    if (view.table && databaseById[view.table]) {
+      nav.append(el("span", "sep", "›"), el("span", "here", databaseById[view.table].name));
+    }
+    return;
+  }
   const trail = [null, ...ancestors(view.focus)];
   trail.forEach((id, i) => {
     if (i) nav.append(el("span", "sep", "›"));
@@ -738,6 +816,13 @@ function crumbs() {
   });
   if (view.from) {
     const b = el("button", "back", `← Back to ${originName(view.from)}`);
+    b.title = "Back (Backspace)";
+    b.onclick = back;
+    nav.append(b);
+  }
+  if (view.fromTab) {
+    const name = view.fromTab === "database" ? "Database" : "API endpoints";
+    const b = el("button", "back", `← Back to ${name}`);
     b.title = "Back (Backspace)";
     b.onclick = back;
     nav.append(b);
@@ -1508,6 +1593,118 @@ function clusterLeaf(c) {
     (buckets["bucket:" + f] ||= { label: f, members: [] }).members.push(id);
   }
   return { entries, helpers, shared, lone, buckets };
+}
+
+// ---------- database view ----------
+
+function databaseColumnLine(table, column) {
+  const fk = (table.foreignKeys || []).some((rel) => rel.column === column.id);
+  const marks = [column.primaryKey ? "PK" : "", fk ? "FK" : ""].filter(Boolean).join("/");
+  const type = column.type || "unknown";
+  return `${marks ? marks + "  " : "    "}${column.name}  ${type}${column.nullable ? "" : "  not null"}`;
+}
+
+function drawDatabase() {
+  const tables = DATABASE.tables || [];
+  view.sel = view.table;
+  if (!tables.length) {
+    empty("No database schema detected. Add SQL migrations or supported ORM models, then scan again.");
+    return databaseDrawer();
+  }
+  const nodes = tables.map((table) => {
+    const lines = (table.columns || []).map((column) => databaseColumnLine(table, column));
+    const width = Math.max(190, textW(table.name, 600, 14) + 32,
+      ...lines.map((line) => textW(line, 400, 11, true) + 32));
+    return { id: table.id, cls: "node db-table", name: table.name, lines,
+      w: Math.min(width, 420), h: 58 + lines.length * 16 };
+  });
+  const seen = new Set();
+  const edges = [];
+  for (const rel of DATABASE.relationships || []) {
+    const key = `${rel.from}>${rel.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const local = databaseById[rel.from], column = local && local.columns.find((item) => item.id === rel.column);
+    edges.push({ id: "db" + edges.length, a: rel.from, b: rel.to,
+      text: column ? column.name : "references", cls: "foreign-key" });
+  }
+  layout(nodes, edges, { dir: "RIGHT", layer: 80, gap: 36 }, databaseGo, null);
+}
+
+function drawEndpointsPlaceholder() {
+  empty("API endpoint view is loading in the next slice.");
+  drawer();
+}
+
+function databaseCodeList(root, title, rows) {
+  if (!rows || !rows.length) return;
+  root.append(el("h3", "", `${title} (${rows.length})`));
+  const ul = el("ul", "ints");
+  for (const row of rows) {
+    const li = el("li");
+    const where = `${row.name} · ${row.file}:${row.line}`;
+    if (row.concept) li.append(link(where, () => jumpFromDatabase(row)));
+    else li.append(el("span", "path", where));
+    const forms = [...new Set((row.locations || []).map((location) => location.via))];
+    if (forms.length) li.append(el("div", "where", forms.join(", ")));
+    if (typeof openInEditor === "function") {
+      const open = link("Open in editor", () => openInEditor(row.file, row.line || 1));
+      open.classList.add("path");
+      li.append(open);
+    }
+    ul.append(li);
+  }
+  root.append(ul);
+}
+
+function databaseDrawer() {
+  const d = document.getElementById("drawer");
+  d.replaceChildren();
+  const table = view.table && databaseById[view.table];
+  if (!table) {
+    d.append(el("h2", "", "Database"),
+      el("p", "", "Select a table to inspect its columns, relationships and code access."));
+    if (DATABASE.tables.length) d.append(el("p", "hint", `${DATABASE.tables.length} detected table${DATABASE.tables.length === 1 ? "" : "s"}.`));
+    return;
+  }
+  d.append(link("← Database overview", () => databaseGo(null)), el("h2", "", table.name));
+  if (table.models && table.models.length) d.append(el("p", "", `Models: ${table.models.join(", ")}`));
+  const cols = el("div", "db-cols");
+  for (const column of table.columns || []) {
+    const fk = (table.foreignKeys || []).some((rel) => rel.column === column.id);
+    const row = el("div", "db-col");
+    row.append(el("span", "key", [column.primaryKey ? "PK" : "", fk ? "FK" : ""].filter(Boolean).join("/")),
+      el("span", "", column.name), el("span", "type", column.type || "unknown"));
+    cols.append(row);
+  }
+  d.append(cols);
+  const relationRows = [];
+  for (const rel of table.foreignKeys || []) {
+    const target = databaseById[rel.to];
+    if (target) relationRows.push({ label: "references", table: target });
+  }
+  for (const rel of table.referencedBy || []) {
+    const source = databaseById[rel.from];
+    if (source) relationRows.push({ label: "referenced by", table: source });
+  }
+  if (relationRows.length) {
+    d.append(el("h3", "", "Relationships"));
+    const ul = el("ul", "ints");
+    for (const row of relationRows) {
+      const li = el("li");
+      li.append(el("span", "rel", row.label + " "), link(row.table.name, () => databaseGo(row.table.id)));
+      ul.append(li);
+    }
+    d.append(ul);
+  }
+  databaseCodeList(d, "Reads", table.reads);
+  databaseCodeList(d, "Writes", table.writes);
+  if (table.sources && table.sources.length) {
+    d.append(el("h3", "", "Defined in"));
+    const ul = el("ul", "ints");
+    for (const source of table.sources) ul.append(el("li", "path", `${source.path}:${source.line} · ${source.kind}`));
+    d.append(ul);
+  }
 }
 
 // ---------- UI sketch view ----------
@@ -2754,6 +2951,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
   }
   // Headless render.js reads this SVG. edges line up with g.edge in DOM order.
   if (window.cbiOnDiagram) window.cbiOnDiagram(svg, out.edges.map((e) => em[e.id] || null));
+  if (new URLSearchParams(location.search).has("render")) document.title = "cbi-viewer-ready";
   if (M) drawer();
   loadTreeAfterPaint();
 }
@@ -2841,6 +3039,7 @@ function empty(msg) {
   content = { w: 400, h: 40 };
   fit(false);
   if (window.cbiOnDiagram) window.cbiOnDiagram(svg, []);
+  if (new URLSearchParams(location.search).has("render")) document.title = "cbi-viewer-ready";
   loadTreeAfterPaint();
 }
 
@@ -3266,6 +3465,7 @@ function drawerOpen(title, fallback) {
 }
 
 function drawer() {
+  if (view.tab === "database") return databaseDrawer();
   hideUsagePop();
   const d = document.getElementById("drawer");
   drawerKept = drawerStamp === location.hash ? readDrawerOpen(d) : null;

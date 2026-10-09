@@ -8,6 +8,11 @@
 </head>
 <body>
 <header>
+  <nav id="system-tabs" aria-label="System views">
+    <button type="button" data-tab="concept">Concept map</button>
+    <button type="button" data-tab="database">Database</button>
+    <button type="button" data-tab="endpoints">API endpoints</button>
+  </nav>
   <nav id="crumbs" aria-label="Breadcrumb"></nav>
   <button id="details" title="Show or hide the details panel">Details</button>
   <div id="compare" hidden>
@@ -51,6 +56,8 @@
 <script src="data/editor.js"></script>
 <script src="data/diff.js"></script>
 <script src="data/history.js"></script>
+<script src="data/database.js"></script>
+<script src="data/endpoints.js"></script>
 <script src="data/concepts.js"></script>
 <script src="data/context.js"></script>
 </body>

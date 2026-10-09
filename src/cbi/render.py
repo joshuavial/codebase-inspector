@@ -48,6 +48,7 @@ Chrome failed, 2 bad arguments, 3 Chrome or Chromium is not installed
 SKIPPED = "no system Chrome or Chromium found; images skipped"
 READY = "cbi-render-ready"
 FAILED = "cbi-render-failed"
+VIEWER_READY = "cbi-viewer-ready"
 
 # Shared flags. The profile directory and the debugging port are per capture,
 # so two worktrees do not share a profile lock or a port.
@@ -343,7 +344,8 @@ def _chrome_argv(chrome, profile, url):
     ]
 
 
-def _capture(chrome, page, timeout=_TIMEOUT):
+def _capture(chrome, page, timeout=_TIMEOUT, *, query="", fragment="", page_name="render.html",
+             ready_titles=(READY, FAILED), profile_dir=None):
     """PNG bytes, page title and SVG text. The browser is killed before return.
 
     `--virtual-time-budget` made headless Chrome shut itself down, and on macOS
@@ -351,10 +353,11 @@ def _capture(chrome, page, timeout=_TIMEOUT):
     exits non-zero, which failed the capture even after the page had drawn.
     Waiting for the ready title and killing the process group skips that path.
     """
-    profile = (Path(page).parent / "profile").resolve()
+    profile = Path(profile_dir).resolve() if profile_dir else (Path(page).parent / "profile").resolve()
     profile.mkdir(parents=True, exist_ok=True)
+    url = Path(page).resolve().as_uri() + query + fragment
     proc = subprocess.Popen(
-        _chrome_argv(chrome, profile, Path(page).resolve().as_uri()),
+        _chrome_argv(chrome, profile, url),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         **_popen_kwargs(),
@@ -365,7 +368,7 @@ def _capture(chrome, page, timeout=_TIMEOUT):
     deadline = time.monotonic() + timeout
     try:
         port = _wait_port(proc, profile, chunks, deadline)
-        title, ws_url = _wait_ready(port, proc, chunks, deadline)
+        title, ws_url = _wait_ready(port, proc, chunks, deadline, page_name=page_name, ready_titles=ready_titles)
         markup, png_bytes = _read_page(ws_url)
         return png_bytes, title, markup
     finally:
@@ -454,7 +457,7 @@ def _devtools_port(text):
     return int(match.group(1)) if match else None
 
 
-def _wait_ready(port, proc, chunks, deadline):
+def _wait_ready(port, proc, chunks, deadline, *, page_name="render.html", ready_titles=(READY, FAILED)):
     """(title, websocket url) once the render page has finished or failed."""
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -466,16 +469,41 @@ def _wait_ready(port, proc, chunks, deadline):
             continue
         for item in pages:
             url = str(item.get("url") or "")
-            if item.get("type") != "page" or "render.html" not in url:
+            if item.get("type") != "page" or page_name not in url:
                 continue
             title = (item.get("title") or "").strip()
-            if title in (READY, FAILED):
+            if title in ready_titles:
                 ws_url = item.get("webSocketDebuggerUrl")
                 if not ws_url:
                     raise RenderError("Chrome devtools URL was missing")
                 return title, ws_url
         time.sleep(0.05)
     raise RenderError("Chrome timed out")
+
+
+def viewer_png(index, state, png):
+    """Capture a built viewer hash through the same isolated Chrome path as ``cbi render``."""
+    chrome = find_chrome()
+    if chrome is None:
+        raise RenderError(SKIPPED, code=3)
+    index, png = Path(index), Path(png)
+    fragment = "#" + str(state).lstrip("#") if state else ""
+    with tempfile.TemporaryDirectory(prefix="cbi-viewer-render-") as profile:
+        png_bytes, title, _markup = _capture(
+            chrome, index, query="?render=1", fragment=fragment, page_name="index.html",
+            ready_titles=(VIEWER_READY, FAILED), profile_dir=profile)
+    if title != VIEWER_READY:
+        raise RenderError("viewer did not finish")
+    if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise RenderError("Chrome wrote an empty screenshot")
+    png.parent.mkdir(parents=True, exist_ok=True)
+    partial = png.with_name(png.name + ".partial")
+    try:
+        partial.write_bytes(png_bytes)
+        os.replace(partial, png)
+    finally:
+        partial.unlink(missing_ok=True)
+    return png
 
 
 def _json_list(port):

@@ -82,6 +82,10 @@ header {
   padding: 14px 24px;
   border-bottom: 1px solid var(--line);
 }
+#system-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--ph); flex: none; }
+#system-tabs button { border: 0; border-radius: 7px; padding: 6px 10px; background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; }
+#system-tabs button:hover { color: var(--text); }
+#system-tabs button.on { color: var(--text); background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
 #crumbs { flex: 1; font-size: 15px; }
 #crumbs a { color: var(--muted); text-decoration: none; cursor: pointer; }
 #crumbs a:hover { color: var(--accent); }
@@ -89,6 +93,7 @@ header {
 #crumbs .here { font-weight: 600; }
 
 #find { position: relative; width: 300px; }
+#find[hidden], #overlay[hidden] { display: none; }
 #q {
   width: 100%;
   padding: 7px 12px;
@@ -225,6 +230,18 @@ body.history-compare #timeline { display: none; }
 
 /* diagram */
 .node { cursor: pointer; --c: var(--faint); }
+.node.db-table { --c: var(--accent); }
+.node.db-table .body { stroke-width: 1.5px; }
+.edge.foreign-key path { stroke: var(--accent); }
+.edge.foreign-key text { fill: var(--accent); }
+.db-cols { margin-top: 12px; }
+.db-col { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+.db-col .key { color: var(--accent); font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.db-col .type { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 1050px) {
+  header { gap: 10px; padding-inline: 12px; }
+  #system-tabs button { padding-inline: 7px; }
+}
 [class*="role-"], [class*="kind-"] { --c: var(--faint); }
 .role-ui { --c: var(--role-ui); } .role-app { --c: var(--role-app); } .role-service { --c: var(--role-service); }
 .role-core { --c: var(--role-core); } .role-data { --c: var(--role-data); }
