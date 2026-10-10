@@ -156,6 +156,16 @@ def test_warn_mode_exits_zero_and_uses_warning_annotations(make_repo, monkeypatc
     assert "warning" in out.splitlines()[0]
 
 
+def test_team_check_reports_the_rule_that_hides_judgement(make_repo, monkeypatch, capsys, tmp_path):
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="ignored-check")
+    (root / ".gitignore").write_text("notes/\n/.cbi/\n")
+    code, out, err = run(capsys, "check", "--format", "github")
+    assert code == 1, out + err
+    assert "::error file=.gitignore,line=2,title=ignored judgement::" in out
+    assert ".cbi/concepts.json is ignored by line 2 ('/.cbi/'); remove that rule" in out
+    assert "Remove the reported ignore rule" in out
+
+
 def test_json_files_that_fail_their_checks(make_repo, monkeypatch, capsys, tmp_path):
     root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="json")
     (root / ".cbi" / "concepts.json").write_text("{")

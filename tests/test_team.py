@@ -236,6 +236,32 @@ def test_team_init_exports_and_does_not_commit(make_repo, monkeypatch, capsys, t
     assert (root / ".cbi" / ".gitignore").read_text() == team.DERIVED_GITIGNORE
 
 
+def test_team_init_removes_only_a_plain_root_cbi_ignore(make_repo, monkeypatch, capsys):
+    root = make_repo({"a.py": "x = 1\n"}, name="ignored-team")
+    (root / ".gitignore").write_text("keep-this\n.cbi/\n*.log\n")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    code, out, err = run(capsys, "team", "init")
+    assert code == 0, err
+    assert (root / ".gitignore").read_text() == "keep-this\n*.log\n"
+    assert "Removed '.cbi/' from .gitignore line 2" in out
+    assert "git add -- .gitignore " in out
+    assert git(root, "check-ignore", "--no-index", ".cbi/concepts.json", check=False).returncode == 1
+
+
+def test_team_init_reports_other_ignore_rules_without_changing_them(make_repo, monkeypatch, capsys):
+    root = make_repo({"a.py": "x = 1\n"}, name="pattern-team")
+    original = "keep-this\n/.cbi/\n*.log\n"
+    (root / ".gitignore").write_text(original)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    code, out, err = run(capsys, "team", "init")
+    assert code == 0, err
+    assert (root / ".gitignore").read_text() == original
+    assert ".cbi/concepts.json is ignored by .gitignore line 2 ('/.cbi/')" in out
+    assert "Remove that rule" in out
+
+
 def test_out_does_not_edit_the_repo(make_repo, monkeypatch, capsys, tmp_path):
     root = make_repo({"a.py": "x = 1\n"}, name="repo")
     monkeypatch.chdir(root)

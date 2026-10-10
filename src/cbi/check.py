@@ -192,6 +192,13 @@ def _mode(out):
 
 def _findings(conn, root, out, changed):
     found = []
+    ignored = team.judgement_ignore(root) if team.team_dir(out) is not None else None
+    if ignored:
+        found.append(_finding(
+            "ignore", ignored["source"],
+            f"{ignored['path']} is ignored by line {ignored['line']} ({ignored['pattern']!r}); remove that rule",
+            "ignored judgement", line=ignored["line"] or None,
+        ))
     found.extend(_file_findings(conn, changed))
     found.extend(_json_findings(conn, root, out))
     found.extend(_stale_findings(conn, root, out))
@@ -445,6 +452,8 @@ def _fix_lines(findings):
         lines.append("Write the accepted answers with: cbi team init")
     if "secret" in kinds:
         lines.append("Rewrite the answer so it does not contain a key or token, then submit it again.")
+    if "ignore" in kinds:
+        lines.append("Remove the reported ignore rule so Git can see the committed .cbi/ judgement files.")
     return lines
 
 

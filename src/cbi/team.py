@@ -11,6 +11,7 @@ reads `brief_budget` from the same file.
 import json
 import os
 import sqlite3
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -171,7 +172,17 @@ def cmd_init(root, out):
     if problem:
         lines.append(problem)
     lines.append(attr_note)
+    removed, ignored = ensure_judgement_visible(root, out)
+    if removed:
+        lines.append(f"Removed {removed['pattern']!r} from {_show(root, removed['source'])} line {removed['line']} so .cbi/ is visible to git.")
+    if ignored:
+        lines.append(
+            f"{ignored['path']} is ignored by {ignored['source']} line {ignored['line']} "
+            f"({ignored['pattern']!r}). Remove that rule so the judgement files can be committed."
+        )
     listed = _commit_paths(root, out)
+    if removed and ".gitignore" not in listed:
+        listed.insert(0, ".gitignore")
     lines += [
         "",
         "Commit the judgement. This command does not commit or push.",
@@ -184,6 +195,57 @@ def cmd_init(root, out):
     ]
     print("\n".join(lines))
     return 0
+
+
+def ensure_judgement_visible(root, out):
+    """Remove one exact root ignore rule and return `(removed, remaining)`.
+
+    Git's own matcher covers parent repositories, global excludes and rules
+    whose effect is not obvious from the root .gitignore. Only a plain root
+    `.cbi` line is safe to change automatically.
+    """
+    root, out = Path(root), Path(out)
+    if not _is_repo_cbi(root, out):
+        return None, None
+    ignored = judgement_ignore(root)
+    removed = None
+    if ignored and _plain_root_rule(root, ignored):
+        source = Path(ignored["source"])
+        if not source.is_absolute():
+            source = root / source
+        lines = source.read_text().splitlines(keepends=True)
+        index = ignored["line"] - 1
+        if 0 <= index < len(lines) and lines[index].rstrip("\r\n") in (".cbi", ".cbi/"):
+            del lines[index]
+            source.write_text("".join(lines))
+            removed = {**ignored, "source": source}
+            ignored = judgement_ignore(root)
+    return removed, ignored
+
+
+def judgement_ignore(root):
+    """The git rule ignoring a committed judgement file, or None."""
+    target = ".cbi/concepts.json"
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "-v", "--", target],
+        cwd=root, capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    detail, _tab, path = result.stdout.rstrip("\n").partition("\t")
+    source, line, pattern = detail.rsplit(":", 2)
+    try:
+        number = int(line)
+    except ValueError:
+        return {"source": source, "line": 0, "pattern": pattern, "path": path or target}
+    return {"source": source, "line": number, "pattern": pattern, "path": path or target}
+
+
+def _plain_root_rule(root, ignored):
+    source = Path(ignored["source"])
+    if not source.is_absolute():
+        source = Path(root) / source
+    return source.resolve() == (Path(root) / ".gitignore").resolve() and ignored["pattern"] in (".cbi", ".cbi/")
 
 
 def _model_rows(path):
