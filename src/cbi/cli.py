@@ -102,7 +102,9 @@ def build_parser():
     brief_mode.add_argument("--check", metavar="FILE", type=Path, help="check a draft answer without storing it")
     cmds["submit"].add_argument("id", help="task ID from `cbi tasks`")
     cmds["submit"].add_argument("file", nargs="?", default="-", help="answer JSON file, or - for stdin (default)")
-    cmds["prime"].add_argument("--out", metavar="DIR", type=Path, help="model directory to read instead of .cbi/")
+    prime_model = cmds["prime"].add_mutually_exclusive_group()
+    prime_model.add_argument("--out", metavar="DIR", type=Path, help="model directory to read instead of .cbi/")
+    prime_model.add_argument("--ref", metavar="REF", help="print the guide and task counts for this stored ref model")
     cmds["diff"].description = diff.HELP
     cmds["diff"].add_argument("base", nargs="?", help="base git ref")
     cmds["diff"].add_argument("head", nargs="?", help="head git ref")
@@ -155,7 +157,7 @@ def build_parser():
     cmds["ingest"].add_argument("files", nargs="+", metavar="file", help="lcov, coverage.py JSON or JUnit XML file")
     ref_help = "branch, tag or commit. scan stores its model; the other commands read it"
     for name in ("scan", "search", "show", "tests-for", "status", "build", "tasks", "task", "submit",
-                 "hotspots", "orphans", "cycles", "deps", "open-file"):
+                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file"):
         cmds[name].add_argument("--ref", metavar="REF", help=ref_help)
     viewed = cmds["context"].add_mutually_exclusive_group()
     viewed.add_argument("--ref", metavar="REF", help=ref_help)
@@ -1223,10 +1225,14 @@ def main(argv=None):
 def _main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command == "prime":
-        code = prime.run(args.out)
-        if code == 0:
-            _print_update_notice()
-        return code
+        try:
+            code = prime.run(args.out, args.ref)
+            if code == 0:
+                _print_update_notice()
+            return code
+        except (files.NotARepo, files.BadRef) as err:
+            print(err, file=sys.stderr)
+            return 1
     handler = HANDLERS.get(args.command)
     if not handler:
         print(f"cbi {args.command}: not implemented yet", file=sys.stderr)

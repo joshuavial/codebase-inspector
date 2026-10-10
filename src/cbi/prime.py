@@ -69,19 +69,22 @@ OUT_NOTE = "Pass `--out DIR` on every command when the repo must stay untouched.
 
 def _intro(out_flag):
     text = INTRO.rstrip("\n")
-    if out_flag:
+    if "--out " in out_flag:
         text += "\n" + OUT_NOTE
     return text + "\n"
 
 
-def run(out=None):
+def run(out=None, ref=None):
     """Print the guide for the repo containing the current directory. Returns the exit code."""
     try:
         root = files.repo_root(Path.cwd())
     except files.NotARepo:
         print(NOT_INITIALISED, end="")
         return 0
-    db = (out.resolve() if out else root / ".cbi") / "model.db"
+    base = out.resolve() if out else root / ".cbi"
+    sha = files.resolve_commit(root, ref) if ref else None
+    model_dir = base / "refs" / sha if sha else base
+    db = model_dir / "model.db"
     if not db.exists():
         print(NOT_INITIALISED, end="")
         return 0
@@ -96,7 +99,10 @@ def run(out=None):
             "SELECT kind, sum(state = 'open'), sum(state = 'blocked') FROM tasks GROUP BY kind ORDER BY kind"
         ).fetchall()
         pending = [c for c in counts if c[1] or c[2]]
-        flag = "" if out is None else " --out " + shlex.quote(str(db.parent))
+        if sha:
+            flag = " --ref " + shlex.quote(sha)
+        else:
+            flag = "" if out is None else " --out " + shlex.quote(str(db.parent))
         guide = pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
         print(guide, end="")
     finally:
@@ -174,6 +180,8 @@ def _viewer_sentence(model_dir, out_flag):
 
 
 def _history_sentence(model_dir, out_flag):
+    if "--ref " in out_flag:
+        return ""
     path = Path(model_dir) / "CHANGELOG-ARCHITECTURE.md"
     if not path.is_file():
         return ""

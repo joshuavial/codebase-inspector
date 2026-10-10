@@ -116,6 +116,14 @@ def test_ref_scan_maps_both_branches_without_a_checkout(make_repo, monkeypatch, 
     other_sha, _ = scan_ref(capsys, "other")
     assert other_sha != main_sha
 
+    code, guide, err = run(capsys, "prime", "--ref", "main")
+    assert code == 0, err
+    assert f"--ref {main_sha}" in guide
+    assert "--out" not in guide
+    assert "judgement tasks open" in guide
+    for command in ("tasks", "task <id>", "submit <id>", "build", "prime"):
+        assert f"cbi {command}" in guide and f"--ref {main_sha}" in guide
+
     main_db = root / ".cbi" / "refs" / main_sha / "model.db"
     other_db = root / ".cbi" / "refs" / other_sha / "model.db"
     assert main_db.exists() and not (root / ".cbi" / "model.db").exists()
