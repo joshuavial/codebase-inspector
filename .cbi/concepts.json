@@ -121,7 +121,7 @@
         {
           "id": "cli",
           "name": "Command line",
-          "summary": "The cbi entry point. Argparse dispatches every command, from init and scan through tasks, queries, diff, render, open and review. cbi check fails when changed files have no summary or owner, cbi open-file launches the editor from a matching worktree or a read-only git show snapshot, and prime and status print a one-line notice when a newer release is known.",
+          "summary": "The cbi entry point. Argparse dispatches every command, from init and scan through tasks, queries, diff, render, open and review. cbi check fails when changed files have no summary or owner, or when a git ignore rule hides the team judgement, cbi open-file launches the editor from a matching worktree or a read-only git show snapshot, and prime and status print a one-line notice when a newer release is known.",
           "role": "app",
           "entry": true,
           "files": [
@@ -193,7 +193,7 @@
         {
           "id": "tasks",
           "name": "Judgement tasks",
-          "summary": "The task protocol and the prime guide. Briefs, validation, bottom-up blocking, and summaries cached in the shared answer database. A large brief splits into parts. Team mode commits that judgement into the repo.",
+          "summary": "The task protocol and the prime guide, which can read a stored ref model with --ref. Briefs, validation, bottom-up blocking, and summaries cached in the shared answer database. A large brief splits into parts. Team mode commits that judgement into the repo and removes a plain root .cbi ignore rule so git can see it.",
           "role": "core",
           "files": [
             "src/cbi/prime.py",
@@ -268,7 +268,7 @@
             {
               "id": "history",
               "name": "Architecture history",
-              "summary": "Builds an architectural timeline from immutable default-branch models, projects the current concepts onto historical files, compares successive points, and renders cached narratives as a changelog.",
+              "summary": "Builds an architectural timeline from immutable default-branch models, using direct commits before the first merge and merge commits after it, projects the current concepts onto historical files, compares successive points, and renders cached narratives as a changelog.",
               "role": "core",
               "files": [
                 "src/cbi/history.py",
@@ -805,6 +805,13 @@
       "from": "history",
       "to": "tasks",
       "label": "reads cached narratives for history entries"
+    },
+    {
+      "from": "tasks",
+      "to": "git",
+      "label": "finds the ignore rule that hides the committed judgement",
+      "via": "exec CLI",
+      "at": "src/cbi/team.py:judgement_ignore"
     }
   ]
 }
