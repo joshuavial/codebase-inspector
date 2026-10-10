@@ -307,7 +307,7 @@ Covers `docs/prd-04-change-review.md`.
 
 Covers `docs/prd-06-architecture-history.md`. Decided in ADR-0021 and ADR-0022.
 
-- **Points.** `src/cbi/history.py` lists history points with `git log --first-parent --merges` on the default branch (falling back to `--first-parent` without `--merges` when the repo has no merge commits), oldest first, from `--since`. PR numbers come from merge messages (`Merge pull request #N`, `(#N)`) and, when `gh` is on PATH, `gh pr list --state merged --json number,mergeCommit,title` (read-only, cached in the model folder).
+- **Points.** `src/cbi/history.py` lists the first-parent commits before the first merge, then merge commits on the default branch. A repository with no merge commits uses every first-parent commit. Points are oldest first and respect `--since`. PR numbers come from merge messages (`Merge pull request #N`, `(#N)`) and, when `gh` is on PATH, `gh pr list --state merged --json number,mergeCommit,title` (read-only, cached in the model folder).
 - **Models.** Each point is scanned with the existing ref scanning into `refs/<sha>/model.db` (immutable, reused). Parsing is content-addressed by blob id across refs, so unchanged files are not reparsed.
 - **Projection.** `history.project_concepts(current, point_model)` assigns each file at a point to a current leaf concept: same file id, else nearest surviving neighbour by folder then by import neighbours, marked provisional. Concept nodes with no files at a point are omitted there.
 - **Entries.** Each entry is `diff.compare(previous_point, point)` (PRD-04) on the projected models, stored as JSON in `history/<sha>.json` beside the models. Empty diffs are not entries. A `history/index.json` lists entries with date, sha, PR, author and change counts.

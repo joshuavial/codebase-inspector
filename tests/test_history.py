@@ -45,12 +45,18 @@ def test_points_prefer_merges_and_fall_back_to_first_parent(make_repo):
     assert history.history_points(plain, since=dt.date.today().isoformat())
 
     merged = make_repo({"a.py": "x = 1\n"}, name="merged")
+    initial = git(merged, "rev-parse", "HEAD")
+    direct = commit(merged, "direct on main", **{"early.py": "early = True\n"})
     git(merged, "checkout", "-q", "-b", "feature")
     commit(merged, "inside branch", **{"b.py": "y = 2\n"})
     git(merged, "checkout", "-q", "main")
     git(merged, "merge", "--no-ff", "-m", "Merge pull request #7 from feature", "feature")
     points = history.history_points(merged, since="2000-01-01")
-    assert len(points) == 1 and points[0]["pr"] == 7
+    assert [point["sha"] for point in points[:2]] == [initial, direct]
+    assert len(points) == 3 and points[-1]["pr"] == 7
+
+    later = commit(merged, "direct after merges", **{"late.py": "late = True\n"})
+    assert later not in {point["sha"] for point in history.history_points(merged, since="2000-01-01")}
 
 
 def test_project_concepts_keeps_move_and_marks_folder_guess(tmp_path):

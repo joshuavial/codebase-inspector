@@ -13,7 +13,7 @@ from pathlib import Path
 
 from cbi import diff, review, store, tasks
 
-VERSION = 1
+VERSION = 2
 DEFAULT_DAYS = 183
 PR_RE = re.compile(r"(?:Merge pull request #|\(#)(\d+)\)?")
 
@@ -49,14 +49,22 @@ def history_points(root, since=None, until=None):
         common.append(f"--since={_git_date(since, end=False)}")
     if until:
         common.append(f"--until={_git_date(until, end=True)}")
-    merged = _git(root, *common, "--merges", branch).stdout
-    raw = merged or _git(root, *common, branch).stdout
+    raw = _git(root, *common, branch).stdout
+    merges = _git(root, "log", "--first-parent", "--merges", "--format=%H", branch).stdout.splitlines()
+    before_first_merge = set()
+    if merges:
+        first_parent = _git(root, "rev-parse", f"{merges[-1]}^").stdout.strip()
+        before_first_merge = set(
+            _git(root, "rev-list", "--first-parent", first_parent).stdout.splitlines()
+        )
     points = []
     for line in raw.splitlines():
         fields = line.split("\0", 4)
         if len(fields) != 5:
             continue
         sha, parents, date, author, subject = fields
+        if merges and sha not in before_first_merge and len(parents.split()) < 2:
+            continue
         match = PR_RE.search(subject)
         points.append({
             "sha": sha, "parents": parents.split(), "date": date, "author": author,

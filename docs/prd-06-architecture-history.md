@@ -30,7 +30,7 @@ Success signals:
 
 ## Requirements
 
-- H1. History points are merges to the default branch (merge commits, or the commits a squash-merged PR produced), falling back to every commit on the default branch when the repo does not merge. PR numbers come from merge commit messages and, when `gh` is available, from `gh pr list --state merged --json` (read-only).
+- H1. History points are first-parent commits before the first merge, then merges to the default branch (merge commits, or the commits a squash-merged PR produced). A repository that never merges uses every first-parent commit. PR numbers come from merge commit messages and, when `gh` is available, from `gh pr list --state merged --json` (read-only).
 - H2. Each entry is the PRD-04 structural diff between a point and the previous point. Points whose diff has no architectural change are skipped.
 - H3. Concepts in the past come from projecting the current `concepts.json` onto each point by file ownership: files that no longer exist drop out; files that existed only in the past take the owner of their nearest surviving neighbour (same folder, then import neighbours) and are marked provisional. Concepts with no files at a point are absent at that point.
 - H4. History builds incrementally: models for points already scanned are reused (ref models are immutable), and only new points are scanned and diffed. Scanning reuses content-addressed parse results across points, so a long history costs roughly the number of distinct file versions, not points times files.

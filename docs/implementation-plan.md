@@ -320,6 +320,24 @@ Checks: I4; Playwright scrub and click on sample-desktop.
 
 Outcome: `cbi history --narrate <sha>` opening `summarise-change` for an entry, answers shown in the changelog and the app. Depends on: 60. Parallel with: 61.
 
+## 63. Team judgement visibility
+
+Outcome: `cbi team init` checks `.cbi/concepts.json` with Git's ignore matcher, removes only a plain `.cbi/` or `.cbi` line from the root `.gitignore`, and reports every other matching rule with its source and line. `cbi check` reports the same problem in a team repository.
+
+Checks: fixtures for an exact root rule, a different rule that must stay untouched, and the check finding.
+
+## 64. Prime for ref models
+
+Outcome: `cbi prime --ref <sha>` reads the stored ref model, reports its task counts, and puts the resolved `--ref <sha>` on the commands it prints.
+
+Checks: a scanned branch model produces the ref guide with its full commit and no `--out` commands.
+
+## 65. History before the first merge
+
+Outcome: architecture history includes first-parent commits before the first merge, then keeps using merge points. Empty architectural diffs are still skipped and existing ref models are still reused.
+
+Checks: a fixture with direct commits before and after its first merge includes the early commits and excludes the later direct commit; the incremental model reuse check still passes.
+
 ## After PRD-04
 
 Write PRD-05 (data map: schema from migrations, query table usage, ERD) with sample-apps and sample-saas as targets. sample-saas cold scan was 12.0 s. Compose image commands with no tracked source leave the image deployable without an entry; service commands supply the entries. A package with package-mode off is not a package. Image-only services are externals. The default `evals/` ignore did not cover a nested eval directory of about 6,500 files. 602 test files, 555 with a `tests` edge. One module had fan-in 267; one SQL module was 6,511 lines.
