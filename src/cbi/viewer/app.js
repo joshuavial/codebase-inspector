@@ -2687,11 +2687,129 @@ function firstTier(children, edges) {
   return new Set([...entries].filter((id) => !edges.some((e) => e.b === id && entries.has(e.a))));
 }
 
+// ELK's edge wrapping leaves large return loops around a row. For a long chain, lay the boxes
+// out in reading order on a grid whose rows turn back like a snake, so each box stays next to
+// the one before it. Edges between neighbours go straight; the rest leave through the top or
+// bottom, run in the channel between rows, cross rows in a gap between columns, and enter the
+// other box from its row's channel. Every channel and gap hands out its own lane per edge.
+function snakeGrid(graph, edgeMeta, perRow) {
+  const order = [...graph.children].sort((a, b) => a.x - b.x || a.y - b.y);
+  if (perRow < 2 || perRow >= order.length) return null;
+  const labels = edgeMeta.filter((e) => e.text || e.via).map(labelBox);
+  const labW = Math.max(0, ...labels.map((l) => l.width)), labH = Math.max(0, ...labels.map((l) => l.height));
+  const pad = 12, LANE_STEP = 8;
+  const rows = Math.ceil(order.length / perRow);
+  const cell = {};
+  order.forEach((n, i) => {
+    const r = Math.floor(i / perRow);
+    cell[n.id] = { r, c: r % 2 ? perRow - 1 - (i % perRow) : i % perRow };
+  });
+  // First pass: which channel, gap and box side each edge uses.
+  const plans = [], users = {};
+  const use = (key, id) => { (users[key] = users[key] || []).push(id); };
+  for (const meta of edgeMeta) {
+    const A = cell[meta.a], B = cell[meta.b];
+    if (!A || !B) { plans.push(null); continue; }
+    if ((A.r === B.r && Math.abs(A.c - B.c) === 1) || (A.c === B.c && Math.abs(A.r - B.r) === 1)) {
+      plans.push({ straight: true });
+      continue;
+    }
+    const down = B.r > A.r || (B.r === A.r && A.r < rows - 1);
+    const chA = down ? A.r : A.r - 1;
+    const chB = B.r > A.r ? B.r - 1 : B.r < A.r ? B.r : chA;
+    const bTop = B.r > A.r || (B.r === A.r && !down);
+    let gap = null;
+    if (chA !== chB) {
+      gap = Math.min(perRow - 1, Math.max(1, Math.round((A.c + B.c + 1) / 2)));
+      use(`g${gap}`, meta.id);
+    }
+    use(`h${chA}`, meta.id);
+    if (chB !== chA) use(`h${chB}`, meta.id);
+    use(`${meta.a}:${down ? "b" : "t"}`, meta.id);
+    use(`${meta.b}:${bTop ? "t" : "b"}`, meta.id);
+    plans.push({ down, chA, chB, bTop, gap });
+  }
+  // Each channel and gap is wide enough for its lanes plus a label on either side.
+  const count = (key) => (users[key] || []).length;
+  const rowGap = Array.from({ length: rows }, (_, k) => Math.max(70, count(`h${k}`) * LANE_STEP + 2 * labH + 16));
+  const colGap = Array.from({ length: perRow }, (_, c) => Math.max(40, count(`g${c}`) * LANE_STEP + labW + 24));
+  const colW = Math.max(...order.map((n) => n.width));
+  const rowH = Array.from({ length: rows }, (_, r) => Math.max(...order.slice(r * perRow, (r + 1) * perRow).map((n) => n.height)));
+  const rowTop = [pad], colLeft = [pad];
+  for (let r = 1; r < rows; r++) rowTop.push(rowTop[r - 1] + rowH[r - 1] + rowGap[r - 1]);
+  for (let c = 1; c < perRow; c++) colLeft.push(colLeft[c - 1] + colW + colGap[c]);
+  const children = order.map((n) => {
+    const { r, c } = cell[n.id];
+    return { ...n, x: colLeft[c] + (colW - n.width) / 2, y: rowTop[r] + (rowH[r] - n.height) / 2 };
+  });
+  const at = Object.fromEntries(children.map((n) => [n.id, n]));
+  // Second pass: spread the lanes around the middle of each channel, gap and box side.
+  const lane = (key, id, room) => {
+    const list = users[key], i = list.indexOf(id);
+    return (i - (list.length - 1) / 2) * Math.min(LANE_STEP, room / Math.max(1, list.length));
+  };
+  const chanY = (k, id) => rowTop[k] + rowH[k] + rowGap[k] / 2 + lane(`h${k}`, id, rowGap[k] - 2 * labH);
+  const gapX = (c, id) => colLeft[c] - colGap[c] / 2 + lane(`g${c}`, id, colGap[c] - labW);
+  const edges = edgeMeta.map((meta, i) => {
+    const p = plans[i], a = at[meta.a], b = at[meta.b];
+    let points = [];
+    if (p && p.straight) points = routeInside(a, b);
+    else if (p) {
+      const ax = a.x + a.width / 2 + lane(`${a.id}:${p.down ? "b" : "t"}`, meta.id, a.width - 24);
+      const bx = b.x + b.width / 2 + lane(`${b.id}:${p.bTop ? "t" : "b"}`, meta.id, b.width - 24);
+      const y1 = chanY(p.chA, meta.id), y2 = chanY(p.chB, meta.id);
+      const start = { x: ax, y: p.down ? a.y + a.height : a.y }, end = { x: bx, y: p.bTop ? b.y : b.y + b.height };
+      const gx = p.gap == null ? null : gapX(p.gap, meta.id);
+      points = gx == null
+        ? [start, { x: ax, y: y1 }, { x: bx, y: y1 }, end]
+        : [start, { x: ax, y: y1 }, { x: gx, y: y1 }, { x: gx, y: y2 }, { x: bx, y: y2 }, end];
+    }
+    const label = meta.text || meta.via ? labelBox(meta) : null;
+    return {
+      id: meta.id, sources: [meta.a], targets: [meta.b],
+      sections: points.length ? [{ startPoint: points[0], endPoint: points[points.length - 1], bendPoints: points.slice(1, -1) }] : [],
+      labels: label ? [{ text: meta.text || "", x: -9999, y: -9999, ...label }] : [],
+    };
+  });
+  const width = colLeft[perRow - 1] + colW + pad;
+  return { id: "inner", width, height: rowTop[rows - 1] + rowH[rows - 1] + pad, children, edges };
+}
+
+// Inner labels that still sit on a box or another label, and routes that still cut a box,
+// after the same edge repair and label spread the render runs. A tight candidate pays here.
+function innerClashes(p1, edgeMeta) {
+  const at = Object.fromEntries(p1.children.map((n) => [n.id, n]));
+  const byId = Object.fromEntries(edgeMeta.map((e) => [e.id, e]));
+  const labels = [];
+  let cuts = 0;
+  for (const e of p1.edges || []) {
+    const meta = byId[e.id], a = at[e.sources[0]], z = at[e.targets[0]];
+    if (!meta || !a || !z) continue;
+    const drawn = (e.sections || []).flatMap((q) => [q.startPoint, ...(q.bendPoints || []), q.endPoint]).filter(Boolean);
+    const pts = settleInnerEdge(drawn, a, z, p1.children, p1.width, p1.height);
+    if (!pathClear(pts, p1.children.filter((n) => n !== a && n !== z))) cuts++;
+    if (!(meta.text || meta.via) || pts.length < 2) continue;
+    const lb = labelBox(meta);
+    let best = 1;
+    for (let i = 2; i < pts.length; i++) if (dist(pts[i - 1], pts[i]) > dist(pts[best - 1], pts[best])) best = i;
+    const p = pts[best - 1], q = pts[best];
+    labels.push({ x: (p.x + q.x) / 2 + 4, y: (p.y + q.y) / 2 - lb.height / 2, width: lb.width, height: lb.height, pts });
+  }
+  separateLabels(labels, p1.children);
+  const stuck = labels.filter((l, i) => p1.children.some((n) => obstacleHits(l, n)) || labels.some((o, j) => j !== i && overlaps(l, o, LABEL_PAD)));
+  return cuts + stuck.length;
+}
+
+// Text size at fit, capped at full size, less 10% for every clash, over the mode's bias.
+function layoutScore(t, avail) {
+  return (14 * Math.min(1, avail.w / t.width, avail.h / t.height) * 0.9 ** (t.clashes || 0)) / t.bias;
+}
+
 // ELK lays out the inside of a concept. Edges with both ends inside stay in that interior.
 // Externals sit on the nearest side of the boundary (above, right, below, left). Above and
 // below, each edge keeps its own lane or a straight drop, and the row spreads for the label.
-// The inside is tried unwrapped, wrapped into rows and top to bottom; whichever scales largest
-// wins, with a preference for unwrapped left to right.
+// The inside is tried unwrapped, wrapped into rows, top to bottom and as a snake grid, and
+// layoutScore picks one.
 async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   const gen = ++layoutGen;
   const inner = new Set(boundary.children.map((n) => n.id));
@@ -2770,8 +2888,8 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   try {
     const tries = [];
     let layoutErr = null;
-    // Bias: unwrapped left to right is preferred; top to bottom must scale 10% better and wrapping
-    // (which adds long return loops between rows) 25% better before either is chosen.
+    // Bias: unwrapped left to right is preferred; top to bottom must score 10% better, the snake
+    // grid 10% and ELK wrapping (which adds long return loops between rows) 25% better.
     const modes = [["RIGHT", null, 1, 1], ...["MULTI_EDGE", "SINGLE_EDGE"].flatMap((w) => [0.5, 0.8, 1.1].map((r) => ["RIGHT", w, r, 1.25])), ["DOWN", null, 1, 1.1]];
     for (const [dir, w, r, bias] of modes) {
       try {
@@ -2784,10 +2902,15 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
         }
       }
     }
+    const straight = tries.find((t) => t.dir === "RIGHT" && !t.wrapping);
+    for (let perRow = 2; straight && perRow < straight.p1.children.length; perRow++) {
+      const p1 = snakeGrid(straight.p1, insideEdges, perRow);
+      if (p1) tries.push({ dir: "RIGHT", wrapping: "snake", ratio: perRow, bias: 1.1, p1, ...placeAround(arrange(p1)) });
+    }
     if (gen !== layoutGen) return;
     if (!tries.length) throw layoutErr || new Error("no layout");
-    const score = (t) => Math.min(avail.w / t.width, avail.h / t.height) / t.bias; // must beat unwrapped by its bias
-    const best = tries.reduce((p, q) => (score(q) > score(p) ? q : p));
+    for (const t of tries) t.clashes = innerClashes(t.p1, insideEdges);
+    const best = tries.reduce((p, q) => (layoutScore(q, avail) > layoutScore(p, avail) ? q : p));
     const { p1, at, W, H, bx, by, pos, size } = best;
     const diagram = document.getElementById("diagram");
     if (diagram) diagram.dataset.layout = (best.dir === "DOWN" ? "down" : best.wrapping ? `${best.wrapping} ${best.ratio}` : "unwrapped") + " · around";

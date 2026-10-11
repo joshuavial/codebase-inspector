@@ -540,6 +540,43 @@ async function main() {
   assert.ok(flank.bx - (flank.pos.L.x + flank.size.L.w) >= leftLabel.width, "left label still fits before the frame");
   }
 
+  {
+    // A Mapper-style chain: nine boxes in one long row, a hub that reaches most of them and
+    // a label on every edge. At 1440x900 the row fits at about a third of full size; a wrapped
+    // layout must win, fit at least twice as large and route without cutting a box.
+    const ids = ["cli", "tasks", "diff", "parse", "render", "manifests", "queries", "concepts", "scan"];
+    const kids = ids.map((id, i) => ({ id, x: 12 + i * 330, y: 12, width: 230, height: 94 }));
+    const said = "reads the model and prints what it found";
+    const chainEdges = [
+      ...ids.slice(1).map((id, i) => ({ id: `c${i}`, a: ids[i], b: id, text: said })),
+      ...ids.slice(2).map((id, i) => ({ id: `h${i}`, a: "cli", b: id, text: said })),
+      { id: "x0", a: "diff", b: "scan", text: said }, { id: "x1", a: "parse", b: "concepts", text: said },
+    ];
+    const row = { id: "inner", width: 12 + 9 * 330, height: 118, children: kids, edges: [] };
+    const avail = { w: 1440, h: 900 };
+    const straight = { width: row.width, height: row.height, bias: 1, clashes: 0, row };
+    const tries = [straight];
+    for (let perRow = 2; perRow < ids.length; perRow++) {
+      const grid = app.snakeGrid(row, chainEdges, perRow);
+      tries.push({ width: grid.width, height: grid.height, bias: 1.1, clashes: app.innerClashes(grid, chainEdges), grid });
+    }
+    const best = tries.reduce((p, q) => (app.layoutScore(q, avail) > app.layoutScore(p, avail) ? q : p));
+    const fitOf = (t) => Math.min(1, avail.w / t.width, avail.h / t.height);
+    assert.ok(best.grid, "a wrapped layout beats the long row");
+    assert.ok(fitOf(best) >= 2 * fitOf(straight), `fit ${fitOf(best)} vs row ${fitOf(straight)}`);
+    assert.strictEqual(best.clashes, 0);
+    const at = Object.fromEntries(best.grid.children.map((n) => [n.id, n]));
+    for (const e of best.grid.edges) {
+      const q = e.sections[0];
+      const pts = [q.startPoint, ...q.bendPoints, q.endPoint];
+      assert.ok(app.meetsBoxes(pts, at[e.sources[0]], at[e.targets[0]]), `${e.id} meets both boxes`);
+      const others = best.grid.children.filter((n) => n.id !== e.sources[0] && n.id !== e.targets[0]);
+      assert.ok(app.pathClear(pts, others), `${e.id} cuts a box ${JSON.stringify(pts)}`);
+    }
+    const seen = new Set(best.grid.children.map((n) => `${n.x},${n.y}`));
+    assert.strictEqual(seen.size, ids.length, "every box has its own cell");
+  }
+
   console.log("layout checks passed");
 }
 
