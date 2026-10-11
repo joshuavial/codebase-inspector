@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cbi import diff, store
+from cbi import change_overview, diff, store
 from cbi.cli import main
 from cbi.parse import symbol_nodes
 
@@ -287,8 +287,10 @@ def test_scanned_pair_covers_every_kind(make_repo, monkeypatch, tmp_path, capsys
     assert not any("#main" in c["summary"] for c in changes)
 
     text = diff.render(result)
+    detail_text = diff.render(result, detail=True)
     rendered = diff.render(result, "json")
-    assert diff.render(result, "markdown").startswith("# structural diff\n")
+    assert diff.render(result, "markdown").startswith("# Change overview\n")
+    assert diff.render(result, "markdown", detail=True).startswith("# structural diff\n")
     code, out, err = run(capsys, "diff", "--base-model", str(base_out), "--head-model", str(head_out))
     assert code == 0 and out == text and err == ""
     code, out, err = run(capsys, "diff", "--base-model", str(base_out / "model.db"),
@@ -296,7 +298,7 @@ def test_scanned_pair_covers_every_kind(make_repo, monkeypatch, tmp_path, capsys
     assert code == 0 and out == rendered
 
     data = json.loads(rendered)
-    assert set(data) == {"grouping", "groups"}
+    assert set(data) == {"grouping", "groups", "overview"}
     for group in data["groups"]:
         for change in group["changes"]:
             assert set(change) == {"kind", "summary", "before", "after", "code"}
@@ -317,10 +319,10 @@ def test_scanned_pair_covers_every_kind(make_repo, monkeypatch, tmp_path, capsys
     assert "package-removed" not in {c["kind"] for g in going["groups"] for c in g["changes"]}
 
     if os.environ.get("CBI_UPDATE_GOLDEN"):
-        GOLDEN_TEXT.write_text(text)
-        GOLDEN_JSON.write_text(rendered)
-    assert text == GOLDEN_TEXT.read_text()
-    assert rendered == GOLDEN_JSON.read_text()
+        GOLDEN_TEXT.write_text(detail_text)
+        GOLDEN_JSON.write_text(json.dumps({k: data[k] for k in ("grouping", "groups")}, indent=2, sort_keys=True) + "\n")
+    assert detail_text == GOLDEN_TEXT.read_text()
+    assert {k: data[k] for k in ("grouping", "groups")} == json.loads(GOLDEN_JSON.read_text())
 
 
 def test_help_documents_the_json_shape(capsys):
@@ -331,6 +333,72 @@ def test_help_documents_the_json_shape(capsys):
     assert "grouping" in out and "body is the body hash" in out
     for kind in diff.KINDS:
         assert kind in out
+
+
+def test_overview_ranks_attention_and_supports_every_cli_level(make_repo, monkeypatch, tmp_path, capsys):
+    base_files = {
+        "integration/a.ts": fn("connect", "return 1;"),
+        "bulk/b.ts": fn("refactor", "return 1;"),
+    }
+    root = make_repo(base_files, name="overview")
+    monkeypatch.chdir(root)
+    base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    base_doc = _concepts(
+        [_concept("integration", "Integration", ["integration/a.ts"]),
+         _concept("bulk", "Bulk refactor", ["bulk/b.ts"])],
+        [{"id": "ext.api", "name": "API", "summary": "Remote API.", "kind": "saas"}], [],
+    )
+    head_doc = _concepts(
+        [_concept("integration", "Integration", ["integration/a.ts"]),
+         _concept("bulk", "Bulk refactor", ["bulk/b.ts"])],
+        [{"id": "ext.api", "name": "API", "summary": "Remote API.", "kind": "saas"}],
+        [{"from": "integration", "to": "ext.api", "label": "calls", "via": "HTTP", "at": "integration/a.ts:connect"}],
+    )
+    base_out, head_out = tmp_path / "overview-base", tmp_path / "overview-head"
+    scan_into(capsys, base_out, base_doc)
+    bulk = "\n".join(f"  const value{i} = {i};" for i in range(500))
+    commit_tree(root, {
+        "integration/a.ts": fn("connect", "return 2;"),
+        "bulk/b.ts": f"export function refactor() {{\n{bulk}\n  return 2;\n}}\n",
+    })
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    scan_into(capsys, head_out, head_doc)
+    base, head = diff.open_model(base_out), diff.open_model(head_out)
+    try:
+        result = diff.compare(base, head, change_overview.git_line_stats(root, base_sha, head_sha))
+    finally:
+        base.close()
+        head.close()
+    result["overview"].update({"base": base_sha, "head": head_sha})
+    items = result["overview"]["items"]
+    assert [item["id"] for item in items[:2]] == ["integration", "bulk"]
+    assert items[1]["measures"]["churn"] > items[0]["measures"]["churn"]
+    assert items[0]["attention"]["integrations"]
+    assert all(rel["from"] == "integration" or rel["to"] == "integration" for rel in items[0]["relationships"])
+    assert items[0]["relationships"][0]["state"] == "added"
+    module = items[0]["modules"][0]
+    file = module["files"][0]
+    symbol = file["symbols"][0]
+    assert "+1 -1" in diff.render(result)
+    assert "Changed items" in diff.render(result, concept="integration")
+    assert file["path"] in diff.render(result, module=module["id"])
+    assert symbol["name"] in diff.render(result, file=file["path"])
+    assert diff.render(result, symbol=symbol["id"]).startswith(f"Symbol: {symbol['name']} ")
+    assert diff.render(result, "markdown").startswith("# Change overview")
+
+
+def test_git_line_stats_handles_binary_and_an_unchanged_move(make_repo, tmp_path):
+    root = make_repo({"old.ts": "export const old = 1\n"}, name="line-stats")
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    git(root, "mv", "old.ts", "new.ts")
+    (root / "image.bin").write_bytes(b"\x00\x01\x02")
+    git(root, "add", "image.bin")
+    git(root, "commit", "-q", "-m", "move and binary")
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    stats = change_overview.git_line_stats(root, base, head)
+    assert stats["new.ts"]["old_path"] == "old.ts"
+    assert stats["new.ts"]["additions"] == stats["new.ts"]["deletions"] == 0
+    assert stats["image.bin"]["binary"] is True
 
 
 def test_bad_diff_arguments(tmp_path, capsys):
@@ -385,7 +453,7 @@ def test_diff_refs_scan_reuse_and_failures(make_repo, monkeypatch, tmp_path, cap
     assert run(capsys, "init", "--out", str(out))[0] == 0
     code, text, err = run(capsys, "diff", "--out", str(out), "HEAD~1", "HEAD")
     assert code == 0, err
-    assert err == "" and "symbol-changed" in text and "scanned" not in text
+    assert err == "" and "Change overview" in text and "+1 -1" in text and "scanned" not in text
     dbs = sorted((out / "refs").glob("*/model.db"))
     assert len(dbs) == 2 and all(len(p.parent.name) == 40 for p in dbs)
     mtimes = [p.stat().st_mtime_ns for p in dbs]

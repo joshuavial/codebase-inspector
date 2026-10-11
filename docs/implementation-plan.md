@@ -338,6 +338,14 @@ Outcome: architecture history includes first-parent commits before the first mer
 
 Checks: a fixture with direct commits before and after its first merge includes the early commits and excludes the later direct commit; the incremental model reuse check still passes.
 
+## 66. Change overview data
+
+Read `docs/prd-08-change-overview.md`.
+
+Outcome: the PRD-08 overview projection (churn per concept, module, file and symbol; added, removed and changed counts; integrations, env vars and untested code; attention order; relationships in context) in `diff.compare` and the viewer's `data/diff.js`. `cbi diff` and `review.md` print the ranked overview first; `cbi diff` drills with `--concept`, `--module`, `--file` and `--symbol` and keeps the old list behind `--detail`. No viewer screens yet.
+
+Checks: fixtures for attention order against churn, binary and moved files, relationships in context with unchanged concepts left out, a package module over a single-child folder chain, each output level, and the existing diff golden files under `--detail`.
+
 ## After PRD-04
 
 Write PRD-05 (data map: schema from migrations, query table usage, ERD) with sample-apps and sample-saas as targets. sample-saas cold scan was 12.0 s. Compose image commands with no tracked source leave the image deployable without an entry; service commands supply the entries. A package with package-mode off is not a package. Image-only services are externals. The default `evals/` ignore did not cover a nested eval directory of about 6,500 files. 602 test files, 555 with a `tests` edge. One module had fan-in 267; one SQL module was 6,511 lines.

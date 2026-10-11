@@ -256,6 +256,10 @@ def test_review_of_a_range_writes_the_folder_and_does_not_call_gh(make_repo, mon
     assert f"# Review repo {base[:12]}..{head[:12]}" in text
     assert review.MARKER in text
     assert "## Narrative" not in text
+    # The ranked overview comes first, the exhaustive list under Details, and the drill command names the range.
+    assert text.index("## Change overview") < text.index("## Diagram") < text.index("## Details")
+    assert "+1 -0" in text and "### 1. " in text
+    assert f"`cbi diff {base[:12]} {head[:12]} --concept ID`" in text
     assert render.SKIPPED in text and render.SKIPPED in out
     assert not (tmp_path / "out" / "before.png").exists()
     block = mermaid_block(text)
@@ -367,7 +371,7 @@ def test_provisional_owner_and_the_define_concepts_task(make_repo, monkeypatch, 
     assert "legacy/old.ts" not in text.split("## Provisional")[-1] if "## Provisional" in text else "legacy/old.ts" not in [
         line for line in text.splitlines() if "provisional" in line and "task" not in line
     ]
-    code, diff_out, diff_err = run(capsys, "diff", base, head)
+    code, diff_out, diff_err = run(capsys, "diff", base, head, "--detail")
     assert code == 0, diff_err
     assert "provisional" in diff_out
     for path, owner, how in (("app/c.ts", "App", "imports"), ("core/extra.ts", "Core", "folder"), ("tie.ts", "App", "imports")):
@@ -438,14 +442,14 @@ def test_narrative_is_cached_by_the_commit_pair(make_repo, monkeypatch, capsys, 
     code, _again, err = run(capsys, "review", f"{base}..{middle}", "--out-dir", str(tmp_path / "two"))
     assert code == 0, err
     second = (tmp_path / "two" / "review.md").read_text()
-    assert "## Narrative" in second
+    assert "## Agent summary" in second
     assert "The billing concept grew a new door." in second
     assert f"`{task_id}` (done)" in second
     code, _other, err = run(capsys, "review", f"{base}..{tip}", "--out-dir", str(tmp_path / "three"))
     assert code == 0, err
     third = (tmp_path / "three" / "review.md").read_text()
     assert "The billing concept grew a new door." not in third
-    assert "## Narrative" not in third
+    assert "## Agent summary" not in third
     assert review.change_hash(base, middle) != review.change_hash(base, tip)
 
 

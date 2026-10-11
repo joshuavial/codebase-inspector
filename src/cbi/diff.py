@@ -16,7 +16,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from cbi import files, store
+from cbi import change_overview, files, store
 
 HELP = """\
 Print the architectural changes between two models.
@@ -27,10 +27,31 @@ or the directory that contains it. Or pass two git refs:
 the model directory, `.cbi/` or `--out`, at refs/<commit>/model.db. The
 directory must already be initialised (`cbi init`). Stdout is only the diff.
 
---format text (default) groups changes with the most significant group
-first. markdown is the same text with headings. json prints the object
-below. --concept ID keeps changes for that concept: a group with that id,
-and changes whose before, after or code mention it.
+--format text (default) prints the change overview: totals, then one row
+per changed top-level concept (or group) in attention order, with its
+churn, symbol and test counts and the facts behind its rank. markdown is
+the same text with headings. Each row shows its id. A concept whose
+changed files were all added (or all removed) shows as added (or removed),
+which covers current concepts applied to both sides. Drill down one level
+at a time with --concept ID, --module ID, --file ID|PATH or
+--symbol ID|NAME; each level lists its changed children and only the
+relationships that touch it, with their change state. A name matching
+several symbols takes the first in overview order. --detail prints the
+exhaustive structural list instead, grouped with the most significant
+group first; --concept ID then keeps changes for that concept: a group
+with that id, and changes whose before, after or code mention it.
+
+Attention order is lexicographic: added or changed integration points
+(or an unchanged one whose `at` file, and symbol when named, changed),
+then changed production functions without a linked test, then concept
+structure changes, then changed relationships, then churn (lines added
+plus deleted, from git diff --numstat; a binary file counts as 1), then
+name.
+Line counts come from git, so they need two refs; with --base-model and
+--head-model they are 0 and the other measures still apply.
+
+json prints the object below plus "overview". With a drill flag it also
+has "selection": {"level", "item"}, the selected overview record.
 
 With concepts on either side, changes are grouped by concept. A deployable,
 package or unowned file keeps its own group. With no concepts, grouping is
@@ -47,6 +68,26 @@ JSON shape, keys sorted, groups and changes in the order above:
   {"grouping": "concept" | "deployable",
    "groups": [{"id", "name", "kind": "concept"|"deployable"|"package"|"folder",
                 "changes": [Change]}]}
+
+  "overview": {"grouping", "base", "head", "totals": Measures + {concepts},
+               "items": [Item]}
+  Item is {"id", "name", "kind", "state", "summary", "measures", "reasons",
+           "attention": {integrations, untested, structure, relationships,
+                         env_vars, removed_tests, provisional},
+           "relationships": [Context], "modules": [{"id", "name", "kind",
+           "measures", "relationships", "files": [{"id", "path", "old_path",
+           "state", "measures", "relationships", "symbols": [{"id", "name",
+           "display_kind", "state", "untested", "measures",
+           "relationships"}]}]}]}
+  Measures is {additions, deletions, churn, binary, files: {added, changed,
+           removed, moved, total}, symbols: {added, changed, removed, moved},
+           tests: {added, removed}, integrations, env_vars, untested,
+           relationships}.
+  Context is {from, from_name, to, to_name, kind, label, mechanism,
+           state: added|removed|changed|unchanged}. Concepts list relates
+           edges; modules, files and symbols list imports, calls, tests and
+           reads_env edges with an end in the focus.
+  base and head are present when the models came from git refs.
 
   Change is {"kind", "summary", "before", "after", "code"}.
   before and after are null when that side has nothing.
@@ -199,7 +240,7 @@ def open_pair(base_model, head_model, base_ref, head_ref, root=None, out=None):
     raise DiffError("pass --base-model and --head-model, or two refs")
 
 
-def compare(base_conn, head_conn):
+def compare(base_conn, head_conn, line_stats=None):
     """The grouped change list for two open models."""
     base, head = _load(base_conn), _load(head_conn)
     file_moves = {}
@@ -236,14 +277,30 @@ def compare(base_conn, head_conn):
     result = _group(ctx, changes)
     if provisional:
         result["provisional"] = provisional
+    result["overview"] = change_overview.build(ctx, result, line_stats)
     return result
 
 
-def render(result, fmt="text", concept=None):
-    """Text, markdown or json for a compare() result. concept filters by id."""
-    shown = _filter(result, concept)
+def compare_refs(base_conn, head_conn, root, base_ref, head_ref):
+    """compare() with git line counts, for two models scanned from commits in root."""
+    base_sha, head_sha = files.resolve_commit(root, base_ref), files.resolve_commit(root, head_ref)
+    result = compare(base_conn, head_conn, change_overview.git_line_stats(root, base_sha, head_sha))
+    result["overview"].update({"base": base_sha, "head": head_sha})
+    return result
+
+
+def render(result, fmt="text", concept=None, module=None, file=None, symbol=None, detail=False):
+    """Render the ranked overview, a drill level, or the exhaustive detail."""
+    shown = _filter(result, concept) if concept else result
     if fmt == "json":
+        if any((concept, module, file, symbol)):
+            level, selected = change_overview.select(result, concept, module, file, symbol)
+            shown = {**shown, "selection": {"level": level, "item": selected}}
         return json.dumps(shown, indent=2, sort_keys=True) + "\n"
+    if not detail:
+        return change_overview.render(
+            result, markdown=fmt == "markdown", concept=concept, module=module, file=file, symbol=symbol,
+        )
     if fmt == "markdown":
         return _markdown(shown)
     return _text(shown)
@@ -287,7 +344,8 @@ class _Ctx:
 def _load(conn):
     nodes = {}
     for row in conn.execute(
-            "SELECT id, parent_id, kind, display_kind, name, path, workspace_id, content_hash, signature, attrs "
+            "SELECT id, parent_id, kind, display_kind, name, path, workspace_id, content_hash, signature, attrs, "
+            "summary, start_line, end_line, loc "
             "FROM nodes"):
         attrs = {}
         if row[9]:
@@ -301,6 +359,8 @@ def _load(conn):
             "id": row[0], "parent_id": row[1], "kind": row[2], "display_kind": row[3],
             "name": row[4], "path": row[5] or "", "workspace_id": row[6],
             "content_hash": row[7], "signature": row[8] or "", "attrs": attrs,
+            "summary": row[10] or "", "start_line": row[11] or 0, "end_line": row[12] or 0,
+            "loc": row[13] or 0,
         }
     edges = []
     for row in conn.execute("SELECT src, dst, kind, weight, attrs, ordinal FROM edges"):
@@ -1136,6 +1196,8 @@ def _filter(result, concept):
         if kept:
             groups.append({**group, "changes": kept})
     out = {"grouping": result["grouping"], "groups": groups}
+    if "overview" in result:
+        out["overview"] = result["overview"]
     rows = [row for row in result.get("provisional") or [] if row.get("concept_id") == concept]
     if rows:
         out["provisional"] = rows

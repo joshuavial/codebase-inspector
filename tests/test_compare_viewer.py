@@ -111,6 +111,9 @@ def test_compare_build_writes_diff_js(tmp_path):
     })
     payload = _payload((viewer.parent / "data" / "diff.js").read_text())
     assert payload["base"] == "aaa" and payload["head"] == "bbb"
+    assert "overview" not in payload["changes"]
+    assert payload["overview"] == json.loads(json.dumps(changes["overview"]))
+    assert [item["id"] for item in payload["overview"]["items"]][0] == BILLING
     kinds = {change["kind"] for group in payload["changes"]["groups"] for change in group["changes"]}
     assert {"concept-added", "concept-removed", "symbol-changed", "integration-added"} <= kinds
     removed = {node["id"] for node in payload["removed"]["concepts"]}

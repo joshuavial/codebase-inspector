@@ -13,7 +13,7 @@ from pathlib import Path
 
 from cbi import diff, review, store, tasks
 
-VERSION = 2
+VERSION = 3
 DEFAULT_DAYS = 183
 PR_RE = re.compile(r"(?:Merge pull request #|\(#)(\d+)\)?")
 
@@ -314,7 +314,7 @@ def build_history(root, out, since=None, until=None):
                     base = diff.open_model(previous_db)
                     head = diff.open_model(point_db)
                     try:
-                        changes = diff.compare(base, head)
+                        changes = diff.compare_refs(base, head, root, previous_sha, resolved)
                     finally:
                         base.close()
                         head.close()

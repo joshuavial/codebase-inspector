@@ -1054,7 +1054,8 @@ def compare_payload(head_conn, base_conn, changes, head_root=None, base_root=Non
     return {
         "base": base_label,
         "head": head_label,
-        "changes": changes,
+        "changes": {k: v for k, v in changes.items() if k != "overview"},
+        "overview": changes.get("overview"),
         "removed": {
             "concepts": _removed_concepts(base_view, removed_ids),
             "relationships": removed_rels,

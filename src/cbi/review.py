@@ -15,7 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
 
-from cbi import concepts, diff, files, render, store, tasks
+from cbi import change_overview, concepts, diff, files, render, store, tasks
 
 HELP = """\
 Write a review of the architectural changes in a pull request, branch or commit.
@@ -100,7 +100,7 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
     base_conn = diff.open_model(model / "refs" / base_sha)
     head_conn = diff.open_model(model / "refs" / head_sha)
     try:
-        result = diff.compare(base_conn, head_conn)
+        result = diff.compare_refs(base_conn, head_conn, root, base_sha, head_sha)
         diagram = build_diagram(result, base_conn, head_conn)
         mermaid = render_mermaid(diagram)
         if not valid_mermaid(mermaid):
@@ -704,8 +704,12 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
     lines = [open_link(root, base_sha, head_sha), "", MARKER, "", heading, ""]
     if spec.get("url"):
         lines += [f"Pull request: {spec['url']}", ""]
-    lines += ["## Summary", ""]
-    lines += _counts(result)
+    if narrative:
+        lines += ["## Agent summary", "", narrative.strip(), ""]
+    for line in change_overview.render(result, markdown=True).rstrip("\n").splitlines():
+        if line.startswith("Drill down with"):
+            line = f"Drill down with `cbi diff {base_sha[:12]} {head_sha[:12]} --concept ID`, or `--detail` for every structural change."
+        lines.append("#" + line if line.startswith("#") else line)
     lines.append("")
     if change_task:
         lines.append(f"Narrative task: `{change_task['id']}` ({change_task['state']}).")
@@ -720,10 +724,11 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
     omitted = _omitted_text(diagram)
     if omitted:
         lines += [omitted, ""]
-    if narrative:
-        lines += ["## Narrative", "", narrative.strip(), ""]
+    lines += ["## Details", "", "### Structural counts", ""]
+    lines += _counts(result)
+    lines.append("")
     heading = "Concepts" if diagram["mode"] == "concept" else "Deployables, packages and folders"
-    lines += [f"## {heading}", ""]
+    lines += [f"### {heading}", ""]
     if not result["groups"]:
         lines += ["No grouped changes.", ""]
     added, removed = _marks(result)
@@ -735,7 +740,7 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
         owned = [row for row in provisional if row.get("concept_id") == group["id"]]
         if owned:
             suffix += ", provisional files"
-        lines.append(f"### {group['name']} `{group['id']}` ({suffix})")
+        lines.append(f"#### {group['name']} `{group['id']}` ({suffix})")
         lines.append("")
         for row in owned:
             lines.append(f"- provisional  {row['path']}  ({row['by']})")
@@ -746,14 +751,14 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
         lines.append("")
     unowned = [row for row in provisional if not row.get("concept_id")]
     if unowned:
-        lines += ["## Provisional files with no owner", ""]
+        lines += ["### Provisional files with no owner", ""]
         lines += [f"- {row['path']}" for row in unowned]
         lines.append("")
-    lines += ["## Untested changes", ""]
+    lines += ["### Untested changes", ""]
     untested = [c for c in _unique(result) if c["kind"] == "untested"]
     lines += [f"- {c['summary']}" for c in untested] or ["None."]
     lines.append("")
-    lines += ["## Changed integration points", ""]
+    lines += ["### Changed integration points", ""]
     integrations = [c for c in _unique(result) if c["kind"].startswith("integration-")]
     lines += [f"- {c['kind']}  {c['summary']}" for c in integrations] or ["None."]
     lines += ["", *_image_lines(images)]

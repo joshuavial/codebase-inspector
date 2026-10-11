@@ -116,7 +116,13 @@ def build_parser():
                               help="model directory to scan refs into, instead of .cbi/ in the repo root")
     cmds["diff"].add_argument("--format", choices=("text", "markdown", "json"), default="text",
                               help="text (default), markdown or json")
-    cmds["diff"].add_argument("--concept", metavar="ID", help="only changes for this concept, by id")
+    diff_level = cmds["diff"].add_mutually_exclusive_group()
+    diff_level.add_argument("--concept", metavar="ID", help="drill into a changed concept, by id")
+    diff_level.add_argument("--module", metavar="ID", help="drill into a changed presentation module, by id")
+    diff_level.add_argument("--file", metavar="PATH", help="drill into a changed file, by id or path")
+    diff_level.add_argument("--symbol", metavar="ID", help="drill into a changed function or class, by id or name")
+    cmds["diff"].add_argument("--detail", action="store_true",
+                              help="print the exhaustive PRD-04 structural list instead of the overview")
     cmds["render"].description = render.HELP
     cmds["render"].add_argument("--view", required=True, metavar="top|ID", help="top, or a concept id")
     cmds["render"].add_argument("--compare", metavar="BASE..HEAD",
@@ -909,7 +915,7 @@ def cmd_render(args):
             base_ref, head_ref = render.split_compare(args.compare)
             base, head = diff.models_for_refs(base_ref, head_ref, root, out)
             try:
-                changes = diff.compare(base, head)
+                changes = diff.compare_refs(base, head, root, base_ref, head_ref)
                 side = base if args.side == "base" else head
                 render.render_view(side, changes, args.view, args.side, args.png, args.svg, root)
             finally:
@@ -971,11 +977,16 @@ def cmd_diff(args):
         print(err, file=sys.stderr)
         return err.code
     try:
-        result = diff.compare(base, head)
+        if root is None:
+            result = diff.compare(base, head)
+        else:
+            result = diff.compare_refs(base, head, root, args.base, args.head)
     finally:
         base.close()
         head.close()
-    sys.stdout.write(diff.render(result, args.format, args.concept))
+    sys.stdout.write(diff.render(
+        result, args.format, args.concept, args.module, args.file, args.symbol, args.detail,
+    ))
     return 0
 
 
@@ -1071,7 +1082,7 @@ def _cmd_build_compare(args):
     base_src = files.CommitTree(root, base_sha, files.Ignore(""))
     head_src = files.CommitTree(root, head_sha, files.Ignore(""))
     try:
-        changes = diff.compare(base_conn, head_conn)
+        changes = diff.compare_refs(base_conn, head_conn, root, base_sha, head_sha)
         place = _place(root, out, out / "refs" / head_sha / "model.db", sha=head_sha, compare=sides)
         print(build.build(head_conn, out / "viewer", head_src, compare={
             "base": base_conn, "base_root": base_src, "changes": changes,

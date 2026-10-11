@@ -370,7 +370,7 @@ def test_cli_compare_draws_the_chosen_side(make_repo, monkeypatch, capsys, tmp_p
     monkeypatch.chdir(repo)
     base, head = sqlite3.connect(":memory:"), sqlite3.connect(":memory:")
     monkeypatch.setattr("cbi.diff.models_for_refs", lambda *_a, **_k: (base, head))
-    monkeypatch.setattr("cbi.diff.compare", lambda _b, _h: {"groups": [{"id": "x"}]})
+    monkeypatch.setattr("cbi.diff.compare_refs", lambda *_a: {"groups": [{"id": "x"}]})
     seen = {}
 
     def fake(model, change_list, view, side, png, svg, root=None):
