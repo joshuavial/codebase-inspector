@@ -135,3 +135,37 @@ def test_history_projection_indexes_folders():
     # Every other file is placed by its folder; scanning all files per file took minutes at this size.
     assert time.perf_counter() - started < 5
     assert len(projected["concepts"][0]["files"]) == 20000 and len(provisional) == 19960
+
+
+def test_history_parses_each_file_version_once(make_repo, monkeypatch, capsys):
+    import json
+
+    root = make_repo({f"m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(5)})
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    for n in range(3):
+        (root / "m0.py").write_text(f"def f0():\n    return {n + 10}\n")
+        subprocess.run([*git, "commit", "-qam", f"change {n} (#{n + 1})"], cwd=root, check=True)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    (root / ".cbi" / "concepts.json").write_text(json.dumps({
+        "summary": "s", "externals": [], "relationships": [],
+        "concepts": [{"id": "app", "name": "App", "summary": "a", "role": "app",
+                      "files": [f"m{i}.py" for i in range(5)]}]}))
+    assert main(["scan"]) == 0
+    parsed = []
+    real = parse.symbol_nodes
+    monkeypatch.setattr(parse, "symbol_nodes", lambda fid, *rest: parsed.append(fid) or real(fid, *rest))
+    assert main(["history", "--since", "2000-01-01"]) == 0
+    capsys.readouterr()
+    # Four commits hold eight distinct file versions; refs/parse.db serves every other point.
+    assert len(parsed) == 8
+    assert (root / ".cbi" / "refs" / "parse.db").is_file()
+    # A full model per point cost 50 to 350 MB on the sample repos; only the newest stays.
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    assert [p.parent.name for p in (root / ".cbi" / "refs").glob("*/model.db")] == [head]
+    scans = []
+    import cbi.cli
+    monkeypatch.setattr(cbi.cli, "_map", lambda *a, **k: scans.append(a) or (_ for _ in ()).throw(AssertionError))
+    assert main(["history", "--since", "2000-01-01"]) == 0  # every entry is cached: nothing is scanned
+    capsys.readouterr()
+    assert scans == []

@@ -246,21 +246,17 @@ def _write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def _narrative(out, entry):
-    conn = store.read_only(Path(out) / "refs" / entry["sha"] / "model.db")
-    try:
-        tasks.attach_cache(conn, readonly=True)
-        answer = tasks._cached_answer(conn, review.change_hash(entry["base"], entry["sha"]))
-        return answer.get("narrative") if isinstance(answer, dict) else None
-    finally:
-        conn.close()
+def _narrative(conn, entry):
+    """The stored narrative for an entry. conn has the answer cache attached."""
+    answer = tasks._cached_answer(conn, review.change_hash(entry["base"], entry["sha"]))
+    return answer.get("narrative") if isinstance(answer, dict) else None
 
 
-def _project_model(root, out, sha, current_text, current_conn, seed=None):
+def _project_model(root, out, sha, current_text, current_conn):
     """Scan one immutable ref, then apply today's concepts to its file set."""
     from cbi.cli import scan_ref
 
-    resolved, reused, _counts, _open = scan_ref(root, out, sha, seed=seed)
+    resolved, reused, _counts, _open = scan_ref(root, out, sha)
     home = out / "refs" / resolved
     conn = store.open_db(home / "model.db")
     try:
@@ -275,6 +271,43 @@ def _project_model(root, out, sha, current_text, current_conn, seed=None):
         resolved, _again, _counts, _open = scan_ref(root, out, sha, force=True)
         reused = False
     return resolved, reused, provisional
+
+
+POINT_MARK = "history-point"
+
+
+def point_model(root, out, sha, current_text, current_conn):
+    """(model path, provisional files) for one history point, scanning it when it is missing.
+
+    A model this creates is marked as a history point, and drop_point deletes it once no
+    entry still needs it. Every point keeping a full model cost 50 to 350 MB each on the
+    largest sample repos; parse results are shared in refs/parse.db, so a rebuild is cheap.
+    """
+    home = Path(out) / "refs" / sha
+    existed = (home / "model.db").is_file()
+    resolved, _reused, provisional = _project_model(root, Path(out), sha, current_text, current_conn)
+    home = Path(out) / "refs" / resolved
+    if not existed:
+        (home / POINT_MARK).touch()
+    return home / "model.db", provisional
+
+
+def ensure_point(root, out, sha):
+    """The model path for one point, rebuilt with today's concepts when history dropped it."""
+    out = Path(out)
+    if not (out / "concepts.json").is_file() or not (out / "model.db").is_file():
+        raise HistoryError(f"history needs {out / 'concepts.json'} and {out / 'model.db'}. Run `cbi scan` first.")
+    conn = diff.open_model(out / "model.db")
+    try:
+        return point_model(root, out, sha, (out / "concepts.json").read_text(), conn)[0]
+    finally:
+        conn.close()
+
+
+def drop_point(out, sha):
+    """Delete a point model history created. Models from `cbi diff` or `--ref` stay."""
+    if sha and (Path(out) / "refs" / sha / POINT_MARK).is_file():
+        shutil.rmtree(Path(out) / "refs" / sha, ignore_errors=True)
 
 
 def build_history(root, out, since=None, until=None):
@@ -301,7 +334,8 @@ def build_history(root, out, since=None, until=None):
         _write_json(out / "history" / "index.json", {"version": VERSION, "concepts": token, "entries": []})
         return []
     current_conn = diff.open_model(model_path)
-    entries, previous_sha, previous_db = [], None, None
+    tasks.attach_cache(current_conn, readonly=True)
+    entries, previous_sha = [], None
     try:
         first_parent = points[0]["parents"][0] if points[0]["parents"] else None
         sequence = ([{"sha": first_parent}] if first_parent else []) + points
@@ -317,15 +351,17 @@ def build_history(root, out, since=None, until=None):
                 if cached and (cached.get("version") != VERSION or cached.get("concepts") != token
                                or cached.get("base") != previous_sha):
                     cached = None
-            seed = previous_db
-            resolved, _reused, provisional = _project_model(root, out, sha, current_text, current_conn, seed)
-            point_db = out / "refs" / resolved / "model.db"
-            if number:
+            if number and (cached is None or number == len(sequence) - 1):
+                # Only a new entry needs models: its base and its head. The newest point keeps
+                # its model so the next run starts from it.
                 if cached is None:
-                    base = diff.open_model(previous_db)
-                    head = diff.open_model(point_db)
+                    base_db, _ = point_model(root, out, previous_sha, current_text, current_conn)
+                head_db, provisional = point_model(root, out, sha, current_text, current_conn)
+                if cached is None:
+                    base = diff.open_model(base_db)
+                    head = diff.open_model(head_db)
                     try:
-                        changes = diff.compare_refs(base, head, root, previous_sha, resolved)
+                        changes = diff.compare_refs(base, head, root, previous_sha, sha)
                     finally:
                         base.close()
                         head.close()
@@ -334,7 +370,8 @@ def build_history(root, out, since=None, until=None):
                     cached = {**point, "version": VERSION, "concepts": token, "base": previous_sha,
                               "changes": changes, "change_count": sum(len(g["changes"]) for g in changes["groups"])}
                     _write_json(entry_path, cached)
-                narrative = _narrative(out, cached)
+            if number:
+                narrative = _narrative(current_conn, cached)
                 if narrative != cached.get("narrative"):
                     if narrative:
                         cached["narrative"] = narrative
@@ -343,7 +380,8 @@ def build_history(root, out, since=None, until=None):
                     _write_json(entry_path, cached)
                 if _has_changes(cached["changes"]):
                     entries.append(cached)
-            previous_sha, previous_db = resolved, point_db
+            drop_point(out, previous_sha)
+            previous_sha = sha
     finally:
         current_conn.close()
     _write_json(out / "history" / "index.json", {"version": VERSION, "concepts": token, "entries": entries})
@@ -406,7 +444,7 @@ def write_changelog(out, entries):
     return path
 
 
-def narrate(out, sha):
+def narrate(root, out, sha):
     """Open the existing summarise-change protocol for one history entry."""
     out = Path(out)
     index_path = out / "history" / "index.json"
@@ -418,8 +456,10 @@ def narrate(out, sha):
         state = "ambiguous" if matches else "not found"
         raise HistoryError(f"history entry {sha!r} is {state}", code=2)
     entry = matches[0]
-    narrative, task, _define = review._open_tasks(
-        out / "refs" / entry["sha"] / "model.db", entry["base"], entry["sha"], entry["changes"])
+    db = ensure_point(root, out, entry["sha"])
+    # The task lives in this model, so `cbi task --ref` and `submit --ref` find it: keep it.
+    (db.parent / POINT_MARK).unlink(missing_ok=True)
+    narrative, task, _define = review._open_tasks(db, entry["base"], entry["sha"], entry["changes"])
     if narrative:
         return f"{entry['sha'][:12]} already has a narrative"
     return f"summarise-change {task['id']} {task['state']}" if task else "could not open summarise-change"

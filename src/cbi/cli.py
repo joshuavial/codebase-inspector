@@ -5,7 +5,6 @@ import datetime as dt
 import json
 import os
 import sqlite3
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -467,8 +466,9 @@ def _scan_fingerprint(workspaces, ignore_text, out, structure_text, concepts_tex
     )
 
 
-def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
-    """Run the scan pipeline over an already enumerated tree. root supplies file bytes."""
+def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parsed=None):
+    """Run the scan pipeline over an already enumerated tree. root supplies file bytes.
+    parsed is the shared parse store a ref scan reads and fills."""
     concepts_text = _read(out / "concepts.json")
     screens_text = _read(out / "screens.json")
     fp = _scan_fingerprint(
@@ -493,7 +493,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
                 previous_concepts = store.get_meta(conn, "concepts_json")
                 known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
                 store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states))
-                _parse_changed(conn, root, tracked, states, old, known)
+                _parse_changed(conn, root, tracked, states, old, known, parsed)
                 store.drop_orphan_symbols(conn)
                 resolve.resolve(conn, root)
                 data.apply(conn, root)
@@ -528,7 +528,7 @@ def scan(root, out):
     return _map(root, out, ignore_text, workspaces, tracked, states)
 
 
-def scan_ref(root, out, ref, *, seed=None, force=False):
+def scan_ref(root, out, ref, *, force=False):
     """Map one commit from git objects into out/refs/<sha>/model.db.
 
     Returns (sha, reused, counts, (open, blocked)). A stored model is reused when
@@ -545,19 +545,21 @@ def scan_ref(root, out, ref, *, seed=None, force=False):
         finally:
             conn.close()
     home.mkdir(parents=True, exist_ok=True)
-    if seed and not db.exists():
-        shutil.copy2(seed, db)
     tree = files.CommitTree(root, sha, files.Ignore(ignore_text or ""))
+    parsed = store.open_parse_store(out / "refs" / "parse.db")
     try:
         _shortcut, counts, task_counts = _map(
-            tree, home, ignore_text, tree.workspaces, tree.tracked, tree.file_states(), sha)
+            tree, home, ignore_text, tree.workspaces, tree.tracked, tree.file_states(), sha, parsed)
     finally:
+        parsed.commit()  # parse results are pure, so keep them even when the scan failed later
+        parsed.close()
         tree.close()
     return sha, False, counts, task_counts
 
 
-def _parse_changed(conn, root, tracked, states, old, known):
-    """Parse code files whose content or parser version changed, or that are new to the model."""
+def _parse_changed(conn, root, tracked, states, old, known, parsed=None):
+    """Parse code files whose content or parser version changed, or that are new to the model.
+    With a shared parse store, a file version parsed for another ref is read from it instead."""
     by_ws = {}
     for _top, ws, rel in tracked:
         by_ws.setdefault(ws["id"], []).append(rel)
@@ -571,9 +573,21 @@ def _parse_changed(conn, root, tracked, states, old, known):
         prev = old.get(top)
         if lang not in parse.LANGS or (prev and prev[2:4] == state[2:4] and fid in known):
             continue
-        source = (root / top).read_bytes()
-        nodes, facts, has_error = parse.symbol_nodes(fid, ws["id"], rel, lang, source, role == "test")
-        store.replace_file_symbols(conn, ws["id"], rel, len(source.splitlines()), nodes, fid, facts)
+        key = (fid, state[2], lang, int(role == "test"), str(files.PARSER_VERSION))
+        row = parsed.execute(
+            "SELECT loc, nodes, facts, has_error FROM parsed "
+            "WHERE file_id = ? AND blob = ? AND lang = ? AND test = ? AND parser = ?", key,
+        ).fetchone() if parsed else None
+        if row:
+            loc, nodes, facts, has_error = row[0], json.loads(row[1]), json.loads(row[2]), bool(row[3])
+        else:
+            source = (root / top).read_bytes()
+            nodes, facts, has_error = parse.symbol_nodes(fid, ws["id"], rel, lang, source, role == "test")
+            loc = len(source.splitlines())
+            if parsed:
+                parsed.execute("INSERT OR REPLACE INTO parsed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (*key, loc, json.dumps(nodes), json.dumps(facts), int(has_error)))
+        store.replace_file_symbols(conn, ws["id"], rel, loc, nodes, fid, facts)
         if any(n["kind"] == "test" for n in nodes):
             conn.execute(
                 "UPDATE nodes SET display_kind = 'test file', attrs = json_set(attrs, '$.role', 'test') "
@@ -950,7 +964,7 @@ def cmd_history(args):
     root, out = _paths(args)
     try:
         if args.narrate:
-            print(history.narrate(out, args.narrate))
+            print(history.narrate(root, out, args.narrate))
             return 0
         since = args.since
         if since is None:
@@ -1032,8 +1046,9 @@ def _cmd_build_history(args):
     for entry in entries:
         base_conn = head_conn = base_src = head_src = None
         try:
-            base_conn = diff.open_model(out / "refs" / entry["base"] / "model.db")
-            head_conn = diff.open_model(out / "refs" / entry["sha"] / "model.db")
+            # history keeps only the newest point model; the others are rebuilt from refs/parse.db.
+            base_conn = diff.open_model(history.ensure_point(root, out, entry["base"]))
+            head_conn = diff.open_model(history.ensure_point(root, out, entry["sha"]))
             base_src = files.CommitTree(root, entry["base"], files.Ignore(""))
             head_src = files.CommitTree(root, entry["sha"], files.Ignore(""))
             comparison = build.compare_payload(
@@ -1045,7 +1060,7 @@ def _cmd_build_history(args):
                 "text": history.render([entry], "text"), "model": build.concept_view(head_conn, head_src),
                 "diff": comparison,
             })
-        except diff.DiffError as err:
+        except (diff.DiffError, history.HistoryError) as err:
             print(err, file=sys.stderr)
             return err.code
         finally:
@@ -1055,6 +1070,7 @@ def _cmd_build_history(args):
             for conn in (base_conn, head_conn):
                 if conn:
                     conn.close()
+            history.drop_point(out, entry["base"])
     conn = _model(args)
     try:
         print(build.build(conn, out / "viewer", root, history={"entries": payload},

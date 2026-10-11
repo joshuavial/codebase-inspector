@@ -122,6 +122,24 @@ BUSY_MS = 30_000
 BUSY_SECONDS = BUSY_MS / 1000
 
 
+# Parse results shared by every ref model in a model directory (refs/parse.db), keyed by
+# content: a long history costs the distinct file versions, not points times files (PRD-06 H4).
+PARSE_STORE = """
+CREATE TABLE IF NOT EXISTS parsed (
+    file_id TEXT, blob TEXT, lang TEXT, test INTEGER, parser TEXT,
+    loc INTEGER, nodes TEXT, facts TEXT, has_error INTEGER,
+    PRIMARY KEY (file_id, blob, lang, test, parser)
+) WITHOUT ROWID;
+"""
+
+
+def open_parse_store(path):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = prepare(sqlite3.connect(path, timeout=BUSY_SECONDS), wal=False)
+    conn.executescript(PARSE_STORE)
+    return conn
+
+
 def prepare(conn, *, wal):
     """Busy timeout on this connection. WAL on a writable one, so readers do not block a submit."""
     conn.execute(f"PRAGMA busy_timeout = {BUSY_MS}")
