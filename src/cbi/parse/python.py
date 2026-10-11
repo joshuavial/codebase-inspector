@@ -285,7 +285,8 @@ def _is_environ(node, modules, environs, scope):
 
 def _py_env_read(node, modules, environs, getenvs, scope):
     """`(NAME, default or None)` for an env read, else None. A non-string default is dropped."""
-    if _py_written(node):
+    # Runs on every node: check the cheap type before walking parents in _py_written.
+    if node.type not in ("subscript", "call") or _py_written(node):
         return None
     if node.type == "subscript":
         value, index = node.child_by_field_name("value"), node.child_by_field_name("subscript")

@@ -5,11 +5,14 @@ static viewer can copy it without running the CLI. Env var values, defaults and
 examples are never included.
 """
 
+import bisect
+import functools
 import json
 import shlex
 import sqlite3
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from cbi import files, query, store
@@ -202,8 +205,12 @@ def _facts(conn):
     owns = [(src, dst) for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'owns'")]
     reads = [(src, name) for src, name in conn.execute(
         "SELECT e.src, n.name FROM edges e JOIN nodes n ON n.id = e.dst WHERE e.kind = 'reads_env'")]
-    tests = [(src, dst, confidence if confidence is not None else 1) for src, dst, confidence in conn.execute(
-        "SELECT src, dst, confidence FROM edges WHERE kind = 'tests'")]
+    # Indexed once: a build counts tests for every box and symbol, and a scan per node was quadratic.
+    tests, tests_by_file = defaultdict(set), defaultdict(set)
+    for src, dst, confidence in conn.execute("SELECT src, dst, confidence FROM edges WHERE kind = 'tests'"):
+        if (confidence if confidence is not None else 1) >= query.SHOW_CONFIDENCE:
+            tests[dst].add(src)
+            tests_by_file[dst.split("#", 1)[0]].add(src)
     parts = {}
     for dst, count in conn.execute("SELECT dst, count(*) FROM edges WHERE kind = 'part_of' GROUP BY dst"):
         parts[dst] = count
@@ -211,7 +218,8 @@ def _facts(conn):
         "SELECT name FROM nodes WHERE kind = 'workspace' AND parent_id IS NULL ORDER BY id LIMIT 1").fetchone()
     return {
         "owners": owners, "concepts": concepts, "names": names, "kinds": kinds, "relates": relates,
-        "owns": owns, "reads": reads, "tests": tests, "parts": parts,
+        "owns": owns, "reads": reads, "tests": tests, "tested": sorted(tests),
+        "tests_by_file": tests_by_file, "parts": parts,
         "project": top[0] if top and top[0] else "",
     }
 
@@ -437,22 +445,17 @@ def _tests_line(node, facts):
 
 def _test_count(node, facts):
     if node["kind"] == "concept":
-        files = {dst for src, dst in facts["owns"] if src in set(_concept_tree(facts, node["id"]))}
-        dsts = set()
-        for src, dst, confidence in facts["tests"]:
-            if confidence < query.SHOW_CONFIDENCE:
-                continue
-            file_id = dst.split("#", 1)[0]
-            if dst in files or file_id in files:
-                dsts.add(src)
-        return len(dsts)
+        tree = set(_concept_tree(facts, node["id"]))
+        files = {dst for src, dst in facts["owns"] if src in tree}
+        return len(set().union(*(facts["tests_by_file"].get(f, ()) for f in files)))
+    # The node itself, then every id under it (`Class.method`), which sort together after the prefix.
+    seen = set(facts["tests"].get(node["id"], ()))
     prefix = node["id"] + "."
-    seen = set()
-    for src, dst, confidence in facts["tests"]:
-        if confidence < query.SHOW_CONFIDENCE:
-            continue
-        if dst == node["id"] or dst.startswith(prefix):
-            seen.add(src)
+    tested = facts["tested"]
+    at = bisect.bisect_left(tested, prefix)
+    while at < len(tested) and tested[at].startswith(prefix):
+        seen |= facts["tests"][tested[at]]
+        at += 1
     return len(seen)
 
 
@@ -582,9 +585,15 @@ def _tail(place):
 
 
 def _out_flag(place):
-    if place.model_root.resolve() == (place.repo / ".cbi").resolve():
+    if _same_dir(place.model_root, place.repo / ".cbi"):
         return []
     return ["--out", str(place.model_root)]
+
+
+@functools.lru_cache(maxsize=64)
+def _same_dir(a, b):
+    """Cached: a build asks once per command line of every block."""
+    return Path(a).resolve() == Path(b).resolve()
 
 
 def _join(args):

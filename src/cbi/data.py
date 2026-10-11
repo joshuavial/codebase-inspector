@@ -389,85 +389,45 @@ def parse_orm(text, path):
     return out
 
 
+# One token per match: a line comment, a block comment or a quoted string. Unterminated ones run
+# to the end of the text, and a lone trailing backslash stays inside its string.
+_LITERAL_TOKENS = re.compile(
+    r"//[^\n]*|#[^\n]*|/\*.*?(?:\*/|\Z)"
+    r'|"""((?:\\.|\\\Z|(?!""")[^\\])*)(?:"""|\Z)'
+    r"|'''((?:\\.|\\\Z|(?!''')[^\\])*)(?:'''|\Z)"
+    r'|"((?:\\.|\\\Z|[^"\\])*)(?:"|\Z)'
+    r"|'((?:\\.|\\\Z|[^'\\])*)(?:'|\Z)"
+    r"|`([^`]*)(?:`|\Z)",
+    re.S,
+)
+_COMMENT_TOKENS = re.compile(
+    r'"(?:\\.|\\\Z|[^"\\])*(?:"|\Z)'
+    r"|'(?:\\.|\\\Z|[^'\\])*(?:'|\Z)"
+    r"|`[^`]*(?:`|\Z)"
+    r"|//[^\n]*|#[^\n]*|/\*.*?(?:\*/|\Z)",
+    re.S,
+)
+
+
 def _string_literals(text):
     """Yield (literal contents, one-based line) while skipping source comments."""
-    index = 0
-    line = 1
-    while index < len(text):
-        if text.startswith("//", index) or text[index] == "#":
-            end = text.find("\n", index)
-            if end < 0:
-                return
-            index = end
+    line, seen = 1, 0
+    for match in _LITERAL_TOKENS.finditer(text):
+        if match.lastindex is None:  # a comment
             continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            end = len(text) if end < 0 else end + 2
-            line += text.count("\n", index, end)
-            index = end
-            continue
-        quote = text[index]
-        if quote not in ("'", '"', "`"):
-            if quote == "\n":
-                line += 1
-            index += 1
-            continue
-        start_line = line
-        triple = quote != "`" and text.startswith(quote * 3, index)
-        mark = quote * 3 if triple else quote
-        index += len(mark)
-        out = []
-        while index < len(text):
-            if text.startswith(mark, index):
-                index += len(mark)
-                break
-            char = text[index]
-            if char == "\\" and quote != "`" and index + 1 < len(text):
-                out.extend((char, text[index + 1]))
-                index += 2
-                continue
-            out.append(char)
-            if char == "\n":
-                line += 1
-            index += 1
-        yield "".join(out), start_line
+        line += text.count("\n", seen, match.start())
+        seen = match.start()
+        yield match.group(match.lastindex), line
 
 
 def _without_comments(text):
     """Mask comments while retaining line offsets and string contents."""
-    chars = list(text)
-    index = 0
-    quote = None
-    while index < len(chars):
-        if quote:
-            if chars[index] == "\\" and quote != "`":
-                index += 2
-                continue
-            if chars[index] == quote:
-                quote = None
-            index += 1
-            continue
-        if chars[index] in ("'", '"', "`"):
-            quote = chars[index]
-            index += 1
-            continue
-        if text.startswith("//", index) or chars[index] == "#":
-            end = text.find("\n", index)
-            end = len(text) if end < 0 else end
-            for pos in range(index, end):
-                chars[pos] = " "
-            index = end
-            continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            end = len(text) if end < 0 else end + 2
-            for pos in range(index, end):
-                if chars[pos] != "\n":
-                    chars[pos] = " "
-            index = end
-            continue
-        index += 1
-    return "".join(chars)
+    def mask(match):
+        token = match.group()
+        if token[0] in "'\"`":
+            return token
+        return re.sub(r"[^\n]", " ", token) if token.startswith("/*") else " " * len(token)
+    return _COMMENT_TOKENS.sub(mask, text)
 
 
 def _table_lookup(tables):
@@ -506,28 +466,33 @@ def _orm_uses(text, lookup):
     clean = _without_comments(text)
     found = []
 
-    def add(pattern, kind, via, flags=0, table_group=1):
+    lowered = clean.lower()
+
+    def add(pattern, kind, via, flags=0, table_group=1, need=()):
+        # Each pattern needs one of these literals; skipping the search when none is present is exact.
+        if need and not any(word in lowered for word in need):
+            return
         for match in re.finditer(pattern, clean, flags):
             table = lookup.get(match.group(table_group).lower())
             if table:
                 found.append((kind, table, clean.count("\n", 0, match.start()) + 1, via))
 
     name = r"([A-Za-z_]\w*)"
-    add(rf"\b(?:select|query)\s*\(\s*{name}\b", "reads_table", "orm", re.I)
+    add(rf"\b(?:select|query)\s*\(\s*{name}\b", "reads_table", "orm", re.I, need=("select", "query"))
     add(rf"\b{name}\.objects\.(?:all|filter|get|exclude|values|values_list|select_related|prefetch_related|count|exists)\b",
-        "reads_table", "django", re.I)
-    add(rf"\b{name}\.query\.(?:all|filter|get|first|one|count)\b", "reads_table", "sqlalchemy", re.I)
+        "reads_table", "django", re.I, need=(".objects.",))
+    add(rf"\b{name}\.query\.(?:all|filter|get|first|one|count)\b", "reads_table", "sqlalchemy", re.I, need=(".query.",))
     add(rf"\b{name}\.objects\.(?:create|bulk_create|update|get_or_create|update_or_create)\b",
-        "writes_table", "django", re.I)
-    add(rf"\b(?:session|db)\.(?:add|merge|delete)\s*\(\s*{name}\b", "writes_table", "sqlalchemy", re.I)
+        "writes_table", "django", re.I, need=(".objects.",))
+    add(rf"\b(?:session|db)\.(?:add|merge|delete)\s*\(\s*{name}\b", "writes_table", "sqlalchemy", re.I, need=("session.", "db."))
     add(rf"\b(?:prisma|client|db)\.{name}\.(?:find\w*|count|aggregate|groupBy)\b",
-        "reads_table", "prisma", re.I)
+        "reads_table", "prisma", re.I, need=("prisma.", "client.", "db."))
     add(rf"\b(?:prisma|client|db)\.{name}\.(?:create\w*|update\w*|delete\w*|upsert)\b",
-        "writes_table", "prisma", re.I)
+        "writes_table", "prisma", re.I, need=("prisma.", "client.", "db."))
     add(rf"\bgetRepository\s*\(\s*{name}\s*\)\.(?:find\w*|count|exist)\b",
-        "reads_table", "typeorm", re.I)
+        "reads_table", "typeorm", re.I, need=("getrepository",))
     add(rf"\bgetRepository\s*\(\s*{name}\s*\)\.(?:save|insert|update|delete|remove|upsert)\b",
-        "writes_table", "typeorm", re.I)
+        "writes_table", "typeorm", re.I, need=("getrepository",))
     repositories = {var: model for var, model in re.findall(
         r"\b(\w+)\s*=\s*(?:\w+\.)?getRepository\s*\(\s*(\w+)\s*\)", clean)}
     for var, method in re.findall(r"\b(\w+)\.(find\w*|count|exist|save|insert|update|delete|remove|upsert)\s*\(", clean, re.I):
@@ -538,9 +503,9 @@ def _orm_uses(text, lookup):
             at = re.search(rf"\b{re.escape(var)}\.{re.escape(method)}\s*\(", clean, re.I)
             found.append((kind, table, clean.count("\n", 0, at.start()) + 1, "typeorm"))
     add(rf"\b(?:_?context|db)\.{name}\.(?:Where|Select|Find|First|Single|Any|Count|ToList|AsNoTracking)\b",
-        "reads_table", "ef-core")
+        "reads_table", "ef-core", need=("context.", "db."))
     add(rf"\b(?:_?context|db)\.{name}\.(?:Add|AddRange|Update|Remove|RemoveRange)\b",
-        "writes_table", "ef-core")
+        "writes_table", "ef-core", need=("context.", "db."))
     supabase = list(re.finditer(r"\.from\s*\(\s*(['\"])([^'\"]+)\1\s*\)", clean))
     for index, match in enumerate(supabase):
         table = lookup.get(match.group(2).lower())
@@ -626,6 +591,12 @@ def _owner(conn, workspace_id, path, line, file_id):
     return min(rows, key=lambda row: ((row[2] or line) - (row[1] or line), row[0]))[0]
 
 
+_USE_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx", ".cs")
+# Per process, keyed by blob id: history and diff scan many commits that share most files.
+# ponytail: cleared wholesale past the limit; an LRU if one process ever maps many repos.
+_DECLARATIONS, _USES, _CACHE_LIMIT = {}, {}, 200_000
+
+
 def apply(conn, root):
     """Replace derived SQL schema nodes and edges in ``conn``."""
     workspace_roots = {
@@ -633,16 +604,28 @@ def apply(conn, root):
         for wid, attrs in conn.execute("SELECT id, attrs FROM nodes WHERE kind = 'workspace'")}
     by_workspace = defaultdict(list)
     code_sources = defaultdict(list)
-    for fid, wid, path in conn.execute(
-            "SELECT id, workspace_id, path FROM nodes WHERE kind = 'file' ORDER BY id"):
-        text = _source(root, workspace_roots.get(wid, ""), path)
-        if text is not None:
-            if path.lower().endswith(".sql"):
-                by_workspace[wid].extend(parse_sql(text, path))
-            if path.lower().endswith((".py", ".prisma", ".ts", ".tsx", ".js", ".jsx", ".cs")):
-                by_workspace[wid].extend(parse_orm(text, path))
-            if path.lower().endswith((".py", ".ts", ".tsx", ".js", ".jsx", ".cs")):
-                code_sources[wid].append((fid, path, text))
+    if len(_DECLARATIONS) + len(_USES) > _CACHE_LIMIT:
+        _DECLARATIONS.clear()
+        _USES.clear()
+    for fid, wid, path, digest in conn.execute(
+            "SELECT id, workspace_id, path, content_hash FROM nodes WHERE kind = 'file' ORDER BY id"):
+        lower = path.lower()
+        uses = lower.endswith(_USE_EXTENSIONS)
+        if not (uses or lower.endswith((".sql", ".prisma"))):
+            continue
+        text = None
+        key = (path, digest) if digest else None
+        found = _DECLARATIONS.get(key) if key else None
+        if found is None:
+            text = _source(root, workspace_roots.get(wid, ""), path)
+            if text is None:
+                continue
+            found = parse_sql(text, path) if lower.endswith(".sql") else parse_orm(text, path)
+            if key:
+                _DECLARATIONS[key] = found
+        by_workspace[wid].extend(found)
+        if uses:
+            code_sources[wid].append((fid, path, digest, text))
 
     conn.execute("DELETE FROM edges WHERE source = 'data'")
     conn.execute("DELETE FROM nodes WHERE kind IN ('table', 'column')")
@@ -687,8 +670,20 @@ def apply(conn, root):
                     "VALUES (?, ?, 'foreign_key', 'data', 1, 1, ?, ?)",
                     (src, dst, _clean_attrs({"source": source}), slot))
         uses = {}
-        for fid, path, text in code_sources.get(wid, []):
-            for kind, table, line, via in parse_uses(text, tables):
+        signature = hash(tuple(sorted((key, tuple(table["models"])) for key, table in tables.items())))
+        # A workspace with no tables has no uses to find; scanning every literal costs seconds.
+        for fid, path, digest, text in code_sources.get(wid, []) if tables else ():
+            key = (digest, signature) if digest else None
+            hits = _USES.get(key) if key else None
+            if hits is None:
+                text = text if text is not None else _source(root, workspace_roots.get(wid, ""), path)
+                if text is None:
+                    continue
+                hits = [(kind, table["name"].lower(), line, via) for kind, table, line, via in parse_uses(text, tables)]
+                if key:
+                    _USES[key] = hits
+            for kind, table_key, line, via in hits:
+                table = tables[table_key]
                 src = _owner(conn, wid, path, line, fid)
                 dst = table_id(wid, table["name"])
                 key = (src, dst, kind)

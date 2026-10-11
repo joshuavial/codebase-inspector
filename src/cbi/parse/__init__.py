@@ -1,7 +1,6 @@
 """Parsers per language. Each turns one file's bytes into symbol and test nodes and resolution facts."""
 
 import hashlib
-import re
 
 from cbi.ids import symbol_ids
 from cbi.parse import csharp, python, typescript, vue
@@ -32,6 +31,29 @@ def _next_route(path):
     return "/" + "/".join(route)
 
 
+def _find_words(text, words):
+    """(start, end) of the first place `words` appear in order with only whitespace between, or None.
+
+    Same match as re.search(r"\\s*".join(map(re.escape, words))), without compiling a
+    pattern per symbol: tens of thousands of one-off patterns thrash the re cache.
+    """
+    if not words:
+        return None
+    start = text.find(words[0])
+    while start >= 0:
+        end = start + len(words[0])
+        for word in words[1:]:
+            while end < len(text) and text[end].isspace():
+                end += 1
+            if not text.startswith(word, end):
+                break
+            end += len(word)
+        else:
+            return start, end
+        start = text.find(words[0], start + 1)
+    return None
+
+
 def span_hashes(source, start_line, end_line, signature):
     """(full span sha1, body sha1) for a symbol's source lines.
 
@@ -47,11 +69,9 @@ def span_hashes(source, start_line, end_line, signature):
     end = max(int(end_line or start), start)
     span = "\n".join(lines[start - 1:end])
     body = span
-    parts = (signature or "").split()
-    if parts:
-        match = re.search(r"\s*".join(re.escape(part) for part in parts), span)
-        if match and "{" not in span[:match.start()]:
-            body = span[match.end():]
+    found = _find_words(span, (signature or "").split())
+    if found and "{" not in span[:found[0]]:
+        body = span[found[1]:]
     digest = lambda value: hashlib.sha1(value.encode()).hexdigest()
     return digest(span), digest(body)
 

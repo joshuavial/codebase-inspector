@@ -180,7 +180,8 @@ def models_for_refs(base_ref, head_ref, root=None, out=None):
     paths = []
     for ref in (base_ref, head_ref):
         try:
-            sha, _reused, _counts, _open = scan_ref(root, out, ref)
+            # The head starts from the base model, so only files that differ are parsed again.
+            sha, _reused, _counts, _open = scan_ref(root, out, ref, seed=paths[0] if paths else None)
         except files.BadRef as err:
             raise DiffError(str(err), code=1) from err
         paths.append(out / "refs" / sha / "model.db")
