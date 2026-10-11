@@ -64,17 +64,17 @@ def test_project_concepts_keeps_move_and_marks_folder_guess(tmp_path):
     point = sqlite3.connect(tmp_path / "point.db")
     for conn in (current, point):
         conn.executescript(
-            "CREATE TABLE nodes (id TEXT, path TEXT, content_hash TEXT, kind TEXT);"
+            "CREATE TABLE nodes (id TEXT, path TEXT, content_hash TEXT, kind TEXT, workspace_id TEXT, attrs TEXT);"
             "CREATE TABLE edges (src TEXT, dst TEXT, kind TEXT);"
         )
-    current.executemany("INSERT INTO nodes VALUES (?, ?, ?, 'file')", [
+    current.executemany("INSERT INTO nodes VALUES (?, ?, ?, 'file', NULL, NULL)", [
         ("w:new/core.py", "new/core.py", "same",),
         ("w:old/near.py", "old/near.py", "near",),
     ])
     current.executemany("INSERT INTO edges VALUES (?, ?, 'owns')", [
         ("core", "w:new/core.py"), ("app", "w:old/near.py"),
     ])
-    point.executemany("INSERT INTO nodes VALUES (?, ?, ?, 'file')", [
+    point.executemany("INSERT INTO nodes VALUES (?, ?, ?, 'file', NULL, NULL)", [
         ("w:old/core.py", "old/core.py", "same",),
         ("w:old/near.py", "old/near.py", "near",),
         ("w:old/gone.py", "old/gone.py", "gone",),
@@ -94,6 +94,32 @@ def test_project_concepts_keeps_move_and_marks_folder_guess(tmp_path):
     assert "old/gone.py" in leaves["app"]
     assert provisional == [{"file_id": "w:old/gone.py", "path": "old/gone.py",
                             "concept_id": "app", "by": "folder"}]
+
+
+def test_project_concepts_uses_paths_from_the_top_repo(tmp_path):
+    current = sqlite3.connect(tmp_path / "current.db")
+    point = sqlite3.connect(tmp_path / "point.db")
+    for conn in (current, point):
+        conn.executescript(
+            "CREATE TABLE nodes (id TEXT, path TEXT, content_hash TEXT, kind TEXT, workspace_id TEXT, attrs TEXT);"
+            "CREATE TABLE edges (src TEXT, dst TEXT, kind TEXT);"
+            "INSERT INTO nodes VALUES ('top', '', NULL, 'workspace', NULL, '{}');"
+            "INSERT INTO nodes VALUES ('sub', 'lib', NULL, 'workspace', 'top', '{\"root\": \"lib\"}');"
+            "INSERT INTO nodes VALUES ('top:README.md', 'README.md', 'a', 'doc', 'top', '{}');"
+            "INSERT INTO nodes VALUES ('sub:README.md', 'README.md', 'b', 'doc', 'sub', '{}');"
+        )
+    current.executemany("INSERT INTO edges VALUES (?, ?, 'owns')", [("app", "top:README.md"), ("lib", "sub:README.md")])
+    document = {
+        "summary": "Fixture.",
+        "concepts": [
+            {"id": "app", "name": "App", "summary": "App.", "role": "app", "files": ["README.md"]},
+            {"id": "lib", "name": "Lib", "summary": "Lib.", "role": "core", "files": ["lib/README.md"]},
+        ], "externals": [], "relationships": [],
+    }
+    projected, provisional = history.project_concepts(document, point, current)
+    leaves = {item["id"]: item["files"] for item in projected["concepts"]}
+    assert leaves == {"app": ["README.md"], "lib": ["lib/README.md"]}
+    assert provisional == []
 
 
 def test_history_cli_writes_markdown_and_reuses_point_models(make_repo, monkeypatch, capsys):

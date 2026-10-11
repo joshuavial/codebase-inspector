@@ -126,15 +126,25 @@ def _leaf_files(document):
     return found
 
 
+def _file_rows(conn):
+    """(id, path from the top repo, content hash) per file. A node's own path is workspace-relative,
+    so two submodules can both hold README.md; concepts.json names files from the top repo."""
+    return conn.execute(
+        "SELECT n.id, CASE WHEN coalesce(json_extract(w.attrs, '$.root'), '') = '' THEN n.path "
+        "ELSE json_extract(w.attrs, '$.root') || '/' || n.path END, n.content_hash "
+        "FROM nodes n LEFT JOIN nodes w ON w.id = n.workspace_id "
+        "WHERE n.kind IN ('file', 'doc') AND n.path != ''"
+    ).fetchall()
+
+
 def _point_files(conn):
-    rows = conn.execute(
-        "SELECT id, path, content_hash FROM nodes WHERE kind IN ('file', 'doc') AND path != ''"
-    )
-    return {row[0]: {"id": row[0], "path": row[1], "hash": row[2]} for row in rows}
+    return {fid: {"id": fid, "path": path, "hash": digest} for fid, path, digest in _file_rows(conn)}
 
 
 def _current_owners(conn):
-    return dict(conn.execute("SELECT f.path, e.src FROM edges e JOIN nodes f ON f.id = e.dst WHERE e.kind = 'owns'"))
+    paths = {fid: path for fid, path, _digest in _file_rows(conn)}
+    return {paths[dst]: src for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'owns'")
+            if dst in paths}
 
 
 def _choose(values):
@@ -153,8 +163,7 @@ def project_concepts(current, point_conn, current_conn=None):
 
     hashes = defaultdict(list)
     if current_conn is not None:
-        for path, content_hash in current_conn.execute(
-                "SELECT path, content_hash FROM nodes WHERE kind IN ('file', 'doc')"):
+        for _fid, path, content_hash in _file_rows(current_conn):
             if content_hash and current_owner.get(path):
                 hashes[content_hash].append(current_owner[path])
 
