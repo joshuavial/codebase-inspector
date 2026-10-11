@@ -542,8 +542,9 @@ async function main() {
 
   {
     // A Mapper-style chain: nine boxes in one long row, a hub that reaches most of them and
-    // a label on every edge. At 1440x900 the row fits at about a third of full size; a wrapped
-    // layout must win, fit at least twice as large and route without cutting a box.
+    // a label on every edge. At 1440x900 the row fits at under half of full size; a wrapped
+    // layout must win, fit at least 1.5 times as large, route without cutting a box and leave
+    // every label clear of every line.
     const ids = ["cli", "tasks", "diff", "parse", "render", "manifests", "queries", "concepts", "scan"];
     const kids = ids.map((id, i) => ({ id, x: 12 + i * 330, y: 12, width: 230, height: 94 }));
     const said = "reads the model and prints what it found";
@@ -558,12 +559,12 @@ async function main() {
     const tries = [straight];
     for (let perRow = 2; perRow < ids.length; perRow++) {
       const grid = app.snakeGrid(row, chainEdges, perRow);
-      tries.push({ width: grid.width, height: grid.height, bias: 1.1, clashes: app.innerClashes(grid, chainEdges), grid });
+      tries.push({ width: grid.width, height: grid.height, bias: 1.25, clashes: app.innerClashes(grid, chainEdges), grid });
     }
     const best = tries.reduce((p, q) => (app.layoutScore(q, avail) > app.layoutScore(p, avail) ? q : p));
     const fitOf = (t) => Math.min(1, avail.w / t.width, avail.h / t.height);
     assert.ok(best.grid, "a wrapped layout beats the long row");
-    assert.ok(fitOf(best) >= 2 * fitOf(straight), `fit ${fitOf(best)} vs row ${fitOf(straight)}`);
+    assert.ok(fitOf(best) >= 1.5 * fitOf(straight), `fit ${fitOf(best)} vs row ${fitOf(straight)}`);
     assert.strictEqual(best.clashes, 0);
     const at = Object.fromEntries(best.grid.children.map((n) => [n.id, n]));
     for (const e of best.grid.edges) {
@@ -575,6 +576,19 @@ async function main() {
     }
     const seen = new Set(best.grid.children.map((n) => `${n.x},${n.y}`));
     assert.strictEqual(seen.size, ids.length, "every box has its own cell");
+    const pinnedGrid = app.snakeGrid(row, chainEdges, 3, new Set(["cli"]));
+    const cliBox = pinnedGrid.children.find((n) => n.id === "cli");
+    assert.ok(pinnedGrid.children.every((n) => n.x >= cliBox.x && n.y >= cliBox.y), "a start box keeps the first cell");
+  }
+
+  {
+    // A label a line runs through moves along its own edge until the line misses it.
+    const across = [{ x: 0, y: 20 }, { x: 300, y: 20 }];
+    const label = { x: 50, y: 10, width: 60, height: 20, pts: [{ x: 80, y: -100 }, { x: 80, y: 200 }] };
+    assert.ok(app.lineHits(label, [across]));
+    assert.ok(!app.lineHits({ x: 50, y: 21, width: 60, height: 20 }, [across]), "a line along the edge is clear");
+    app.separateLabels([label], [], [across]);
+    assert.ok(!app.lineHits(label, [across]), JSON.stringify(label));
   }
 
   console.log("layout checks passed");

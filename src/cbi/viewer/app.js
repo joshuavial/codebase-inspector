@@ -2687,23 +2687,39 @@ function firstTier(children, edges) {
   return new Set([...entries].filter((id) => !edges.some((e) => e.b === id && entries.has(e.a))));
 }
 
+// An inner edge in ELK's output shape, routed by us. The label pass places its label.
+function drawnEdge(meta, points) {
+  const label = meta.text || meta.via ? labelBox(meta) : null;
+  return {
+    id: meta.id, sources: [meta.a], targets: [meta.b],
+    sections: points.length ? [{ startPoint: points[0], endPoint: points[points.length - 1], bendPoints: points.slice(1, -1) }] : [],
+    labels: label ? [{ text: meta.text || "", x: -9999, y: -9999, ...label }] : [],
+  };
+}
+
 // ELK's edge wrapping leaves large return loops around a row. For a long chain, lay the boxes
 // out in reading order on a grid whose rows turn back like a snake, so each box stays next to
 // the one before it. Edges between neighbours go straight; the rest leave through the top or
 // bottom, run in the channel between rows, cross rows in a gap between columns, and enter the
 // other box from its row's channel. Every channel and gap hands out its own lane per edge.
-function snakeGrid(graph, edgeMeta, perRow) {
-  const order = [...graph.children].sort((a, b) => a.x - b.x || a.y - b.y);
-  if (perRow < 2 || perRow >= order.length) return null;
+function snakeGrid(graph, edgeMeta, perRow, fixed = new Set()) {
+  // Start boxes lead the order, so they hold the first row and keep it.
+  const order = [...graph.children].sort((a, b) => fixed.has(b.id) - fixed.has(a.id) || a.x - b.x || a.y - b.y);
+  if (perRow < 2 || perRow >= order.length || perRow < fixed.size) return null;
   const labels = edgeMeta.filter((e) => e.text || e.via).map(labelBox);
   const labW = Math.max(0, ...labels.map((l) => l.width)), labH = Math.max(0, ...labels.map((l) => l.height));
-  const pad = 12, LANE_STEP = 8;
+  const pad = 12, LANE_STEP = 12;
   const rows = Math.ceil(order.length / perRow);
-  const cell = {};
-  order.forEach((n, i) => {
+  const slotCell = (i) => {
     const r = Math.floor(i / perRow);
-    cell[n.id] = { r, c: r % 2 ? perRow - 1 - (i % perRow) : i % perRow };
-  });
+    return { r, c: r % 2 ? perRow - 1 - (i % perRow) : i % perRow };
+  };
+  const slots = Array.from({ length: rows * perRow }, (_, i) => (order[i] ? order[i].id : null));
+  const cell = {};
+  const seat = () => slots.forEach((id, i) => { if (id) cell[id] = slotCell(i); });
+  seat();
+  placeSnakeCells(slots, cell, seat, edgeMeta, fixed);
+  order.sort((a, b) => slots.indexOf(a.id) - slots.indexOf(b.id));
   // First pass: which channel, gap and box side each edge uses.
   const plans = [], users = {};
   const use = (key, id) => { (users[key] = users[key] || []).push(id); };
@@ -2734,7 +2750,7 @@ function snakeGrid(graph, edgeMeta, perRow) {
   const rowGap = Array.from({ length: rows }, (_, k) => Math.max(70, count(`h${k}`) * LANE_STEP + 2 * labH + 16));
   const colGap = Array.from({ length: perRow }, (_, c) => Math.max(40, count(`g${c}`) * LANE_STEP + labW + 24));
   const colW = Math.max(...order.map((n) => n.width));
-  const rowH = Array.from({ length: rows }, (_, r) => Math.max(...order.slice(r * perRow, (r + 1) * perRow).map((n) => n.height)));
+  const rowH = Array.from({ length: rows }, (_, r) => Math.max(0, ...order.filter((n) => cell[n.id].r === r).map((n) => n.height)));
   const rowTop = [pad], colLeft = [pad];
   for (let r = 1; r < rows; r++) rowTop.push(rowTop[r - 1] + rowH[r - 1] + rowGap[r - 1]);
   for (let c = 1; c < perRow; c++) colLeft.push(colLeft[c - 1] + colW + colGap[c]);
@@ -2764,23 +2780,45 @@ function snakeGrid(graph, edgeMeta, perRow) {
         ? [start, { x: ax, y: y1 }, { x: bx, y: y1 }, end]
         : [start, { x: ax, y: y1 }, { x: gx, y: y1 }, { x: gx, y: y2 }, { x: bx, y: y2 }, end];
     }
-    const label = meta.text || meta.via ? labelBox(meta) : null;
-    return {
-      id: meta.id, sources: [meta.a], targets: [meta.b],
-      sections: points.length ? [{ startPoint: points[0], endPoint: points[points.length - 1], bendPoints: points.slice(1, -1) }] : [],
-      labels: label ? [{ text: meta.text || "", x: -9999, y: -9999, ...label }] : [],
-    };
+    return drawnEdge(meta, points);
   });
   const width = colLeft[perRow - 1] + colW + pad;
   return { id: "inner", width, height: rowTop[rows - 1] + rowH[rows - 1] + pad, children, edges };
 }
 
-// Inner labels that still sit on a box or another label, and routes that still cut a box,
+// Swap boxes between cells while that shortens the edges: neighbours cost nothing, any other
+// edge costs its distance in cells plus a turn. Start boxes keep their cells.
+// ponytail: greedy pairwise swaps, fine for the dozen boxes a concept holds.
+function placeSnakeCells(slots, cell, seat, edgeMeta, fixed) {
+  const cost = () => edgeMeta.reduce((t, e) => {
+    const A = cell[e.a], B = cell[e.b];
+    if (!A || !B) return t;
+    const d = Math.abs(A.r - B.r) + Math.abs(A.c - B.c);
+    return t + (d === 1 ? 0 : d + 2);
+  }, 0);
+  let best = cost();
+  for (let improved = true; improved;) {
+    improved = false;
+    for (let i = 0; i < slots.length; i++) {
+      for (let j = i + 1; j < slots.length; j++) {
+        if (fixed.has(slots[i]) || fixed.has(slots[j]) || (!slots[i] && !slots[j])) continue;
+        [slots[i], slots[j]] = [slots[j], slots[i]];
+        seat();
+        const c = cost();
+        if (c < best) { best = c; improved = true; continue; }
+        [slots[i], slots[j]] = [slots[j], slots[i]];
+        seat();
+      }
+    }
+  }
+}
+
+// Inner labels that still sit on a box, a line or another label, and routes that cut a box,
 // after the same edge repair and label spread the render runs. A tight candidate pays here.
 function innerClashes(p1, edgeMeta) {
   const at = Object.fromEntries(p1.children.map((n) => [n.id, n]));
   const byId = Object.fromEntries(edgeMeta.map((e) => [e.id, e]));
-  const labels = [];
+  const labels = [], lines = [];
   let cuts = 0;
   for (const e of p1.edges || []) {
     const meta = byId[e.id], a = at[e.sources[0]], z = at[e.targets[0]];
@@ -2788,6 +2826,7 @@ function innerClashes(p1, edgeMeta) {
     const drawn = (e.sections || []).flatMap((q) => [q.startPoint, ...(q.bendPoints || []), q.endPoint]).filter(Boolean);
     const pts = settleInnerEdge(drawn, a, z, p1.children, p1.width, p1.height);
     if (!pathClear(pts, p1.children.filter((n) => n !== a && n !== z))) cuts++;
+    if (pts.length > 1) lines.push(pts);
     if (!(meta.text || meta.via) || pts.length < 2) continue;
     const lb = labelBox(meta);
     let best = 1;
@@ -2795,8 +2834,8 @@ function innerClashes(p1, edgeMeta) {
     const p = pts[best - 1], q = pts[best];
     labels.push({ x: (p.x + q.x) / 2 + 4, y: (p.y + q.y) / 2 - lb.height / 2, width: lb.width, height: lb.height, pts });
   }
-  separateLabels(labels, p1.children);
-  const stuck = labels.filter((l, i) => p1.children.some((n) => obstacleHits(l, n)) || labels.some((o, j) => j !== i && overlaps(l, o, LABEL_PAD)));
+  separateLabels(labels, p1.children, lines);
+  const stuck = labels.filter((l, i) => p1.children.some((n) => obstacleHits(l, n)) || labels.some((o, j) => j !== i && overlaps(l, o, LABEL_PAD)) || lineHits(l, lines));
   return cuts + stuck.length;
 }
 
@@ -2889,7 +2928,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     const tries = [];
     let layoutErr = null;
     // Bias: unwrapped left to right is preferred; top to bottom must score 10% better, the snake
-    // grid 10% and ELK wrapping (which adds long return loops between rows) 25% better.
+    // grid and ELK wrapping (which adds long return loops between rows) 25% better.
     const modes = [["RIGHT", null, 1, 1], ...["MULTI_EDGE", "SINGLE_EDGE"].flatMap((w) => [0.5, 0.8, 1.1].map((r) => ["RIGHT", w, r, 1.25])), ["DOWN", null, 1, 1.1]];
     for (const [dir, w, r, bias] of modes) {
       try {
@@ -2904,8 +2943,8 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     }
     const straight = tries.find((t) => t.dir === "RIGHT" && !t.wrapping);
     for (let perRow = 2; straight && perRow < straight.p1.children.length; perRow++) {
-      const p1 = snakeGrid(straight.p1, insideEdges, perRow);
-      if (p1) tries.push({ dir: "RIGHT", wrapping: "snake", ratio: perRow, bias: 1.1, p1, ...placeAround(arrange(p1)) });
+      const p1 = snakeGrid(straight.p1, insideEdges, perRow, pinned);
+      if (p1) tries.push({ dir: "RIGHT", wrapping: "snake", ratio: perRow, bias: 1.25, p1, ...placeAround(arrange(p1)) });
     }
     if (gen !== layoutGen) return;
     if (!tries.length) throw layoutErr || new Error("no layout");
@@ -3099,13 +3138,18 @@ function labelSpots(label) {
   return spots;
 }
 
-function separateLabels(labels, obstacles) {
+// True when a drawn line runs through the label. A line that only touches its edge does not count.
+function lineHits(label, lines) {
+  return (lines || []).some((pts) => pts.some((p, i) => i > 0 && cutsBox(pts[i - 1], p, label)));
+}
+
+function separateLabels(labels, obstacles, lines) {
   const placed = [];
   for (const label of labels) {
     let chosen = null;
     for (const spot of labelSpots(label)) {
       const box = { x: spot.x, y: spot.y, width: label.width, height: label.height };
-      const blocked = (obstacles || []).some((o) => obstacleHits(box, o)) || placed.some((p) => overlaps(box, p, LABEL_PAD));
+      const blocked = (obstacles || []).some((o) => obstacleHits(box, o)) || placed.some((p) => overlaps(box, p, LABEL_PAD)) || lineHits(box, lines);
       if (!blocked) { chosen = spot; break; }
     }
     if (chosen) { label.x = chosen.x; label.y = chosen.y; }
@@ -3153,7 +3197,8 @@ function placeEdgeLabels(out, em, obstacles) {
       labels.push({ x: l.x, y: l.y, width: l.width, height: l.height, pts, a: m.a, b: m.b, text: m.text, rels: m.rels, meta: m, elk: l });
     }
   }
-  separateLabels(labels, obstacles);
+  const lines = out.edges.map((e) => (e.sections || []).flatMap((q) => [q.startPoint, ...(q.bendPoints || []), q.endPoint])).filter((pts) => pts.length > 1);
+  separateLabels(labels, obstacles, lines);
   if (collapseStackedPairs(labels)) {
     for (const rec of labels) {
       if (rec.drop) continue;
@@ -3164,7 +3209,7 @@ function placeEdgeLabels(out, em, obstacles) {
       rec.elk.width = box.width;
       rec.elk.height = box.height;
     }
-    separateLabels(labels.filter((rec) => !rec.drop), obstacles);
+    separateLabels(labels.filter((rec) => !rec.drop), obstacles, lines);
   }
   for (const rec of labels) {
     rec.elk.x = rec.x;
