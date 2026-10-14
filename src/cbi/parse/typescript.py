@@ -119,6 +119,19 @@ def _signature(source, node, body):
     return _between(source, node.start_byte, body.start_byte if body else node.end_byte)
 
 
+def _function_reference(node):
+    """True when a bare name is used as an object/array value or call argument."""
+    if node.type != "identifier" or node.parent is None:
+        return False
+    parent = node.parent
+    if parent.type == "pair":
+        return parent.child_by_field_name("value") == node
+    if parent.type == "arguments" and parent.parent is not None \
+            and _element_name(parent.parent) == _text(node):
+        return False
+    return parent.type in ("array", "arguments")
+
+
 class _Collector:
     def __init__(self, source):
         self.source = source
@@ -566,6 +579,10 @@ class _Collector:
                                 self.uses.append([d, c, field, info["type"], _text(prop)])
                         elif obj is not None and obj.type == "identifier" and _text(obj) in bindings and not _shadowed(scope, _text(obj)):
                             calls.append([d, c, "member", _text(obj), _text(prop), *([via] if via else [])])
+            elif _function_reference(n):
+                name = _text(n)
+                if name in bindings and not _shadowed(scope, name):
+                    calls.append([d, c, "name", name, None, "reference"])
             if n.type == "spread_element" and n.named_children and _is_process_env(n.named_children[0]):
                 if not _process_hidden(self, scope):
                     envs.append([None, "*", None])

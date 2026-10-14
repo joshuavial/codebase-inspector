@@ -39,7 +39,7 @@ CREATE TABLE edges (
     source TEXT NOT NULL,
     confidence REAL NOT NULL DEFAULT 1.0,
     weight INTEGER NOT NULL DEFAULT 1,
-    attrs TEXT, -- JSON. Calls from JSX or createElement: {"via": "jsx"}.
+    attrs TEXT, -- JSON. Calls from JSX/createElement: {"via": "jsx"}; function values: {"via": "reference"}.
                 -- part_of: {"via": "direct"} or {"via": "transitive"}.
                 -- Injected calls: {"via": "injection"}. Type-only imports: {"type_only": true}.
                 -- A reads_env edge may hold {"default": "..."}.

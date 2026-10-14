@@ -155,6 +155,18 @@ def _callee(call):
     return _text(fn) if fn is not None and fn.type in ("identifier", "attribute") else None
 
 
+def _function_reference(node):
+    """True when a bare name is used as a collection value or call argument."""
+    if node.type != "identifier" or node.parent is None:
+        return False
+    parent = node.parent
+    if parent.type == "pair":
+        return parent.child_by_field_name("value") == node
+    if parent.type in ("list", "tuple", "argument_list"):
+        return True
+    return parent.type == "keyword_argument" and parent.child_by_field_name("value") == node
+
+
 def _args(call):
     args = call.child_by_field_name("arguments")
     return [a for a in args.named_children if a.type != "comment"] if args is not None and args.type == "argument_list" else []
@@ -502,6 +514,10 @@ class _Collector:
                         name = _text(obj)
                         if name in bindings and not _shadowed(scope, name.split(".")[0]):
                             calls.append([d, c, "member", name, attr])
+            elif _function_reference(n):
+                name = _text(n)
+                if name in bindings and not _shadowed(scope, name):
+                    calls.append([d, c, "name", name, None, "reference"])
             found = _py_env_read(n, modules, environs, getenvs, scope)
             if found:
                 envs.append([d, found[0], found[1]])

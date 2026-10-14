@@ -42,6 +42,7 @@ TYPE_REF_CONFIDENCE = 0.4
 # `object` is an exported object literal, so `api.raiseInvoice()` resolves like a method call.
 TYPE_KINDS = {"class", "record", "struct", "interface", "enum", "object"}
 CONCRETE_KINDS = {"class", "record", "struct"}
+REFERENCE_KINDS = {"function", "method", "component"}
 OWNED_SOURCES = ("treesitter", "naming", "html")
 
 
@@ -1143,11 +1144,16 @@ def resolve(conn, root):
             src, cls, shape, name, member, *extra = call
             via = extra[0] if extra else None
             candidates, confidence = m.bind(fid, cls, shape, name, member)
+            if via == "reference":
+                candidates = [candidate for candidate in candidates if m.nodes[candidate][2] in REFERENCE_KINDS]
             if len(candidates) > 1:
                 ambiguous[fid] += 1
             elif candidates:
                 src = src or fid
-                add(src, candidates[0], "calls", "treesitter", confidence, {"via": "jsx"} if via == "jsx" else None)
+                attrs = {"via": via} if via in ("jsx", "reference") else None
+                if via == "reference":
+                    confidence = min(confidence, 0.7)
+                add(src, candidates[0], "calls", "treesitter", confidence, attrs)
                 if is_test and m.nodes[candidates[0]][3] != fid:
                     add(m.test_owner(src), candidates[0], "tests", "treesitter", confidence)
 

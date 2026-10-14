@@ -33,6 +33,19 @@ def _text(node):
     return node.text.decode(errors="replace")
 
 
+def _function_reference(node):
+    """True when a bare name is used as a collection value or call argument."""
+    if node.type != "identifier" or node.parent is None:
+        return False
+    parent = node.parent
+    if parent.type == "argument":
+        return True
+    if parent.type == "assignment_expression":
+        return parent.child_by_field_name("right") == node and parent.parent is not None \
+            and parent.parent.type == "initializer_expression"
+    return parent.type == "initializer_expression"
+
+
 def _unique(items):
     seen = set()
     out = []
@@ -1063,6 +1076,11 @@ class _Collector:
                 self.constructs.append([name, args])
         elif node.type == "element_access_expression":
             self._config(node, d)
+        elif _function_reference(node):
+            before = len(self.calls)
+            self._bare(node, d, c, shadow)
+            if len(self.calls) > before:
+                self.calls[-1].append("reference")
 
     def _call(self, fn, d, c, shadow):
         if fn is None:
