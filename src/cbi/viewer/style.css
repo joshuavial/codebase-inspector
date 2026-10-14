@@ -78,14 +78,18 @@ button { font: inherit; color: inherit; }
 header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 24px;
+  row-gap: 10px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--line);
 }
 #system-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--ph); flex: none; }
-#system-tabs button { border: 0; border-radius: 7px; padding: 6px 10px; background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; }
-#system-tabs button:hover { color: var(--text); }
-#system-tabs button.on { color: var(--text); background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
+#system-tabs button, #diff-scope button { border: 0; border-radius: 7px; padding: 6px 10px; background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; }
+#system-tabs button:hover, #diff-scope button:hover { color: var(--text); }
+#system-tabs button.on, #diff-scope button.on { color: var(--text); background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
+#diff-scope { display: flex; flex: 1 0 100%; gap: 2px; padding: 2px; border-radius: 9px; background: var(--ph); width: max-content; max-width: 100%; overflow-x: auto; }
+#diff-scope[hidden] { display: none; }
 #crumbs { flex: 1; font-size: 15px; }
 #crumbs a { color: var(--muted); text-decoration: none; cursor: pointer; }
 #crumbs a:hover { color: var(--accent); }

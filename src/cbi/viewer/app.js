@@ -372,8 +372,78 @@ function initCompare() {
   document.getElementById("chg-toggle").onclick = () => document.body.classList.toggle("changes-open");
 }
 
+function diffActive() {
+  return !!DIFF && (!HISTORY || historyCompare);
+}
+
+function diffOverviewItems() {
+  if (!DIFF) return [];
+  const overview = DIFF.overview || (DIFF.changes && DIFF.changes.overview);
+  return (overview && overview.items) || [];
+}
+
+// Changed is the default and stays out of the hash. all is the full map.
+// An overview id is that one changed area.
+function diffViewScope() {
+  if (!diffActive()) return null;
+  const raw = (view && view.scope) || "";
+  if (raw === "all") return "all";
+  if (raw && raw !== "changed" && diffOverviewItems().some((item) => item.id === raw)) return raw;
+  return "changed";
+}
+
+// One tab per ranked area when the labels fit on one desktop row with Changed and Full map.
+function diffAreaTabs(items) {
+  if (!Array.isArray(items)) return [];
+  const rows = items.filter((item) => item && item.id && item.id !== "all" && item.id !== "changed");
+  if (rows.length < 2 || rows.length > 10) return [];
+  const labels = rows.reduce((n, item) => n + String(item.name || item.id).length, "Changed".length + "Full map".length);
+  return labels > 160 ? [] : rows;
+}
+
+function paintDiffScope() {
+  const bar = document.getElementById("diff-scope");
+  if (!bar) return;
+  const on = diffActive() && view.tab === "concept";
+  bar.hidden = !on;
+  if (!on) { bar.replaceChildren(); return; }
+  const scope = diffViewScope();
+  const tabs = [
+    ["changed", "Changed"],
+    ...diffAreaTabs(diffOverviewItems()).map((item) => [item.id, item.name || item.id]),
+    ["all", "Full map"],
+  ];
+  bar.replaceChildren(...tabs.map(([id, label]) => {
+    const button = el("button", scope === id ? "on" : "", label);
+    button.type = "button";
+    button.dataset.scope = id;
+    button.setAttribute("aria-pressed", scope === id ? "true" : "false");
+    button.onclick = () => setDiffScope(id);
+    return button;
+  }));
+}
+
+function setDiffScope(scope) {
+  const extra = { scope };
+  if (view.mode) extra.v = view.mode;
+  if (view.screen) extra.w = view.screen;
+  if (view.overlay) extra.t = view.overlay;
+  if (shownSide === "base") extra.side = "base";
+  let focus = view.focus;
+  let sel = view.sel;
+  const area = scope !== "changed" && scope !== "all";
+  if (area && byId[scope] && !byId[scope].ext) {
+    focus = scope;
+    sel = null;
+  } else if (!area && view.scope && view.scope !== "changed" && view.scope !== "all" && view.focus === view.scope) {
+    focus = null;
+    sel = null;
+  }
+  go(focus, sel, extra);
+}
+
 function paintCompare() {
-  const on = !!DIFF && (!HISTORY || historyCompare);
+  const on = diffActive();
   document.getElementById("compare").hidden = !on;
   document.getElementById("chg-toggle").hidden = !on;
   if (!on) return;
@@ -649,7 +719,7 @@ function originFocus() { return view.from === "~" ? null : view.from; }
 function go(focus, sel, extra = {}) {
   // Landing back on the origin restores its zoom and selection, same as the chip.
   const home = view.from && !("from" in extra) && (focus || null) === originFocus()
-    && !sel && !extra.v && !extra.w && !("t" in extra);
+    && !sel && !extra.v && !extra.w && !("t" in extra) && !("scope" in extra);
   if (home) { back(); return; }
   const h = new URLSearchParams();
   if (focus) h.set("c", focus);
@@ -664,13 +734,16 @@ function go(focus, sel, extra = {}) {
     h.set("fromtab", view.fromTab);
     h.set("bh", view.backHash);
   }
-  for (const [k, v] of Object.entries(extra)) if (k !== "t" && k !== "side" && v) h.set(k, v);
+  for (const [k, v] of Object.entries(extra)) if (k !== "t" && k !== "side" && k !== "scope" && v) h.set(k, v);
   const cur = new URLSearchParams(location.hash.slice(1));
   const t = "t" in extra ? extra.t : cur.get("t");
   if (t) h.set("t", t);
   // side=base is the only value written; head is the bare URL, so a toggle back clears it.
   const side = "side" in extra ? extra.side : cur.get("side");
   if (side === "base") h.set("side", "base");
+  // scope=changed is the bare URL. all, or one overview id, is written.
+  const scope = "scope" in extra ? extra.scope : cur.get("scope");
+  if (scope && scope !== "changed") h.set("scope", scope);
   writeHash(h.toString(), { replace: keep });
 }
 
@@ -762,6 +835,7 @@ function route() {
     endpoint: (ENDPOINTS.endpoints || []).some((row) => row.id === h.get("endpoint")) ? h.get("endpoint") : null,
     endpointQuery: h.get("eq") || "", endpointMethod: h.get("method") || "",
     fromTab: h.get("fromtab") === "database" || h.get("fromtab") === "endpoints" ? h.get("fromtab") : null,
+    scope: h.get("scope") || "",
   };
   // A flat box has nothing to open. Select it on its parent's diagram (the top diagram, for a deployable).
   if (view.focus && byId[view.focus].flat) {
@@ -773,10 +847,12 @@ function route() {
   paintCompare();
   changesPanel();
   paintSystemChrome(tab);
+  paintDiffScope();
   if (first) glow = !!view.from;
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
-  restore = refit ? null : !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  const scopeChanged = !first && (prev.scope || "") !== (view.scope || "");
+  restore = refit || scopeChanged ? null : !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   refit = false;
   crumbs();
   const f = view.focus && byId[view.focus];
@@ -1274,11 +1350,110 @@ function conceptEdges(focus, shown) {
   });
 }
 
+function scopeNodeIds(node, into) {
+  into.add(node.id);
+  for (const child of node.children || []) scopeNodeIds(child, into);
+}
+
+function inDiffArea(id, area) {
+  if (!area) return true;
+  if (!id) return false;
+  return id === area || ancestors(id).includes(area) || ancestors(area).includes(id);
+}
+
+function scopeMarked(id, area) {
+  if (!(CONCEPT_MARK.has(id) || PROVISIONAL.has(id))) return false;
+  return inDiffArea(id, area);
+}
+
+function nodeCarriesChange(node, area) {
+  const tree = new Set();
+  scopeNodeIds(node, tree);
+  for (const id of tree) if (scopeMarked(id, area)) return true;
+  const leaves = node.children && node.children.length ? node.children.flatMap(leafList) : [node];
+  for (const leaf of leaves) {
+    if (area && !inDiffArea(leaf.id, area)) continue;
+    for (const sym of leaf.symbols || []) if (symbolMark(sym.id)) return true;
+  }
+  return false;
+}
+
+// Changed boxes plus siblings on the other end of one of their relationships.
+// changedIds is null when this view has nothing to drop, so the caller draws it whole.
+function filterScopeKids(kids, focus, scope) {
+  const area = scope === "changed" ? null : scope;
+  const changed = [];
+  const changedTree = new Set();
+  for (const kid of kids || []) {
+    if (!nodeCarriesChange(kid, area)) continue;
+    changed.push(kid);
+    scopeNodeIds(kid, changedTree);
+  }
+  if (!changed.length) return { kids: kids || [], changedIds: null };
+  const changedIds = new Set(changed.map((kid) => kid.id));
+  const context = new Set();
+  for (const rel of (M && M.relationships) || []) {
+    const fromIn = changedTree.has(rel.from);
+    const toIn = changedTree.has(rel.to);
+    if (fromIn === toIn) continue;
+    const other = fromIn ? rel.to : rel.from;
+    const box = project(other, focus);
+    if (box && !changedIds.has(box) && (kids || []).some((kid) => kid.id === box)) context.add(box);
+  }
+  const keep = new Set([...changedIds, ...context]);
+  return { kids: kids.filter((kid) => keep.has(kid.id)), changedIds };
+}
+
+function focusCarriesChange(focus, scope) {
+  if (!focus || !byId[focus]) return false;
+  return nodeCarriesChange(byId[focus], scope === "changed" ? null : scope);
+}
+
+function changeEdge(edge, changedIds, focusChange) {
+  const hit = (id) => id === "boundary" ? focusChange : changedIds.has(id);
+  return hit(edge.a) || hit(edge.b);
+}
+
+// Marked symbols, plus the functions in this leaf that call them or that they call.
+function narrowLeaf(c) {
+  const scope = diffViewScope();
+  if (!c || !scope || scope === "all") return c;
+  if (scope !== "changed" && !inDiffArea(c.id, scope)) return c;
+  const symbols = c.symbols || [];
+  const marked = new Set(symbols.filter((s) => symbolMark(s.id)).map((s) => s.id));
+  if (!marked.size) return c;
+  const own = new Set(symbols.map((s) => s.id));
+  const keep = new Set(marked);
+  for (const call of c.calls || []) {
+    if (marked.has(call[0]) && own.has(call[1])) keep.add(call[1]);
+    if (marked.has(call[1]) && own.has(call[0])) keep.add(call[0]);
+  }
+  const next = symbols.filter((s) => keep.has(s.id));
+  const calls = (c.calls || []).filter((call) => keep.has(call[0]) || keep.has(call[1]));
+  const ghosts = {};
+  for (const call of calls) {
+    if (c.ghosts && c.ghosts[call[0]]) ghosts[call[0]] = c.ghosts[call[0]];
+    if (c.ghosts && c.ghosts[call[1]]) ghosts[call[1]] = c.ghosts[call[1]];
+  }
+  const importsIn = (c.importsIn || []).filter((imp) => (imp.files || []).some((file) => next.some((s) => s.file === file)));
+  const reexports = (c.reexports || []).filter((row) => !row.def || keep.has(row.def));
+  return { ...c, symbols: next, calls, ghosts, importsIn, reexports };
+}
+
 function drawConcepts(f, enter) {
-  const kids = f ? f.children : M.concepts;
+  const scope = diffViewScope();
+  let kids = f ? f.children : M.concepts;
+  let changedIds = null;
+  if (scope && scope !== "all") {
+    const picked = filterScopeKids(kids, f ? f.id : null, scope);
+    kids = picked.kids;
+    changedIds = picked.changedIds;
+  }
   const shown = new Set(kids.map((c) => c.id));
-  const edges = conceptEdges(f ? f.id : null, new Set([...shown, ...(f ? [] : M.externals.map((x) => x.id))]));
-  const outside = new Set(f ? [] : M.externals.map((x) => x.id));
+  const seedExternals = !f && !changedIds;
+  let edges = conceptEdges(f ? f.id : null, new Set([...shown, ...(seedExternals ? M.externals.map((x) => x.id) : [])]));
+  if (changedIds) edges = edges.filter((e) => changeEdge(e, changedIds, focusCarriesChange(f ? f.id : null, scope)));
+  const outside = new Set(seedExternals ? M.externals.map((x) => x.id) : []);
   for (const e of edges) for (const x of [e.a, e.b]) if (x !== "boundary" && !shown.has(x)) outside.add(x);
 
   // Entry concepts form the first tier and carry the start marker, unless a sibling in view hosts
@@ -1377,6 +1552,7 @@ function box(c, cls, startsHere = !!c.entry) {
 // ---------- leaf diagrams ----------
 
 function drawLeaf(c, enter) {
+  c = narrowLeaf(c);
   c.symbols = c.symbols || [];
   c.calls = c.calls || [];
   c.importsIn = c.importsIn || [];

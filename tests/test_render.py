@@ -510,7 +510,7 @@ def test_render_fixture_when_chrome_is_installed(tmp_path):
     png, svg = tmp_path / "map.png", tmp_path / "map.svg"
     render.render_view(_payload(), _added_ui(), "top", "head", png, svg)
     text = svg.read_text(encoding="utf-8")
-    assert ">App</text>" in text and ">UI</text>" in text
+    assert ">UI</text>" in text and ">App</text>" not in text
     assert ' chg-added"' in text
     assert ">Added</text>" in text
     raw = png.read_bytes()
@@ -545,4 +545,4 @@ def test_parallel_renders_finish_together(tmp_path):
         texts = list(pool.map(once, range(4)))
     assert len(texts) == 4
     for text in texts:
-        assert ">App</text>" in text and ">UI</text>" in text
+        assert ">UI</text>" in text and ">App</text>" not in text

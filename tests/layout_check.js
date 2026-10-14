@@ -589,6 +589,81 @@ async function main() {
     assert.ok(!app.lineHits({ x: 50, y: 21, width: 60, height: 20 }, [across]), "a line along the edge is clear");
     app.separateLabels([label], [], [across]);
     assert.ok(!app.lineHits(label, [across]), JSON.stringify(label));
+    const kid = (id, children) => ({ id, name: id, children: children || null, symbols: children ? [] : [{ id: id + "#sym", name: "sym" }] });
+    app.__kids = [kid("app"), kid("ui", [kid("board")]), kid("store"), kid("quiet"), kid("billing")];
+    vm.runInContext(`
+      for (const key of Object.keys(parentOf)) delete parentOf[key];
+      Object.assign(parentOf, { app: null, ui: null, board: "ui", store: null, quiet: null, billing: null, stripe: null });
+      for (const key of Object.keys(byId)) delete byId[key];
+      byId.ui = __kids[1];
+      byId.billing = __kids[4];
+      CONCEPT_MARK = new Map([["ui", "changed"], ["board", "changed"], ["billing", "added"]]);
+      PROVISIONAL = new Set();
+      SYMBOL_MARK = new Map([["store#sym", "changed"]]);
+      M = { relationships: [
+        { from: "app", to: "ui", label: "opens" },
+        { from: "billing", to: "stripe", label: "charges" },
+        { from: "store", to: "app", label: "reads" },
+      ] };
+      DIFF = { overview: { items: [{ id: "billing", name: "Billing" }, { id: "ui", name: "UI" }] } };
+      HISTORY = null;
+      view = { scope: "", tab: "concept" };
+    `, app);
+    assert.strictEqual(app.diffViewScope(), "changed");
+    const changed = app.filterScopeKids(app.__kids, null, "changed");
+    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["app", "ui", "store", "billing"]);
+    assert.ok(changed.changedIds.has("ui") && changed.changedIds.has("billing") && changed.changedIds.has("store"));
+    assert.ok(!changed.changedIds.has("app") && !changed.changedIds.has("quiet"));
+    const billing = app.filterScopeKids(app.__kids, null, "billing");
+    assert.deepStrictEqual(billing.kids.map((row) => row.id), ["billing"]);
+    const edges = [
+      { a: "billing", b: "stripe" },
+      { a: "store", b: "app" },
+      { a: "app", b: "ui" },
+    ];
+    assert.deepStrictEqual(
+      edges.filter((e) => app.changeEdge(e, billing.changedIds, false)).map((e) => e.a + ">" + e.b),
+      ["billing>stripe"],
+    );
+    vm.runInContext('view = { scope: "all", tab: "concept" };', app);
+    assert.strictEqual(app.diffViewScope(), "all");
+    vm.runInContext('view = { scope: "ui", tab: "concept" };', app);
+    assert.strictEqual(app.diffViewScope(), "ui");
+    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 8 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 8);
+    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 12 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 0);
+    assert.strictEqual(app.diffAreaTabs([{ id: "billing", name: "Billing" }, { id: "ui", name: "UI" }]).length, 2);
+    assert.strictEqual(app.diffAreaTabs([
+      { id: "a", name: "Release check and desktop update flow" },
+      { id: "b", name: "Static viewer comparison chrome" },
+      { id: "c", name: "Command line history replay" },
+      { id: "d", name: "Architecture history judgement tasks" },
+      { id: "e", name: "Desktop shell update check banner" },
+    ]).length, 0);
+    vm.runInContext('view = { scope: "", tab: "concept" }; SYMBOL_MARK.set("fn", "changed");', app);
+    const narrowed = app.narrowLeaf({
+      id: "ui",
+      symbols: [{ id: "fn", name: "run", file: "ui.ts" }, { id: "helper", name: "help", file: "ui.ts" }, { id: "other", name: "other", file: "other.ts" }],
+      calls: [["fn", "helper"], ["other", "zzz"]],
+      ghosts: { zzz: { name: "zzz", concept: "app" } },
+      importsIn: [{ concept: "app", files: ["ui.ts"] }, { concept: "store", files: ["other.ts"] }],
+      reexports: [{ name: "run", def: "fn" }, { name: "other", def: "other" }],
+    });
+    assert.deepStrictEqual(narrowed.symbols.map((s) => s.id), ["fn", "helper"]);
+    assert.deepStrictEqual(narrowed.importsIn.map((imp) => imp.concept), ["app"]);
+    assert.deepStrictEqual(narrowed.reexports.map((row) => row.name), ["run"]);
+    vm.runInContext('view = { scope: "billing", tab: "concept" };', app);
+    const untouched = app.narrowLeaf({
+      id: "ui",
+      symbols: [{ id: "fn", name: "run" }, { id: "other", name: "other" }],
+      calls: [],
+      ghosts: {},
+    });
+    assert.strictEqual(untouched.symbols.length, 2);
+    vm.runInContext("DIFF = null;", app);
+    assert.strictEqual(app.diffViewScope(), null);
+    const html = fs.readFileSync(path.join(root, "src/cbi/viewer/index.html"), "utf8");
+    assert.match(html, /id="diff-scope"/);
+    assert.match(css, /#diff-scope\[hidden\] \{ display: none; \}/);
   }
 
   console.log("layout checks passed");
