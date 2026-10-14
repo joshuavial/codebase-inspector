@@ -2680,6 +2680,13 @@ function placeAround(arranged) {
   };
 }
 
+// Entries go in ELK's first layer. ELK throws on an edge between two first-layer nodes, so an
+// entry that another entry in view calls lays out after it (it keeps its start marker).
+function firstTier(children, edges) {
+  const entries = new Set(children.filter((n) => n.pinned).map((n) => n.id));
+  return new Set([...entries].filter((id) => !edges.some((e) => e.b === id && entries.has(e.a))));
+}
+
 // ELK lays out the inside of a concept. Edges with both ends inside stay in that interior.
 // Externals sit on the nearest side of the boundary (above, right, below, left). Above and
 // below, each edge keeps its own lane or a straight drop, and the row spreads for the label.
@@ -2752,14 +2759,11 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
     return { at, W, H, nodes, edges: retargetCrossing(crossing, memberOf), sideOf, want, groups };
   };
 
-  // Two first-tier boxes joined by an edge sit in one column; leave room for that edge's label.
-  // Stated edges keep a route so they still pull layers together, but no label lane.
-  const pinned = new Set(boundary.children.filter((n) => n.pinned).map((n) => n.id));
-  const tierLink = insideEdges.some((e) => pinned.has(e.a) && pinned.has(e.b) && e.text);
+  const pinned = firstTier(boundary.children, insideEdges);
   const layoutInside = (dir, wrapping, ratio) => elk.layout({
     id: "inner",
-    layoutOptions: { ...elkOptions({ dir, layer: 30, gap: tierLink ? 60 : 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
-    children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(n.pinned ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
+    layoutOptions: { ...elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
+    children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(pinned.has(n.id) ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
     edges: insideEdges.map(elkEdge),
   });
 

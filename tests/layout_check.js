@@ -187,6 +187,25 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
+  // Entries that call each other (a fundsorter top level). ELK threw "fromIndex: 2 > toIndex: 1"
+  // while both ends of an edge were in its first layer.
+  const entryIds = ["admin-ui", "api", "client-ui", "crawler", "platform", "public-ui", "workers"];
+  const kids = [...entryIds, "funding-engine", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
+  const calls = [["admin-ui", "api"], ["api", "crawler"], ["client-ui", "api"], ["public-ui", "api"], ["platform", "records"],
+    ["workers", "crawler"], ["workers", "funding-engine"], ["workers", "records"], ["funding-engine", "api"], ["platform", "api"],
+    ["records", "api"], ["workers", "api"], ["records", "crawler"], ["funding-engine", "records"], ["funding-engine", "platform"]]
+    .map(([a, b], i) => ({ id: "e" + i, a, b }));
+  const first = app.firstTier(kids, calls);
+  assert.deepStrictEqual([...first].sort(), ["admin-ui", "client-ui", "platform", "public-ui", "workers"]);
+  for (const [dir, wrapping] of [["RIGHT", null], ["RIGHT", "MULTI_EDGE"], ["DOWN", null]]) {
+    await elk.layout({
+      id: "inner",
+      layoutOptions: { ...app.elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": "2" } : {}) },
+      children: kids.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(first.has(n.id) ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
+      edges: calls.map((e) => ({ id: e.id, sources: [e.a], targets: [e.b], labels: [{ text: "calls", width: 90, height: 28 }] })),
+    });
+  }
+
   assert.strictEqual(app.sideRanks({ x: 10, y: 100 }, 400, 300)[0].side, "left");
   assert.strictEqual(app.sideRanks({ x: 380, y: 100 }, 400, 300)[0].side, "right");
   assert.strictEqual(app.sideRanks({ x: 200, y: 10 }, 400, 300)[0].side, "above");
