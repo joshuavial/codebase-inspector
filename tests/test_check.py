@@ -38,6 +38,24 @@ def test_secret_patterns_skip_hex_and_prose():
     # Measured Shannon entropy is about 4.48, under a 4.5 cut.
     token = "j0vjAGU6dUCjING2F4oerFrsbhQzh9eW"
     assert check.secret_kind(f"kept {token} locally") == "high-entropy token"
+    assert check.secret_kind("20250314_add_unique_workspace_member_fkey") == "high-entropy token"
+    assert check.secret_kind("db/migrations/20250314_add_unique_workspace_member_fkey") is None
+    assert check.secret_kind("20250314_add_unique_workspace_member_fkey", {
+        "20250314_add_unique_workspace_member_fkey",
+    }) is None
+
+
+def test_screen_region_ids_are_not_secrets_but_real_tokens_are():
+    region_id = "panel_20260827_selected_membership"
+    answer = {
+        "screens": [{
+            "id": "main", "name": "Main", "device": "desktop",
+            "root": {"id": region_id, "layout": "column", "children": []},
+        }],
+    }
+    assert check._answer_secret(answer, check._region_ids(answer)) is None
+    answer["screens"][0]["root"]["text"] = "j0vjAGU6dUCjING2F4oerFrsbhQzh9eW"
+    assert check._answer_secret(answer, check._region_ids(answer)) == "high-entropy token"
 
 
 def test_not_a_repo_and_not_initialised(make_repo, monkeypatch, capsys, tmp_path):

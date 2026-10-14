@@ -126,7 +126,7 @@ def restore(out, saved):
         path.write_bytes(data)
 
 
-def secret_kind(text):
+def secret_kind(text, ignored=()):
     """The name of the first key or token pattern in text, or None.
 
     Hex strings are skipped: file keys and blob ids are hex, and a uniform hex
@@ -139,8 +139,11 @@ def secret_kind(text):
     for name, pattern in _PREFIXES:
         if pattern.search(text):
             return name
+    ignored = set(ignored)
     for match in _TOKEN.finditer(text):
         token = match.group(0)
+        if "/" in token or token in ignored:
+            continue
         if re.fullmatch(r"[0-9a-fA-F]+", token):
             continue
         if not any(ch.isalpha() for ch in token) or not any(ch.isdigit() for ch in token):
@@ -357,6 +360,7 @@ def _secret_findings(conn, root, out):
     path = _answers_file(out)
     found = []
     seen = set()
+    tracked = set(tasks._tracked_paths(conn))
     if path.is_file():
         shown = _show(root, path)
         for number, line in enumerate(path.read_text().splitlines(), 1):
@@ -367,7 +371,9 @@ def _secret_findings(conn, root, out):
             except json.JSONDecodeError:
                 continue
             answer = data.get("answer") if isinstance(data, dict) else None
-            kind = _answer_secret(answer)
+            task_kind = data.get("kind") if isinstance(data, dict) else None
+            ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
+            kind = _answer_secret(answer, ignored)
             if not kind:
                 continue
             key = (data.get("kind"), data.get("key"), kind)
@@ -377,7 +383,9 @@ def _secret_findings(conn, root, out):
         return found
     shown = _show(root, path)
     for (task_kind, key), row in sorted(team._collect(conn).items()):
-        kind = _answer_secret(row["answer"])
+        answer = row["answer"]
+        ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
+        kind = _answer_secret(answer, ignored)
         if not kind or (task_kind, key, kind) in seen:
             continue
         found.append(_finding(
@@ -388,12 +396,31 @@ def _secret_findings(conn, root, out):
     return found
 
 
-def _answer_secret(answer):
+def _answer_secret(answer, ignored=()):
     for text in _strings(answer):
-        kind = secret_kind(text)
+        kind = secret_kind(text, ignored)
         if kind:
             return kind
     return None
+
+
+def _region_ids(answer):
+    """IDs in sketch-screens region trees, where arbitrary digit-heavy names are valid."""
+    found = set()
+
+    def walk(region):
+        if not isinstance(region, dict):
+            return
+        if isinstance(region.get("id"), str):
+            found.add(region["id"])
+        for child in region.get("children") or []:
+            walk(child)
+
+    if isinstance(answer, dict):
+        for screen in answer.get("screens") or []:
+            if isinstance(screen, dict):
+                walk(screen.get("root"))
+    return found
 
 
 def _strings(value):
