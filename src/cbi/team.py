@@ -113,6 +113,8 @@ def import_answers(conn, out):
         if row["protocol"] != tasks.PROTOCOL_VERSION:
             continue
         if row["kind"] == FILE_KIND:
+            if row["key"] == tasks.EMPTY_BLOB_ID:
+                continue
             if not isinstance(row["answer"], str) or not row["answer"].strip():
                 continue
             conn.execute(
@@ -275,7 +277,8 @@ def _collect(conn):
         row[0] for row in conn.execute(
             "SELECT DISTINCT content_hash FROM nodes "
             "WHERE kind = 'file' AND content_hash IS NOT NULL "
-            "AND json_extract(attrs, '$.role') IN ('code', 'test')"
+            "AND content_hash != ? AND json_extract(attrs, '$.role') IN ('code', 'test')",
+            (tasks.EMPTY_BLOB_ID,),
         )
     ]
     if hashes:

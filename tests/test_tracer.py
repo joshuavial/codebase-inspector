@@ -170,6 +170,41 @@ def test_answer_cache_is_shared_across_repos(pair_repo, tmp_path, capsys, answer
     assert conn.execute("SELECT count(*) FROM tasks WHERE state = 'open' AND kind = 'summarise-files'").fetchone() == (0,)
 
 
+def test_empty_files_have_a_fixed_summary_and_ignore_the_shared_cache(
+        make_repo, monkeypatch, capsys, answer_cache):
+    first = make_repo({"empty.py": "", "work.py": "def work():\n    return 1\n"}, name="first-empty")
+    monkeypatch.chdir(first)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    conn = sqlite3.connect(first / ".cbi" / "model.db")
+    empty_hash = conn.execute("SELECT content_hash FROM nodes WHERE path = 'empty.py'").fetchone()[0]
+    summary = conn.execute("SELECT summary, summary_source FROM nodes WHERE path = 'empty.py'").fetchone()
+    assert summary == ("Empty file.", None)
+    inputs = [node for raw, in conn.execute(
+        "SELECT inputs FROM tasks WHERE kind = 'summarise-files' AND state = 'open'") for node in json.loads(raw)]
+    empty_id = conn.execute("SELECT id FROM nodes WHERE path = 'empty.py'").fetchone()[0]
+    assert empty_id not in inputs
+    conn.close()
+
+    cache = sqlite3.connect(answer_cache / "answers.db")
+    cache.execute(
+        "INSERT OR REPLACE INTO file_summaries (content_hash, protocol, summary) VALUES (?, 1, ?)",
+        (empty_hash, "Private repository-specific description."),
+    )
+    cache.commit()
+    cache.close()
+
+    second = make_repo({"marker.py": "", "job.py": "def job():\n    return 2\n"}, name="second-empty")
+    monkeypatch.chdir(second)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    shown = run_json(capsys, "show", "marker.py")
+    assert shown["summary"] == "Empty file."
+    assert shown["summary_source"] is None
+    assert all("marker.py" not in [item["path"] for item in run_json(capsys, "task", task["id"])["files"]]
+               for task in run_json(capsys, "tasks", "--kind", "summarise-files"))
+
+
 def test_read_commands_need_a_model(make_repo, monkeypatch, capsys):
     monkeypatch.chdir(make_repo({"a.ts": "export {};\n"}))
     for argv in (["show", "a.ts"], ["search", "a"], ["tasks"], ["build"]):

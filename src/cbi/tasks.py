@@ -16,11 +16,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from cbi import concepts, manifests, resolve, screens, store
-from cbi.files import PARSER_VERSION
+from cbi.files import PARSER_VERSION, blob_id
 
 # Bump when briefs or answers change meaning; cached answers from older versions are ignored.
 PROTOCOL_VERSION = 1
 FILES_PER_TASK = 15
+EMPTY_BLOB_ID = blob_id(b"")
+EMPTY_FILE_SUMMARY = "Empty file."
 
 SCHEMAS = {
     "summarise-files": {
@@ -280,9 +282,17 @@ def refresh(conn, root, out=None):
     """
     from cbi import team
     team.import_answers(conn, out)
+    # Empty blobs are identical in every repository. Their lack of content needs no
+    # judgement and must never pick up a repository-specific answer from the shared cache.
+    conn.execute(
+        "UPDATE nodes SET summary = ?, summary_source = NULL WHERE kind IN ('file', 'doc') AND content_hash = ?",
+        (EMPTY_FILE_SUMMARY, EMPTY_BLOB_ID),
+    )
     rows = conn.execute(
         "SELECT id, content_hash, parent_id FROM nodes "
-        "WHERE kind = 'file' AND json_extract(attrs, '$.role') IN ('code', 'test') ORDER BY parent_id, path"
+        "WHERE kind = 'file' AND content_hash != ? "
+        "AND json_extract(attrs, '$.role') IN ('code', 'test') ORDER BY parent_id, path",
+        (EMPTY_BLOB_ID,),
     ).fetchall()
     by_group = {}
     for node_id, content_hash, parent in rows:
