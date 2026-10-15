@@ -148,7 +148,8 @@
             "tests/test_files.py",
             "tests/test_ids.py",
             "tests/test_refs.py",
-            "tests/test_scan.py"
+            "tests/test_scan.py",
+            "tests/test_scale.py"
           ]
         },
         {
@@ -176,7 +177,8 @@
             "tests/test_routes.py",
             "tests/test_vue.py",
             "src/cbi/data.py",
-            "tests/test_data_schema.py"
+            "tests/test_data_schema.py",
+            "tests/test_function_references.py"
           ]
         },
         {
@@ -252,7 +254,9 @@
               "files": [
                 "scripts/smoke_compare.py",
                 "src/cbi/diff.py",
-                "tests/test_diff.py"
+                "tests/test_diff.py",
+                "src/cbi/change_overview.py",
+                "tests/test_change_overview.py"
               ]
             },
             {
