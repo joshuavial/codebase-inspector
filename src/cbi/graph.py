@@ -117,22 +117,25 @@ _NEXT_FILE = re.compile(
 
 
 def _framework_roots(files):
-    """Paths loaded by framework naming conventions rather than code references."""
-    paths = {file["path"] for file in files}
-    roots = {
-        path for path in paths
-        if _NEXT_FILE.search(path)
-        or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))
-    }
-    for config in paths:
-        if not re.search(r"(?:^|/)docusaurus\.config\.[cm]?[jt]s$", config):
-            continue
-        root = posixpath.dirname(config)
-        prefix = root + "/" if root else ""
-        pages = prefix + "src/pages/"
-        for path in paths:
-            if path in (prefix + "sidebars.ts", prefix + "sidebars.js") or path.startswith(pages):
-                roots.add(path)
+    """File IDs loaded by framework naming conventions rather than code references."""
+    roots = set()
+    by_workspace = defaultdict(dict)
+    for file in files:
+        by_workspace[file["wid"]][file["path"]] = file["id"]
+    for paths in by_workspace.values():
+        for path, fid in paths.items():
+            if (_NEXT_FILE.search(path)
+                    or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))):
+                roots.add(fid)
+        for config in paths:
+            if not re.search(r"(?:^|/)docusaurus\.config\.[cm]?[jt]s$", config):
+                continue
+            root = posixpath.dirname(config)
+            prefix = root + "/" if root else ""
+            pages = prefix + "src/pages/"
+            for path, fid in paths.items():
+                if path in (prefix + "sidebars.ts", prefix + "sidebars.js") or path.startswith(pages):
+                    roots.add(fid)
     return roots
 
 
@@ -357,7 +360,7 @@ def orphans(conn, args):
     entry_ids = set(entries)
     framework_roots = _framework_roots(files)
     unreferenced = [f for f in code if f["id"] not in referenced and f["id"] not in entry_ids
-                    and f["path"] not in framework_roots and not _left_out(f["path"])]
+                    and f["id"] not in framework_roots and not _left_out(f["path"])]
 
     callers = defaultdict(set)
     for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'calls'"):
@@ -389,7 +392,7 @@ def orphans(conn, args):
             imports_from[src].add(dst)
         if src not in code_ids and dst in code_ids:
             html_roots.append(dst)
-    stack = list(entry_ids) + (html_roots if entry_ids else [])
+    stack = list(entry_ids) + (html_roots + list(framework_roots) if entry_ids else [])
     while stack:
         fid = stack.pop()
         if fid in reached:
@@ -398,7 +401,7 @@ def orphans(conn, args):
         stack.extend(imports_from[fid] - reached)
     unreachable = [] if not entry_ids else [
         f for f in code
-        if f["id"] not in reached and f["path"] not in framework_roots and not _left_out(f["path"])
+        if f["id"] not in reached and f["id"] not in framework_roots and not _left_out(f["path"])
     ]
 
     package_dirs = {}

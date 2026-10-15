@@ -335,7 +335,8 @@ def test_orphans_leave_framework_discovered_files_out(make_repo, monkeypatch, ca
     root = make_repo({
         "package.json": json.dumps({"name": "web", "main": "server.ts"}),
         "server.ts": "export function serve() { return 1; }\n",
-        "app/layout.tsx": "export default function Shell() { return <main />; }\n",
+        "app/layout.tsx": "import { Frame } from '../ui/frame';\nexport default function Shell() { return <Frame />; }\n",
+        "ui/frame.tsx": "export function Frame() { return <main />; }\n",
         "app/products/[sku]/page.tsx": "export default function Product() { return <p />; }\n",
         "app/api/products/route.ts": "export function GET() { return new Response('ok'); }\n",
         "app/guide/_meta.js": "export default { start: 'Start' };\n",
