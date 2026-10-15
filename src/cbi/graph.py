@@ -41,8 +41,8 @@ deployable reaches.
 Four lists. Production files with no import, call or literal path reference
 from another production file, and not the target of a script tag in an HTML
 file (tests do not count as callers); deployable entry points and files loaded
-by Next, Nextra or Docusaurus naming conventions are roots and are left off
-this list. A path reference is path.join or path.resolve of
+by Next, Nextra, Docusaurus, agent skills or extension hosts are roots and are
+left off this list. A path reference is path.join or path.resolve of
 strings, optionally from __dirname, and a compiled name such as preload.js
 maps back to preload.ts through the tsconfig outDir. Tool configs (vite,
 vitest, jest, Playwright, code generators, eslint, tailwind, postcss,
@@ -123,7 +123,7 @@ _NEXT_FILE = re.compile(
 )
 
 
-def _framework_roots(files):
+def _framework_roots(conn, files):
     """File IDs loaded by framework naming conventions rather than code references."""
     roots = set()
     by_workspace = defaultdict(dict)
@@ -132,7 +132,8 @@ def _framework_roots(files):
     for paths in by_workspace.values():
         for path, fid in paths.items():
             if (_NEXT_FILE.search(path)
-                    or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))):
+                    or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))
+                    or re.search(r"(?:^|/)\.(?:pi|omp)/extensions/", path)):
                 roots.add(fid)
         for config in paths:
             if not re.search(r"(?:^|/)docusaurus\.config\.[cm]?[jt]s$", config):
@@ -143,6 +144,12 @@ def _framework_roots(files):
             for path, fid in paths.items():
                 if path in (prefix + "sidebars.ts", prefix + "sidebars.js") or path.startswith(pages):
                     roots.add(fid)
+    file_ids = {file["id"] for file in files}
+    for (fid,) in conn.execute(
+            "SELECT e.src FROM edges e JOIN nodes n ON n.id = e.dst "
+            "WHERE e.kind = 'part_of' AND n.display_kind IN ('skill', 'repertoire')"):
+        if fid in file_ids:
+            roots.add(fid)
     return roots
 
 
@@ -365,7 +372,7 @@ def orphans(conn, args):
             referenced.add(dst)
     entries = _entries(conn, by_id)
     entry_ids = set(entries)
-    framework_roots = _framework_roots(files)
+    framework_roots = _framework_roots(conn, files)
     unreferenced = [f for f in code if f["id"] not in referenced and f["id"] not in entry_ids
                     and f["id"] not in framework_roots and not _left_out(f["path"])]
 
