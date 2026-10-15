@@ -491,7 +491,9 @@ class _Model:
         """Directories an absolute import from a file in directory is looked up under, in order:
         the directory itself when it is not a package (scripts, pytest's rootdir insertion), the
         nearest pyproject's `src/` and directory, the same for each of its `[tool.uv.sources]`
-        path sources, then the workspace's `src/` and root."""
+        path sources, the directory above the file's outermost importable package, then the
+        workspace's `src/` and root. A directory whose name is not an identifier cannot be a
+        package, so it is a root even when it holds an `__init__.py`."""
         key = (wid, directory)
         if key not in self._py_roots_cache:
             roots = [] if posixpath.join(directory, "__init__.py") in self.by_path[wid] else [directory]
@@ -499,7 +501,11 @@ class _Model:
             if project:
                 for d in [project[0], *project[1]]:
                     roots += [posixpath.join(d, "src"), d]
-            roots += ["src", ""]
+            top = directory
+            while (top and posixpath.basename(top).isidentifier()
+                   and posixpath.join(top, "__init__.py") in self.by_path[wid]):
+                top = posixpath.dirname(top)
+            roots += [top, "src", ""]
             self._py_roots_cache[key] = list(dict.fromkeys(roots))
         return self._py_roots_cache[key]
 

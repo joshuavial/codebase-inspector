@@ -351,3 +351,21 @@ def test_env(mocker):
     unmatched = [short(n) for n, in conn.execute(
         "SELECT node_id FROM diagnostics WHERE kind = 'unmatched_test'")]
     assert unmatched == ["tests/test_env_only.py"]
+
+
+def test_imports_resolve_under_a_package_dir_python_cannot_name(make_repo, monkeypatch):
+    # web-api/ holds an __init__.py but its name is not an identifier, so it is the import root.
+    root = make_repo({
+        "web-api/__init__.py": "",
+        "web-api/main.py": "from core.jobs import run\nrun()\n",
+        "web-api/core/__init__.py": "",
+        "web-api/core/jobs.py": "from core.util import helper\n\ndef run():\n    return helper()\n",
+        "web-api/core/util.py": "def helper():\n    return 1\n",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    rows = {(short(s), short(d)) for s, d in conn.execute("SELECT src, dst FROM edges WHERE kind = 'imports'")}
+    assert ("web-api/main.py", "web-api/core/jobs.py") in rows
+    assert ("web-api/core/jobs.py", "web-api/core/util.py") in rows
