@@ -620,9 +620,9 @@ def _task_id(workspace_id):
     return "dc-" + hashlib.sha1(workspace_id.encode()).hexdigest()[:8]
 
 
-def refresh(conn, out=None, root=None):
+def refresh(conn, out=None, root=None, previous=None):
     """Open, close or fill define-concepts from the current files and concepts.json."""
-    from cbi import screens
+    from cbi import screens, tasks, team
     if not structure_confirmed(conn):
         conn.execute("DELETE FROM tasks WHERE kind = 'define-concepts'")
         screens.refresh(conn, out, root)
@@ -642,7 +642,19 @@ def refresh(conn, out=None, root=None):
     pairs = _pairs(conn, files)
     digest = _input_hash(files, pairs)
     cached = _cached(conn, digest)
-    # A deleted concepts.json is restored from the cache. An existing file, even a broken one, is kept.
+    committed = team.committed_answer(out, "define-concepts", digest, tasks.PROTOCOL_VERSION)
+    previous_data = _document(previous)
+    if team.committed_answers_changed(conn, out) and isinstance(committed, dict) \
+            and previous_data is not None and committed != previous_data \
+            and not problems(conn, {**committed, "input_hash": digest})[0]:
+        written = json.dumps(committed, indent=2) + "\n"
+        if data != committed and out is not None:
+            (out / "concepts.json").write_text(written)
+            apply(conn, written)
+        _save_snapshot(conn, tracked, committed)
+        data = committed
+    # A deleted concepts.json is restored from the cache. Other existing files are kept unless
+    # the team answer above changed since this model's previous scan.
     absent = out is not None and not (out / "concepts.json").exists()
     if cached and data is None and absent and not problems(conn, {**cached, "input_hash": digest})[0]:
         written = json.dumps(cached, indent=2) + "\n"

@@ -356,6 +356,80 @@ def test_clone_has_no_open_tasks_and_the_same_concept_map(make_repo, monkeypatch
     assert (clone / ".cbi" / "viewer" / "data" / "concepts.js").read_text() == original
 
 
+def test_scan_prefers_a_newer_committed_concept_answer(make_repo, monkeypatch, capsys, tmp_path):
+    seed = make_repo(MAP, name="concept-seed")
+    monkeypatch.chdir(seed)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    commit(seed, "base map", judgement_paths(seed))
+
+    origin = tmp_path / "concept-origin.git"
+    local = tmp_path / "concept-local"
+    refresh = tmp_path / "concept-refresh"
+    git(tmp_path, "clone", "--quiet", "--bare", str(seed), str(origin))
+    git(tmp_path, "clone", "--quiet", str(origin), str(local))
+    git(tmp_path, "clone", "--quiet", str(origin), str(refresh))
+
+    monkeypatch.chdir(local)
+    assert main(["scan"]) == 0
+    assert run_json(capsys, "tasks", "--kind", "define-concepts") == []
+    conn = sqlite3.connect(local / ".cbi" / "model.db")
+    local_task = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    local_brief = run_json(capsys, "task", local_task)
+    local_answer = concepts_answer(local_brief)
+    local_answer["summary"] = "The locally accepted application map."
+    code, _, err = submit(capsys, tmp_path, local_task, local_answer)
+    assert code == 0, err
+    git(local, "checkout", "--", ".cbi/answers.jsonl", ".cbi/concepts.json")
+    assert git(local, "status", "--porcelain").stdout == ""
+
+    monkeypatch.chdir(refresh)
+    (refresh / "b.ts").write_text((refresh / "b.ts").read_text() + "// revised\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    conn = sqlite3.connect(refresh / ".cbi" / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    brief = run_json(capsys, "task", task_id)
+    newer = concepts_answer(brief)
+    newer["summary"] = "The revised application map."
+    newer["concepts"][0]["name"] = "Foundation"
+    code, _, err = submit(capsys, tmp_path, task_id, newer)
+    assert code == 0, err
+    commit(refresh, "revise map", ["b.ts", ".cbi/answers.jsonl", ".cbi/concepts.json"])
+    git(refresh, "push", "--quiet", "origin", "main")
+
+    monkeypatch.chdir(local)
+    git(local, "pull", "--quiet", "--ff-only")
+    code, out, err = run(capsys, "scan")
+    assert code == 0, err
+    assert "0 judgement tasks open, 0 blocked" in out
+    assert run_json(capsys, "tasks", "--kind", "define-concepts") == []
+    assert json.loads((local / ".cbi" / "concepts.json").read_text())["summary"] == "The revised application map."
+
+
+def test_an_unrelated_committed_answer_does_not_refresh_the_concept_snapshot(
+        make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo(MAP, name="unrelated-answer")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    commit(root, "base map", judgement_paths(root))
+    (root / "b.ts").write_text((root / "b.ts").read_text() + "// revised\n")
+    assert main(["scan"]) == 0
+    assert len(run_json(capsys, "tasks", "--kind", "define-concepts")) == 1
+    answer_files(capsys, tmp_path)
+    commit(root, "update file summary", ["b.ts", ".cbi/answers.jsonl"])
+
+    assert main(["scan"]) == 0
+    assert len(run_json(capsys, "tasks", "--kind", "define-concepts")) == 1
+
+
 def test_two_branches_merge_answers_without_a_conflict(make_repo, monkeypatch, capsys, tmp_path):
     root = make_repo({"a.py": "def a():\n    return 1\n", "b.py": "def b():\n    return 2\n"}, name="repo")
     monkeypatch.chdir(root)

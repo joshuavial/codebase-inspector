@@ -490,6 +490,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
             if commit:
                 store.set_meta(conn, "commit", commit)
             if not shortcut:
+                previous_concepts = store.get_meta(conn, "concepts_json")
                 known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
                 store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states))
                 _parse_changed(conn, root, tracked, states, old, known)
@@ -499,7 +500,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None):
                 manifests.apply(conn, root, _read(out / "structure.json"))
                 concepts.apply(conn, concepts_text)
                 screens.apply(conn, screens_text, root)
-                tasks.refresh(conn, root, out)
+                tasks.refresh(conn, root, out, previous_concepts=previous_concepts)
                 # ponytail: full search rebuild per scan; index only changed nodes if it gets slow.
                 store.reindex(conn)
                 docs.index(conn, root)

@@ -133,6 +133,34 @@ def import_answers(conn, out):
     return applied
 
 
+def committed_answer(out, kind, key, protocol):
+    """The current committed answer for a task key, or None.
+
+    This is the same last-row-wins view import_answers writes into the shared
+    cache. Callers use it when accepting the row also updates model-local state.
+    """
+    directory = team_dir(out)
+    path = directory / ANSWERS_NAME if directory is not None else None
+    if path is None or not path.is_file():
+        return None
+    row = _parse(path.read_text()).get((kind, key))
+    return row["answer"] if row and row["protocol"] == protocol else None
+
+
+def committed_answers_changed(conn, out):
+    """Whether team answers differ from the answers in this model's last scan."""
+    directory = team_dir(out)
+    path = directory / ANSWERS_NAME if directory is not None else None
+    if path is None or not path.is_file():
+        return False
+    try:
+        fingerprint = json.loads(store.get_meta(conn, "fingerprint") or "{}")
+    except json.JSONDecodeError:
+        return False
+    previous = fingerprint.get("answers") if isinstance(fingerprint, dict) else None
+    return isinstance(previous, str) and previous != files.ignore_token(path.read_text())
+
+
 def sync(conn, out):
     """Rewrite answers.jsonl from the cache when this model is a team repo. Otherwise do nothing."""
     directory = team_dir(out)

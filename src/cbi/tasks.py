@@ -273,7 +273,7 @@ def _input_hash(files):
     return hashlib.sha1(text.encode()).hexdigest()[:16]
 
 
-def refresh(conn, root, out=None):
+def refresh(conn, root, out=None, previous_concepts=None):
     """Fill file summaries from the cache and open a task for each batch with uncached files.
 
     Files are batched by folder (the workspace for files at its root) in path order,
@@ -330,7 +330,7 @@ def refresh(conn, root, out=None):
     refresh_structure(conn, root, out)
     refresh_summaries(conn)
     # Last, so a confirm-structure task created above is visible to the gate.
-    concepts.refresh(conn, out, root)
+    concepts.refresh(conn, out, root, previous=previous_concepts)
 
 
 NODE_FIELDS = ("id", "parent_id", "kind", "display_kind", "name", "workspace_id", "path", "summary",
