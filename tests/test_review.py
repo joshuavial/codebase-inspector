@@ -329,3 +329,26 @@ test("reads env", () => { file; });
     assert ("src/mobile/fixture.html", "src/mobile/fixture-main.tsx") in refs
     assert ("web/index.html", "web/extra.ts") in refs
     assert all(src != "electron/env.test.ts" for src, _dst in refs)
+
+
+def test_orphans_leave_framework_discovered_files_out(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        "package.json": json.dumps({"name": "web", "main": "server.ts"}),
+        "server.ts": "export function serve() { return 1; }\n",
+        "app/layout.tsx": "export default function Shell() { return <main />; }\n",
+        "app/products/[sku]/page.tsx": "export default function Product() { return <p />; }\n",
+        "app/api/products/route.ts": "export function GET() { return new Response('ok'); }\n",
+        "app/guide/_meta.js": "export default { start: 'Start' };\n",
+        "drizzle.config.ts": "export default { schema: './schema.ts' };\n",
+        "manual.ts": "export function forgotten() { return 1; }\n",
+        "handbook/docusaurus.config.ts": "export default { title: 'Handbook' };\n",
+        "handbook/sidebars.ts": "export default { docs: [] };\n",
+        "handbook/src/pages/index.tsx": "export default function Home() { return <h1>Hi</h1>; }\n",
+    }, name="framework-roots")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+    body = run_json(capsys, "orphans")
+    expected = {"manual.ts"}
+    assert {row["path"] for row in body["unreferenced"]} == expected
+    assert {row["path"] for row in body["unreachable"]} == expected

@@ -40,11 +40,12 @@ deployable reaches.
 
 Four lists. Production files with no import, call or literal path reference
 from another production file, and not the target of a script tag in an HTML
-file (tests do not count as callers); deployable entry points are roots and
-are left off this list. A path reference is path.join or path.resolve of
+file (tests do not count as callers); deployable entry points and files loaded
+by Next, Nextra or Docusaurus naming conventions are roots and are left off
+this list. A path reference is path.join or path.resolve of
 strings, optionally from __dirname, and a compiled name such as preload.js
 maps back to preload.ts through the tsconfig outDir. Tool configs (vite,
-vitest, jest, eslint, tailwind, postcss, electron-builder) and .d.ts files
+vitest, jest, eslint, tailwind, postcss, electron-builder, Drizzle, Docusaurus) and .d.ts files
 are left out. Exported symbols with at least one caller, all of them in
 test files. Production files not reachable by imports, path references or
 HTML script entries from a resolved deployable entry point; when the model
@@ -98,7 +99,7 @@ _METRIC = {"fan-in": "fan_in", "fan-out": "fan_out", "loc": "loc", "symbols": "s
 _FILE_CAP = 10
 _DETAIL_CAP = 500
 _LEFT_OUT = re.compile(
-    r"(?:^|/)(?:vite|vitest|jest|eslint|tailwind|postcss)\.config\.[^/]+$"
+    r"(?:^|/)(?:vite[^/]*|vitest|jest|eslint|tailwind|postcss|drizzle|docusaurus)\.config\.[^/]+$"
     r"|(?:^|/)\.eslintrc(?:\.[^/]+)?$"
     r"|(?:^|/)electron-builder(?:\.config)?\.[^/]+$"
 )
@@ -107,6 +108,32 @@ _LEFT_OUT = re.compile(
 def _left_out(path):
     """Tool configs and TypeScript declaration files are not production code."""
     return path.endswith(".d.ts") or bool(_LEFT_OUT.search(path))
+
+
+_NEXT_FILE = re.compile(
+    r"(?:^|/)app(?:/.*)?/(?:page|layout|route|default|loading|error|global-error|not-found|template)"
+    r"\.[cm]?[jt]sx?$"
+)
+
+
+def _framework_roots(files):
+    """Paths loaded by framework naming conventions rather than code references."""
+    paths = {file["path"] for file in files}
+    roots = {
+        path for path in paths
+        if _NEXT_FILE.search(path)
+        or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))
+    }
+    for config in paths:
+        if not re.search(r"(?:^|/)docusaurus\.config\.[cm]?[jt]s$", config):
+            continue
+        root = posixpath.dirname(config)
+        prefix = root + "/" if root else ""
+        pages = prefix + "src/pages/"
+        for path in paths:
+            if path in (prefix + "sidebars.ts", prefix + "sidebars.js") or path.startswith(pages):
+                roots.add(path)
+    return roots
 
 
 def _print_json(value):
@@ -328,8 +355,9 @@ def orphans(conn, args):
             referenced.add(dst)
     entries = _entries(conn, by_id)
     entry_ids = set(entries)
+    framework_roots = _framework_roots(files)
     unreferenced = [f for f in code if f["id"] not in referenced and f["id"] not in entry_ids
-                    and not _left_out(f["path"])]
+                    and f["path"] not in framework_roots and not _left_out(f["path"])]
 
     callers = defaultdict(set)
     for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'calls'"):
@@ -368,7 +396,10 @@ def orphans(conn, args):
             continue
         reached.add(fid)
         stack.extend(imports_from[fid] - reached)
-    unreachable = [] if not entry_ids else [f for f in code if f["id"] not in reached and not _left_out(f["path"])]
+    unreachable = [] if not entry_ids else [
+        f for f in code
+        if f["id"] not in reached and f["path"] not in framework_roots and not _left_out(f["path"])
+    ]
 
     package_dirs = {}
     packages = []
