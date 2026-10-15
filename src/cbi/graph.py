@@ -45,7 +45,8 @@ by Next, Nextra or Docusaurus naming conventions are roots and are left off
 this list. A path reference is path.join or path.resolve of
 strings, optionally from __dirname, and a compiled name such as preload.js
 maps back to preload.ts through the tsconfig outDir. Tool configs (vite,
-vitest, jest, eslint, tailwind, postcss, electron-builder, Drizzle, Docusaurus) and .d.ts files
+vitest, jest, eslint, tailwind, postcss, electron-builder, Next, OpenNext,
+Drizzle, Docusaurus) and .d.ts files
 are left out. Exported symbols with at least one caller, all of them in
 test files. Production files not reachable by imports, path references or
 HTML script entries from a resolved deployable entry point; when the model
@@ -99,7 +100,8 @@ _METRIC = {"fan-in": "fan_in", "fan-out": "fan_out", "loc": "loc", "symbols": "s
 _FILE_CAP = 10
 _DETAIL_CAP = 500
 _LEFT_OUT = re.compile(
-    r"(?:^|/)(?:vite[^/]*|vitest|jest|eslint|tailwind|postcss|drizzle|docusaurus)\.config\.[^/]+$"
+    r"(?:^|/)(?:vite[^/]*|vitest|jest|eslint|tailwind|postcss|next|open-next|drizzle|docusaurus)"
+    r"\.config\.[^/]+$"
     r"|(?:^|/)\.eslintrc(?:\.[^/]+)?$"
     r"|(?:^|/)electron-builder(?:\.config)?\.[^/]+$"
 )
@@ -111,8 +113,10 @@ def _left_out(path):
 
 
 _NEXT_FILE = re.compile(
-    r"(?:^|/)app(?:/.*)?/(?:page|layout|route|default|loading|error|global-error|not-found|template)"
-    r"\.[cm]?[jt]sx?$"
+    r"(?:^|/)(?:"
+    r"app(?:/.*)?/(?:page|layout|route|default|loading|error|global-error|not-found|template|robots|sitemap|manifest)"
+    r"|(?:src/)?middleware|(?:src/)?mdx-components"
+    r")\.[cm]?[jt]sx?$"
 )
 
 
