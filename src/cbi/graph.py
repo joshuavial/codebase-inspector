@@ -199,6 +199,23 @@ def _file_of(nid, file_ids):
     return base if base in file_ids else None
 
 
+def _python_initializers(file_ids, by_id):
+    """Package initializers Python executes before the selected modules."""
+    by_path = {(file["wid"], file["path"]): file["id"] for file in by_id.values()}
+    found = set()
+    for fid in file_ids:
+        file = by_id.get(fid)
+        if not file or not file["path"].endswith(".py"):
+            continue
+        directory = posixpath.dirname(file["path"])
+        while directory:
+            init = by_path.get((file["wid"], posixpath.join(directory, "__init__.py")))
+            if init:
+                found.add(init)
+            directory = posixpath.dirname(directory)
+    return found
+
+
 # --- hotspots -------------------------------------------------------------------
 
 
@@ -373,6 +390,7 @@ def orphans(conn, args):
     entries = _entries(conn, by_id)
     entry_ids = set(entries)
     framework_roots = _framework_roots(conn, files)
+    referenced.update(_python_initializers(referenced | entry_ids | framework_roots, by_id))
     unreferenced = [f for f in code if f["id"] not in referenced and f["id"] not in entry_ids
                     and f["id"] not in framework_roots and not _left_out(f["path"])]
 
@@ -412,6 +430,7 @@ def orphans(conn, args):
         if fid in reached:
             continue
         reached.add(fid)
+        stack.extend(_python_initializers({fid}, by_id) - reached)
         stack.extend(imports_from[fid] - reached)
     unreachable = [] if not entry_ids else [
         f for f in code

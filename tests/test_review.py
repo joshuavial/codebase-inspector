@@ -333,8 +333,11 @@ test("reads env", () => { file; });
 
 def test_orphans_leave_framework_discovered_files_out(make_repo, monkeypatch, capsys):
     root = make_repo({
-        "package.json": json.dumps({"name": "web", "main": "server.ts"}),
+        "package.json": json.dumps({"name": "web", "main": "server.ts", "scripts": {"boot": "python boot.py"}}),
         "server.ts": "export function serve() { return 1; }\n",
+        "boot.py": "from tools.worker import work\nwork()\n",
+        "tools/__init__.py": "NAME = 'tools'\n",
+        "tools/worker.py": "def work():\n    return 1\n",
         "app/layout.tsx": "import { Frame } from '../ui/frame';\nexport default function Shell() { return <Frame />; }\n",
         "ui/frame.tsx": "export function Frame() { return <main />; }\n",
         "app/products/[sku]/page.tsx": "export default function Product() { return <p />; }\n",
