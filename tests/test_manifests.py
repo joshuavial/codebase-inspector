@@ -159,12 +159,16 @@ def test_shared_package_dist_bin_open_next_and_verify_scripts(make_repo, monkeyp
                 "test": "vitest",
                 "e2e": "node e2e/run.mjs",
                 "start": "node dist/server.js && node test/smoke.mjs",
+                "backup": "tsx scripts/backup.ts --quiet",
+                "report": "uv run python scripts/report.py",
             },
         }),
         "cli/tsconfig.json": json.dumps({"compilerOptions": {"outDir": "./dist", "rootDir": "./src"}}),
         "cli/src/index.ts": "export function main() {}\n",
         "cli/src/server.ts": "export function serve() {}\n",
         "cli/e2e/run.mjs": "console.log(1)\n",
+        "cli/scripts/backup.ts": "export function backup() {}\n",
+        "cli/scripts/report.py": "def report():\n    return 1\n",
         "cli/test/smoke.mjs": "console.log(1)\n",
         "app/package.json": json.dumps({
             "name": "app",
@@ -188,6 +192,8 @@ def test_shared_package_dist_bin_open_next_and_verify_scripts(make_repo, monkeyp
         "sample": ("cli", ["cli/src/index.ts"]),
         "edge": ("worker", ["edge/src/worker.ts"]),
         "start": ("node app", ["cli/src/server.ts"]),
+        "backup": ("node app", ["cli/scripts/backup.ts"]),
+        "report": ("node app", ["cli/scripts/report.py"]),
         "portal": ("worker", ["portal-app/app/layout.tsx"]),
     }
     packages = {r[0] for r in conn.execute("SELECT name FROM nodes WHERE kind = 'package'")}

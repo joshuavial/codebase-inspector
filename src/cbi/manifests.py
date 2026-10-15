@@ -21,7 +21,10 @@ from cbi import resolve
 # A build-output extension maps back to these source extensions, in order.
 SOURCE_EXTS = {".js": (".ts", ".tsx", ".js", ".jsx"), ".mjs": (".mts", ".mjs"), ".cjs": (".cts", ".cjs"),
                ".jsx": (".tsx", ".jsx")}
-NODE_SCRIPT = re.compile(r"(?:^|[\s;&|(])node\s+(?:-[-\w]+(?:=\S+)?\s+)*([\w./@-]+\.[cm]?[jt]s)\b")
+SCRIPT_ENTRY = re.compile(
+    r"(?:^|[\s;&|(])(?:node|tsx|ts-node(?:-esm)?|bun(?:\s+run)?|(?:uv\s+run\s+)?python3?)\s+"
+    r"(?:-[-\w]+(?:=\S+)?\s+)*([\w./@-]+\.(?:py|[cm]?[jt]sx?))\b"
+)
 VITE_CONFIG = re.compile(r"(^|/)vite\.config\.[cm]?[jt]s$")
 VITE_ROOT = re.compile(r"""\broot\s*:\s*["'`]([^"'`$]+)["'`]""")
 TSCONFIG = re.compile(r"(^|/)tsconfig[^/]*\.json$")
@@ -138,7 +141,7 @@ def _tooling_script(name, raws=()):
 
 
 def package_json(ws):
-    """`main`, `bin` and scripts that run `node <path>` become deployables. Scripts named
+    """`main`, `bin` and scripts run through Node, TS or Python become deployables. Scripts named
     `lint` or `test`, starting with `dev:` or `verify:`, or running only a test, smoke or
     e2e file, do not, unless structure.json names them. A package.json below the workspace
     root is a package. The `main` of a package that another package.json depends on is a
@@ -163,7 +166,7 @@ def package_json(ws):
             if isinstance(raw, str):
                 deployables.append(_deployable(bin_name, "cli", path, "package.json bin", [entry(raw)]))
         for script, command in (data.get("scripts") or {}).items():
-            raws = NODE_SCRIPT.findall(command) if isinstance(command, str) else []
+            raws = SCRIPT_ENTRY.findall(command) if isinstance(command, str) else []
             if _tooling_script(script, raws):
                 continue
             raws = [r for r in raws if not _verify_target(r)]
