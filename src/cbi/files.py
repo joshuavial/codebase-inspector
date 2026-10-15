@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 20
+PARSER_VERSION = 21
 
 CODE_LANGS = {
     ".py": "python",
@@ -33,7 +33,7 @@ DUMP_EXTS = DATA_EXTS | {".sql"}
 NAMED_DATA_DIRS = {"fixtures", "test-data"}
 MINIFIABLE_EXTS = {".js", ".mjs", ".cjs", ".css"}
 TEST_NAME = re.compile(
-    r"^test_.*\.py$|^.*_test\.py$|^.*\.(test|spec)\.[cm]?[jt]sx?$|^.*\.cy\.[cm]?[jt]sx?$"
+    r"^test_.*\.py$|^.*_test\.py$|^.*[.-](test|spec)\.[cm]?[jt]sx?$|^.*\.cy\.[cm]?[jt]sx?$"
 )
 
 DATA_DIR_MIN_FILES = 200  # a data dir has more files than this
@@ -337,13 +337,19 @@ def _cypress_e2e(path):
     return any(left == "cypress" and right == "e2e" for left, right in zip(parts, parts[1:]))
 
 
+def _test_tree(path):
+    """True for code below a conventional test or end-to-end test directory."""
+    return any(part.lower() in ("test", "tests", "e2e") for part in posixpath.normpath(path).split("/")[:-1])
+
+
 def classify(path, test_roots=()):
     """Return (role, lang): role is code, test, doc or other.
 
     `test_roots` are directories of `*Tests.csproj` and `*Testing.csproj`. A `.cs`
     file under one of them is a test, as is a file named `*Test.cs` or `*Tests.cs`.
-    `*.cy.ts` and `*.cy.js` are Cypress specs, and so is any code file under a
-    `cypress/e2e` directory. `cypress/support` stays code: it defines commands.
+    `*.cy.ts` and `*.cy.js` are Cypress specs, and code below `test`, `tests`,
+    `e2e` or `cypress/e2e` is test support. `cypress/support` stays code: it
+    defines commands.
     """
     name = posixpath.basename(path)
     ext = posixpath.splitext(name)[1].lower()
@@ -352,7 +358,7 @@ def classify(path, test_roots=()):
     lang = CODE_LANGS.get(ext)
     if not lang:
         return "other", None
-    if (TEST_NAME.match(name) or "__tests__" in path.split("/") or _cypress_e2e(path)
+    if (TEST_NAME.match(name) or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
             or re.search(r"Tests?\.cs$", name) or _under_root(path, test_roots)):
         return "test", lang
     return "code", lang
