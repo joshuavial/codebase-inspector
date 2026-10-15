@@ -369,3 +369,20 @@ def test_orphans_leave_framework_discovered_files_out(make_repo, monkeypatch, ca
     expected = {"manual.ts"}
     assert {row["path"] for row in body["unreferenced"]} == expected
     assert {row["path"] for row in body["unreachable"]} == expected
+
+
+def test_orphans_count_a_barrel_an_import_passes_through(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        "package.json": json.dumps({"name": "web", "main": "main.ts"}),
+        "main.ts": "import { Card } from './cards';\nexport function start() { return Card(); }\n",
+        "cards/index.ts": "export { Card } from './Card';\n",
+        "cards/Card.ts": "export function Card() { return 1; }\n",
+        "spare/index.ts": "export { Spare } from './Spare';\n",
+        "spare/Spare.ts": "export function Spare() { return 2; }\n",
+    }, name="barrels")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+    body = run_json(capsys, "orphans")
+    assert {row["path"] for row in body["unreferenced"]} == {"spare/index.ts"}
+    assert {row["path"] for row in body["unreachable"]} == {"spare/index.ts", "spare/Spare.ts"}

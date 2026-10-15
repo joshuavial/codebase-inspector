@@ -76,6 +76,8 @@
 ["edge", "part_of", "manifest", "local:repo:core/tests/test_geometry.py", "local:repo:package:core", 1.0, 1]
 ["edge", "part_of", "manifest", "local:repo:core/tests/test_orphan.py", "local:repo:package:core", 1.0, 1]
 ["edge", "part_of", "manifest", "local:repo:core/tests/test_scripts.py", "local:repo:package:core", 1.0, 1]
+["edge", "references", "treesitter", "local:repo:app/src/app/main.py", "local:repo:core/src/core/__init__.py", 1.0, 2]
+["edge", "references", "treesitter", "local:repo:core/src/core/io/loader.py", "local:repo:core/src/core/__init__.py", 1.0, 1]
 ["edge", "tests", "naming", "local:repo:app/tests/test_main.py", "local:repo:app/src/app/main.py", 0.8, 1]
 ["edge", "tests", "treesitter", "local:repo:core/tests/test_geometry.py", "local:repo:core/src/core/shapes.py", 0.5, 1]
 ["edge", "tests", "treesitter", "local:repo:core/tests/test_geometry.py", "local:repo:core/src/core/shapes.py#Circle", 1.0, 1]

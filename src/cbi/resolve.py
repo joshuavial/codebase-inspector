@@ -1133,6 +1133,10 @@ def resolve(conn, root):
                 if dst == fid:
                     continue
                 seen[dst] = type_only if dst not in seen else seen[dst] and type_only
+            # A name followed through a barrel lands on its definition; the barrel is still loaded.
+            module = m.spec(fid, imp["spec"])
+            if module and module != fid and module not in seen and m.files[fid][2] == "code":
+                add(fid, module, "references", "treesitter", 1.0)
             for dst, type_only in seen.items():
                 slot = counted.setdefault(dst, [0, True])
                 slot[0] += 1
