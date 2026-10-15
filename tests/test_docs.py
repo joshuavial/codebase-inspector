@@ -113,3 +113,15 @@ def test_minified_needs_most_bytes_on_long_lines(make_repo):
     text = default_ignore(root)
     assert "/public/vendor.css\n" in text
     assert "styles.css" not in text
+
+
+def test_committed_virtualenvs_are_ignored(make_repo):
+    root = make_repo({
+        "app.py": "print(1)\n",
+        "env-copy/pyvenv.cfg": "home = /usr/bin\n",
+        "env-copy/lib/python3.12/site-packages/lib_a/core.py": "def a():\n    return 1\n",
+        "notes/pyvenv.md": "not a venv\n",
+    })
+    text = default_ignore(root)
+    assert "/env-copy/\n" in text
+    assert "notes" not in text

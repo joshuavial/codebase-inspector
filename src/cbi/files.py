@@ -445,7 +445,10 @@ def default_ignore(root):
         p for p in paths
         if posixpath.splitext(p)[1].lower() in MINIFIABLE_EXTS and not in_data(p) and _looks_minified(root / p)
     ]
+    venvs = [posixpath.dirname(p) for p in paths if posixpath.basename(p) == "pyvenv.cfg" and "/" in p]
     text = BASE_IGNORE
+    text += "\n# Committed Python virtualenvs (a directory holding pyvenv.cfg)\n"
+    text += "".join(f"/{_escape(d)}/\n" for d in venvs)
     text += "\n# fixtures/ and test-data/ when most of their files are data (json, csv, txt, sql)\n"
     text += "".join(f"/{_escape(d)}/\n" for d in named)
     text += "\n# Directories of mostly data files (json, txt, csv, jsonl)\n"
