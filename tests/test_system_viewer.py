@@ -286,3 +286,95 @@ def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypa
     script.write_text(LARGE_DRIVER)
     proc = subprocess.run([exe, str(script), str(viewer)], capture_output=True, text=True, timeout=90)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+FOCUS_CHECK = r'''
+(async () => {
+  const check = (ok, message) => { if (!ok) throw new Error(message); };
+  const ready = async (action) => {
+    document.title = 'checking';
+    action();
+    const until = Date.now() + 15000;
+    while (document.title !== 'cbi-viewer-ready') {
+      if (Date.now() > until) throw new Error('focus render timed out');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
+  await ready(() => { refit = true; route(); });
+  const overview = document.querySelector('#diagram').getAttribute('viewBox');
+  check(document.querySelectorAll('.db-table').length === 92, 'overview lost tables');
+  check(!document.querySelector('.foreign-key'), 'overview has relationship clutter');
+  const input = document.querySelector('input[aria-label="Find a database table"]');
+  input.value = 'HUB';
+  input.dispatchEvent(new Event('input'));
+  const results = document.querySelectorAll('.db-table-list button');
+  check(results.length === 1 && results[0].textContent === 'hub', 'table search failed');
+  await ready(() => results[0].click());
+  check(document.querySelectorAll('.db-table').length === 3, 'focus must bound neighbours');
+  check(document.querySelector('#diagram').getAttribute('viewBox') !== overview, 'focus reused overview camera');
+  check(document.querySelectorAll('.db-col').length === 31, 'long table columns missing from drawer');
+  const geometry = () => {
+    check(document.querySelectorAll('.db-table').length === 3, 'page lost its tables');
+    check(document.querySelectorAll('.foreign-key').length === 2, 'page lost its column edges');
+    const stage = document.querySelector('#diagram').getBoundingClientRect();
+    for (const node of document.querySelectorAll('.db-table')) {
+      const body = node.querySelector('.body').getBoundingClientRect();
+      check(body.left >= stage.left && body.right <= stage.right, 'table outside viewport');
+      check(body.top >= stage.top && body.bottom <= stage.bottom, 'table outside viewport');
+      for (const text of node.querySelectorAll('text')) {
+        const r = text.getBoundingClientRect();
+        check(r.height >= 10, 'focus text too small');
+        check(r.left >= body.left && r.right <= body.right + 1, 'text exceeds table card');
+        check(r.top >= body.top && r.bottom <= body.bottom + 1, 'text exceeds table height');
+      }
+    }
+  };
+  geometry();
+  const first = [...document.querySelectorAll('.db-table')].map(node => node.dataset.id).join();
+  const next = [...document.querySelectorAll('.db-pages button')].find(button => button.textContent === 'Next');
+  await ready(() => next.click());
+  check(new URLSearchParams(location.hash.slice(1)).get('dbpage') === '1', 'page missing from hash');
+  check([...document.querySelectorAll('.db-table')].map(node => node.dataset.id).join() !== first, 'neighbour page did not change');
+  geometry();
+  await ready(() => history.back());
+  check([...document.querySelectorAll('.db-table')].map(node => node.dataset.id).join() === first, 'Back lost neighbour page');
+  await ready(() => document.querySelector('#diagram').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  check(!new URLSearchParams(location.hash.slice(1)).has('table'), 'overview return failed');
+  check(document.querySelector('#diagram').getAttribute('viewBox') === overview, 'Back lost overview camera');
+  return 'ok';
+})()
+'''
+
+
+def test_database_search_focus_pages_and_text_bounds(make_repo, monkeypatch, capsys, tmp_path):
+    if render.find_chrome() is None:
+        pytest.skip("no system Chrome or Chromium")
+    fields = ", ".join(f"descriptive_column_{i} VARCHAR(255)" for i in range(30))
+    statements = [f"CREATE TABLE hub (id INTEGER PRIMARY KEY, {fields});"]
+    for i in range(91):
+        foreign = ", hub_id INTEGER REFERENCES hub(id)" if i < 85 else ""
+        statements.append(f"CREATE TABLE sample_{i} (id INTEGER PRIMARY KEY{foreign});")
+    root = make_repo({"schema.sql": "\n".join(statements)}, name="focus-schema")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0 and main(["build"]) == 0
+    capsys.readouterr()
+    original = render._read_page
+
+    def inspect(ws_url):
+        sock, pending = render._ws_open(ws_url)
+        try:
+            _, pending = render._cdp(sock, pending, 70, "Emulation.setDeviceMetricsOverride", {
+                "width": viewport[0], "height": viewport[1], "deviceScaleFactor": 1, "mobile": False,
+            })
+            result, _ = render._cdp(sock, pending, 71, "Runtime.evaluate", {
+                "expression": FOCUS_CHECK, "awaitPromise": True, "returnByValue": True,
+            })
+            assert not result.get("exceptionDetails"), result
+            assert result["result"]["value"] == "ok"
+        finally:
+            sock.close()
+        return original(ws_url)
+
+    monkeypatch.setattr(render, "_read_page", inspect)
+    for viewport in ((1600, 1000), (1280, 800)):
+        render.viewer_png(root / ".cbi/viewer/index.html", "tab=database", tmp_path / f"focus-{viewport[0]}.png")

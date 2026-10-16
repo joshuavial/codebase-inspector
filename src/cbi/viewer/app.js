@@ -773,10 +773,11 @@ function back() {
 
 const originName = (id) => (id === "~" ? M.workspace : byId[id].name);
 
-function databaseGo(table) {
+function databaseGo(table, page = 0) {
   const h = new URLSearchParams();
   h.set("tab", "database");
   if (table) h.set("table", table);
+  if (page) h.set("dbpage", page);
   writeHash(h.toString());
 }
 
@@ -832,6 +833,7 @@ function route() {
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
     overlay: h.get("t"),
     tab, table: databaseById[h.get("table")] ? h.get("table") : null,
+    databasePage: Math.max(0, Math.floor(Number(h.get("dbpage")) || 0)),
     endpoint: (ENDPOINTS.endpoints || []).some((row) => row.id === h.get("endpoint")) ? h.get("endpoint") : null,
     endpointQuery: h.get("eq") || "", endpointMethod: h.get("method") || "",
     fromTab: h.get("fromtab") === "database" || h.get("fromtab") === "endpoints" ? h.get("fromtab") : null,
@@ -852,7 +854,7 @@ function route() {
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
   const scopeChanged = !first && (prev.scope || "") !== (view.scope || "");
-  restore = refit || scopeChanged ? null : !first && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  restore = refit || scopeChanged ? null : !first && prev.tab === view.tab && prev.table === view.table && prev.databasePage === view.databasePage && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   refit = false;
   crumbs();
   const f = view.focus && byId[view.focus];
@@ -1826,8 +1828,8 @@ function clusterLeaf(c) {
 function databaseColumnLine(table, column) {
   const fk = (table.foreignKeys || []).some((rel) => rel.column === column.id);
   const marks = [column.primaryKey ? "PK" : "", fk ? "FK" : ""].filter(Boolean).join("/");
-  const type = column.type || "unknown";
-  return `${marks ? marks + "  " : "    "}${column.name}  ${type}${column.nullable ? "" : "  not null"}`;
+  const type = column.type || "";
+  return `${marks ? marks + "  " : "    "}${column.name}${type ? "  " + type : ""}`;
 }
 
 function databaseGroups(nodes, edges) {
@@ -1871,10 +1873,12 @@ function databaseGrid(groups, edges, avail) {
     for (let index = 0; index < children.length; index++) widths[index % columns] = Math.max(widths[index % columns], children[index].w);
     const starts = widths.map((_width, index) => frameX + widths.slice(0, index).reduce((sum, width) => sum + width + gap, 0));
     const rows = Math.ceil(children.length / columns);
+    const heights = Array.from({ length: rows }, (_, row) => Math.max(...children.slice(row * columns, (row + 1) * columns).map((node) => node.h)));
+    const tops = heights.map((_, row) => frameTop + heights.slice(0, row).reduce((sum, height) => sum + height + gap, 0));
     const placed = children.map((node, index) => ({ ...node, x: starts[index % columns],
-      y: frameTop + Math.floor(index / columns) * (38 + gap), width: node.w, height: node.h }));
+      y: tops[Math.floor(index / columns)], width: node.w, height: node.h }));
     const width = frameX * 2 + widths.reduce((sum, value) => sum + value, 0) + gap * (columns - 1);
-    const height = frameTop + rows * 38 + Math.max(0, rows - 1) * gap + frameBottom;
+    const height = frameTop + heights.reduce((sum, height) => sum + height, 0) + Math.max(0, rows - 1) * gap + frameBottom;
     if (!group.children) return { ...placed[0], width: group.w, height: group.h, children: null, meta: group };
     return { id: group.id, width, height, children: placed, meta: group };
   }).sort((left, right) => right.width * right.height - left.width * left.height);
@@ -1926,83 +1930,93 @@ function databaseGrid(groups, edges, avail) {
     edges: routed, mode: "grid" };
 }
 
-async function layoutDatabase(nodes, edges) {
-  const gen = ++layoutGen, avail = availSize();
-  const compact = nodes.length > 60;
-  const groups = databaseGroups(nodes, edges);
-  const tries = [], modes = [
-    ["RIGHT", null, 1], ["RIGHT", "MULTI_EDGE", 0.55], ["RIGHT", "MULTI_EDGE", 0.85],
-    ["RIGHT", "MULTI_EDGE", 1.2], ["RIGHT", "SINGLE_EDGE", 0.85], ["DOWN", null, 1],
-  ];
-  const toElk = (node, dir, wrapping, ratio) => node.children ? {
-    id: node.id,
-    children: node.children.map((child) => ({ id: child.id, width: child.w, height: child.h })),
-    layoutOptions: {
-      ...elkOptions({ dir, layer: compact ? 42 : 80, gap: compact ? 18 : 36 }),
-      ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping,
-        "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}),
-      "elk.padding": "[top=40,left=20,bottom=20,right=20]",
-    },
-  } : { id: node.id, width: node.w, height: node.h };
-  let firstError = null;
-  if (compact) tries.push({ dir: "GRID", wrapping: null, ratio: 1,
-    out: databaseGrid(groups, edges, avail) });
-  for (const [dir, wrapping, ratio] of modes) {
-    try {
-      const graph = {
-        id: "root",
-        layoutOptions: {
-          ...elkOptions({ dir, layer: compact ? 42 : 80, gap: compact ? 18 : 36 }),
-          ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping,
-            "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}),
-          "elk.aspectRatio": String((avail.w / avail.h) * ratio),
-        },
-        children: groups.map((node) => toElk(node, dir, wrapping, ratio)),
-        edges: edges.map(elkEdge),
-      };
-      const out = await elk.layout(graph);
-      tries.push({ dir, wrapping, ratio, out });
-    } catch (err) {
-      if (!firstError) firstError = err;
-    }
-  }
-  if (gen !== layoutGen) return;
-  if (!tries.length) return empty("Layout failed: " + (firstError ? firstError.message : "no layout"));
-  const score = ({ out }) => Math.min(avail.w / out.width, avail.h / out.height);
-  const best = tries.reduce((left, right) => score(right) > score(left) ? right : left);
-  const diagram = document.getElementById("diagram");
-  diagram.dataset.layout = `database ${best.dir.toLowerCase()} ${best.wrapping || "unwrapped"} ${best.ratio}`;
-  diagram.dataset.databaseGroups = String(groups.filter((node) => node.children).length);
-  externalGroups = {};
-  render(best.out, groups, edges, databaseGo, null);
+// A bounded neighbourhood keeps hubs readable. Every neighbour remains reachable through pages.
+function databaseSlice(tables, relationships, selected, page = 0) {
+  const table = tables.find((row) => row.id === selected);
+  if (!table) return { tables, relationships, neighbours: [], page: 0, pages: 0 };
+  const neighbours = tables.filter((row) => row.id !== selected && relationships.some((rel) =>
+    rel.from === selected && rel.to === row.id || rel.to === selected && rel.from === row.id));
+  const pages = Math.ceil(neighbours.length / 2);
+  page = Math.min(Math.max(0, Math.floor(page) || 0), Math.max(0, pages - 1));
+  const shown = new Set([selected, ...neighbours.slice(page * 2, page * 2 + 2).map((row) => row.id)]);
+  return { tables: tables.filter((row) => shown.has(row.id)), neighbours, page, pages,
+    relationships: relationships.filter((rel) => shown.has(rel.from) && shown.has(rel.to)
+      && (rel.from === selected || rel.to === selected)) };
 }
 
-function drawDatabase() {
+function databaseDetailGraph(slice) {
+  const nodes = slice.tables.map((table) => {
+    const required = new Set(slice.relationships.flatMap((rel) =>
+      [rel.from === table.id ? rel.column : null, rel.to === table.id ? rel.targetColumn : null]));
+    // Keep all endpoints and primary keys; other columns are available in the drawer.
+    const columns = table.columns.filter((column) => required.has(column.id) || column.primaryKey);
+    const extra = table.columns.filter((column) => !columns.includes(column));
+    columns.push(...extra.slice(0, Math.max(0, 8 - columns.length)));
+    const lines = columns.map((column) => databaseColumnLine(table, column));
+    if (columns.length < table.columns.length) lines.push(`+${table.columns.length - columns.length} columns · select table for all`);
+    const w = Math.max(210, textW(table.name, 600, 14) + 32,
+      ...lines.map((line) => textW(line, 400, 11, true) + 32));
+    return { id: table.id, cls: "node db-table", name: table.name, lines, columns,
+      w, h: 58 + lines.length * 16 };
+  });
+  const children = nodes.map((node) => ({ id: node.id, width: node.w, height: node.h,
+    layoutOptions: { "elk.portConstraints": "FIXED_POS" },
+    ports: node.columns.flatMap((column, index) => ["WEST", "EAST"].map((side) => ({
+      id: column.id + ":" + side, x: side === "WEST" ? 0 : node.w, y: 42 + index * 16,
+      width: 0, height: 0, layoutOptions: { "elk.port.side": side },
+    }))),
+  }));
+  const edges = slice.relationships.map((rel, index) => ({ id: "db" + index,
+    a: rel.from, b: rel.to, cls: "foreign-key", text: "",
+    sourcePort: rel.column + ":EAST", targetPort: rel.targetColumn + ":WEST" }));
+  return { nodes, edges, graph: { id: "root", children,
+    layoutOptions: elkOptions({ dir: "RIGHT", layer: 64, gap: 32 }),
+    edges: edges.map((edge) => ({ id: edge.id, sources: [edge.sourcePort], targets: [edge.targetPort] })),
+  } };
+}
+
+async function drawDatabase() {
   const tables = DATABASE.tables || [];
   view.sel = view.table;
   if (!tables.length) {
     empty("No database schema detected. Add SQL migrations or supported ORM models, then scan again.");
     return databaseDrawer();
   }
+  if (view.table) {
+    const gen = ++layoutGen;
+    const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
+    const detail = databaseDetailGraph(slice);
+    try {
+      const out = await elk.layout(detail.graph);
+      if (gen !== layoutGen) return;
+      externalGroups = {};
+      document.getElementById("diagram").dataset.layout = "database focus";
+      render(out, detail.nodes, detail.edges, databaseGo, null);
+    } catch (err) {
+      if (gen === layoutGen) empty("Layout failed: " + err.message);
+    }
+    return;
+  }
   const compact = tables.length > 60;
   const nodes = tables.map((table) => {
-    const lines = compact ? [] : (table.columns || []).map((column) => databaseColumnLine(table, column));
+    const lines = compact ? [] : table.columns.map((column) => databaseColumnLine(table, column));
     const width = Math.max(190, textW(table.name, 600, 14) + 32,
       ...lines.map((line) => textW(line, 400, 11, true) + 32));
     return { id: table.id, cls: "node db-table", name: table.name, lines,
-      w: Math.min(width, 420), h: compact ? 38 : 58 + lines.length * 16 };
+      w: width, h: compact ? 38 : 58 + lines.length * 16 };
   });
-  const seen = new Set();
-  const edges = [];
-  for (const rel of DATABASE.relationships || []) {
-    const key = `${rel.from}>${rel.to}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const local = databaseById[rel.from], column = local && local.columns.find((item) => item.id === rel.column);
-    edges.push({ id: "db" + edges.length, a: rel.from, b: rel.to,
-      text: column ? column.name : "references", cls: "foreign-key" });
-  }
-  layoutDatabase(nodes, edges);
+  const edges = (DATABASE.relationships || []).map((rel, index) => ({
+    id: "db" + index, a: rel.from, b: rel.to, text: "", cls: "foreign-key",
+  }));
+  // The overview is an index. Routes belong to the focused column-level diagram.
+  const groups = databaseGroups(nodes, edges);
+  const out = databaseGrid(groups, [], availSize());
+  ++layoutGen;
+  externalGroups = {};
+  const diagram = document.getElementById("diagram");
+  diagram.dataset.layout = "database overview";
+  diagram.dataset.databaseGroups = String(groups.filter((node) => node.children).length);
+  render(out, groups, [], databaseGo, null);
 }
 
 function drawEndpoints() {
@@ -2088,11 +2102,33 @@ function databaseDrawer() {
   const table = view.table && databaseById[view.table];
   if (!table) {
     d.append(el("h2", "", "Database"),
-      el("p", "", "Select a table to inspect its columns, relationships and code access."));
+      el("p", "", "Select a table to view its columns, connected neighbours and code access."));
     if (DATABASE.tables.length) d.append(el("p", "hint", `${DATABASE.tables.length} detected table${DATABASE.tables.length === 1 ? "" : "s"}.`));
+    const input = el("input");
+    input.type = "search";
+    input.placeholder = "Find a table";
+    input.setAttribute("aria-label", "Find a database table");
+    const list = el("div", "db-table-list");
+    const paint = () => {
+      const rows = DATABASE.tables.filter((row) => row.name.toLowerCase().includes(input.value.toLowerCase()));
+      list.replaceChildren(...rows.map((row) => link(row.name, () => databaseGo(row.id))));
+      if (!rows.length) list.append(el("p", "hint", "No tables match."));
+    };
+    input.oninput = paint;
+    d.append(input, list);
+    paint();
     return;
   }
   d.append(link("← Database overview", () => databaseGo(null)), el("h2", "", table.name));
+  const slice = databaseSlice(DATABASE.tables, DATABASE.relationships || [], table.id, view.databasePage);
+  d.append(el("p", "hint", "Diagram shows this table and up to two neighbours. Select a neighbour to explore it. All columns are listed here."));
+  if (slice.pages > 1) {
+    const pager = el("div", "db-pages");
+    pager.append(el("span", "", `Neighbours ${slice.page * 2 + 1}–${Math.min(slice.page * 2 + 2, slice.neighbours.length)} of ${slice.neighbours.length}`));
+    if (slice.page) pager.append(link("Previous", () => databaseGo(table.id, slice.page - 1)));
+    if (slice.page + 1 < slice.pages) pager.append(link("Next", () => databaseGo(table.id, slice.page + 1)));
+    d.append(pager);
+  }
   if (table.models && table.models.length) d.append(el("p", "", `Models: ${table.models.join(", ")}`));
   const cols = el("div", "db-cols");
   for (const column of table.columns || []) {
@@ -3583,9 +3619,15 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     nodeG.append(g);
   }
   if (sel) hot(edgeEls, sel, true);
-  svg.onclick = () => { if (!moved && view.sel) go(view.focus, null, { v: view.mode }); };
+  svg.onclick = () => {
+    if (!moved && view.sel) {
+      if (view.tab === "database") databaseGo(null);
+      else go(view.focus, null, { v: view.mode });
+    }
+  };
 
   legendFromDiagram(svg);
+  if (view.tab === "database") document.getElementById("legend").hidden = true;
   content = { w: out.width, h: out.height };
   fit(false);
   const z = Number(new URLSearchParams(location.search).get("zoom")); // ?zoom=2 opens zoomed in, for screenshots
@@ -3875,7 +3917,7 @@ function setCam(c) {
 // The space a fitted map gets: the stage less padding and the open key card.
 function availSize() {
   const s = stageSize();
-  return { w: s.w - 48 - (keyCollapsed() ? 0 : 266), h: s.h - 48 };
+  return { w: s.w - 48 - (view.tab === "database" || keyCollapsed() ? 0 : 266), h: s.h - 48 };
 }
 
 function stageSize() {

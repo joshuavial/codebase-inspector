@@ -171,6 +171,66 @@ async function main() {
 
   const ELK = require(path.join(root, "src/cbi/viewer/vendor/elk.bundled.js"));
   const elk = new ELK();
+  // A large schema with hubs, parallel keys, self references, long tables and isolated tables.
+  const tables = Array.from({ length: 92 }, (_, i) => ({
+    id: `table:${i}`, name: `sample_table_${i}`, foreignKeys: [],
+    columns: Array.from({ length: i === 0 ? 45 : 10 }, (_, j) => ({
+      id: `table:${i}:column:${j}`, name: j ? `field_${j}` : "id",
+      type: "INTEGER", primaryKey: j === 0, nullable: false,
+    })),
+  }));
+  const relationships = [];
+  for (let i = 1; i < 85; i++) {
+    for (let j = 1; j <= 2; j++) relationships.push({
+      from: tables[i].id, column: tables[i].columns[j].id,
+      to: tables[i < 60 ? 0 : 60].id, targetColumn: tables[i < 60 ? 0 : 60].columns[0].id,
+    });
+  }
+  relationships.push({ from: tables[0].id, to: tables[0].id,
+    column: tables[0].columns[1].id, targetColumn: tables[0].columns[0].id });
+  for (const rel of relationships) tables.find((table) => table.id === rel.from).foreignKeys.push(rel);
+  const reached = new Set();
+  const covered = new Set();
+  for (let page = 0; page < 30; page++) {
+    const slice = app.databaseSlice(tables, relationships, tables[0].id, page);
+    assert.ok(slice.tables.length <= 3, "a hub must have a bounded neighbourhood");
+    slice.tables.forEach((table) => reached.add(table.id));
+    slice.relationships.forEach((rel) => covered.add(rel));
+    const detail = app.databaseDetailGraph(slice);
+    assert.strictEqual(detail.edges.length, slice.relationships.length, "parallel column keys must survive");
+    const out = await elk.layout(JSON.parse(JSON.stringify(detail.graph)));
+    for (const size of [{ w: 932, h: 688 }, { w: 1252, h: 888 }]) {
+      const scale = Math.min(1.4, size.w / out.width, size.h / out.height);
+      assert.ok(11 * scale >= 10, "focus column text must remain readable at fit");
+    }
+    const positions = Object.fromEntries(out.children.map((node) => [node.id, node]));
+    for (let i = 0; i < detail.edges.length; i++) {
+      const edge = out.edges.find((edge) => edge.id === detail.edges[i].id);
+      const rel = slice.relationships[i], source = positions[rel.from], target = positions[rel.to];
+      const sourcePort = source.ports.find((port) => port.id === rel.column + ":EAST");
+      const targetPort = target.ports.find((port) => port.id === rel.targetColumn + ":WEST");
+      const section = edge.sections[0];
+      assert.strictEqual(section.startPoint.x, source.x + source.width);
+      assert.strictEqual(section.startPoint.y, source.y + sourcePort.y);
+      assert.strictEqual(section.endPoint.x, target.x);
+      assert.strictEqual(section.endPoint.y, target.y + targetPort.y);
+    }
+    for (const node of detail.nodes) {
+      assert.ok(node.lines.length <= 10, "long tables must disclose overflow in the drawer");
+      if (node.id === tables[0].id) assert.match(node.lines.at(-1), /columns/);
+    }
+  }
+  assert.strictEqual(reached.size, 60, "every hub neighbour must be reachable");
+  assert.strictEqual(covered.size, relationships.filter((rel) => rel.from === tables[0].id || rel.to === tables[0].id).length);
+  assert.strictEqual(app.databaseSlice(tables, relationships, tables[91].id).tables.length, 1);
+  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, Infinity).page, 29);
+  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, -4).page, 0);
+  const overviewNodes = tables.map((table) => ({ id: table.id, name: table.name, w: 190, h: 38 }));
+  const overviewGroups = app.databaseGroups(overviewNodes, relationships.map((rel) => ({ a: rel.from, b: rel.to })));
+  const overview = app.databaseGrid(overviewGroups, [], { w: 1252, h: 888 });
+  assert.strictEqual(overview.edges.length, 0, "the overview must not draw a hairball");
+  assert.ok(overviewGroups.length >= 2);
+
   const graph = await elk.layout({
     id: "root",
     layoutOptions: app.elkOptions({ dir: "RIGHT", layer: 30, gap: 24 }),
