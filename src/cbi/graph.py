@@ -44,8 +44,8 @@ file (tests do not count as callers); deployable entry points and files loaded
 by Next, Nextra, Docusaurus, agent skills or extension hosts are roots and are
 left off this list. A path reference is path.join or path.resolve of
 strings, optionally from __dirname, and a compiled name such as preload.js
-maps back to preload.ts through the tsconfig outDir. Tool configs (vite,
-vitest, jest, Playwright, code generators, eslint, tailwind, postcss,
+maps back to preload.ts through the tsconfig outDir. Tool configs (vite, electron-vite,
+vitest, jest, babel, Playwright, code generators, eslint, tailwind, postcss,
 electron-builder, Next, OpenNext, VitePress, Drizzle, Docusaurus) and .d.ts files
 are left out. Exported symbols with at least one caller, all of them in
 test files. Production files not reachable by imports, path references or
@@ -100,7 +100,7 @@ _METRIC = {"fan-in": "fan_in", "fan-out": "fan_out", "loc": "loc", "symbols": "s
 _FILE_CAP = 10
 _DETAIL_CAP = 500
 _LEFT_OUT = re.compile(
-    r"(?:^|/)(?:vite[^/]*|vitest|jest|eslint|tailwind|postcss|next|open-next|drizzle|docusaurus)"
+    r"(?:^|/)(?:(?:electron\.)?vite[^/]*|vitest|jest|babel|eslint|tailwind|postcss|next|open-next|drizzle|docusaurus)"
     r"\.config\.[^/]+$"
     r"|(?:^|/)playwright\.config\.[^/]+$"
     r"|(?:^|/)codegen(?:\.[^/]+)?\.[cm]?[jt]s$"

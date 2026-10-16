@@ -312,6 +312,8 @@ test("reads env", () => { file; });
         "tailwind.config.ts": "export default {};\n",
         "postcss.config.cjs": "module.exports = {};\n",
         "electron-builder.config.js": "module.exports = {};\n",
+        "babel.config.js": "module.exports = {};\n",
+        "electron.vite.config.ts": "export default {};\n",
     }, name="paths")
     monkeypatch.chdir(root)
     assert main(["init"]) == 0 and main(["scan"]) == 0
