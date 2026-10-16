@@ -133,7 +133,8 @@ def _framework_roots(conn, files):
         for path, fid in paths.items():
             if (_NEXT_FILE.search(path)
                     or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))
-                    or re.search(r"(?:^|/)\.(?:pi|omp)/extensions/", path)):
+                    or re.search(r"(?:^|/)\.(?:pi|omp)/extensions/", path)
+                    or posixpath.basename(path) == "__main__.py"):  # run by `python -m package`
                 roots.add(fid)
         for config in paths:
             if not re.search(r"(?:^|/)docusaurus\.config\.[cm]?[jt]s$", config):

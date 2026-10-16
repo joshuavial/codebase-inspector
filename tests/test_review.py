@@ -338,6 +338,8 @@ def test_orphans_leave_framework_discovered_files_out(make_repo, monkeypatch, ca
         "boot.py": "from tools.worker import work\nwork()\n",
         "tools/__init__.py": "NAME = 'tools'\n",
         "tools/worker.py": "def work():\n    return 1\n",
+        "runner/__init__.py": "",
+        "runner/__main__.py": "print('run')\n",
         "app/layout.tsx": "import { Frame } from '../ui/frame';\nexport default function Shell() { return <Frame />; }\n",
         "ui/frame.tsx": "export function Frame() { return <main />; }\n",
         "app/products/[sku]/page.tsx": "export default function Product() { return <p />; }\n",
