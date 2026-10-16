@@ -21,6 +21,7 @@ def test_classify():
     assert classify("src/__tests__/x.js") == ("test", "javascript")
     assert classify("tests/test_util.py") == ("test", "python")
     assert classify("tests/conftest.py") == ("test", "python")
+    assert classify("server/conftest.py") == ("test", "python")
     assert classify("e2e/fixtures/auth.ts") == ("test", "typescript")
     assert classify("src/components/Panel.dom-test.tsx") == ("test", "tsx")
     assert classify("README.md") == ("doc", "markdown")

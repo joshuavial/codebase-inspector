@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 21
+PARSER_VERSION = 22
 
 CODE_LANGS = {
     ".py": "python",
@@ -347,7 +347,7 @@ def classify(path, test_roots=()):
 
     `test_roots` are directories of `*Tests.csproj` and `*Testing.csproj`. A `.cs`
     file under one of them is a test, as is a file named `*Test.cs` or `*Tests.cs`.
-    `*.cy.ts` and `*.cy.js` are Cypress specs, and code below `test`, `tests`,
+    `*.cy.ts` and `*.cy.js` are Cypress specs, pytest loads any `conftest.py`, and code below `test`, `tests`,
     `e2e` or `cypress/e2e` is test support. `cypress/support` stays code: it
     defines commands.
     """
@@ -358,7 +358,7 @@ def classify(path, test_roots=()):
     lang = CODE_LANGS.get(ext)
     if not lang:
         return "other", None
-    if (TEST_NAME.match(name) or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
+    if (TEST_NAME.match(name) or name == "conftest.py" or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
             or re.search(r"Tests?\.cs$", name) or _under_root(path, test_roots)):
         return "test", lang
     return "code", lang
