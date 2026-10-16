@@ -252,8 +252,8 @@ body.history-compare #timeline { display: none; }
 
 /* diagram */
 .node { cursor: pointer; --c: var(--faint); }
-.node.db-table { --c: var(--accent); }
-.node.db-table .sum { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.node.db-table, .node.db-cluster { --c: var(--accent); }
+.node.db-table .sum, .node.db-cluster .sum { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .node.db-table .body { stroke-width: 1.5px; }
 .edge.foreign-key path { stroke: var(--accent); }
 .edge.foreign-key text { fill: var(--accent); }

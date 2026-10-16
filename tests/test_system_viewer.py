@@ -160,9 +160,9 @@ with sync_playwright() as p:
     page.wait_for_function("() => document.title === 'cbi-viewer-ready'", timeout=60000)
     if int(page.locator("#diagram").get_attribute("data-database-groups") or "0") < 2:
         raise SystemExit("large schema was not grouped")
-    boxes = page.locator(".db-table .name").evaluate_all(
+    boxes = page.locator(".db-cluster text").evaluate_all(
         "els => els.map(el => el.getBoundingClientRect().height).filter(Boolean)")
-    if len(boxes) != 92 or min(boxes) < 8:
+    if page.locator(".db-cluster").count() != 3 or min(boxes) < 11:
         diagram = page.locator("#diagram")
         raise SystemExit("table names are not legible at fit: " + repr((
             len(boxes), min(boxes or [0]), diagram.get_attribute("data-layout"),
@@ -302,7 +302,22 @@ FOCUS_CHECK = r'''
   };
   await ready(() => { refit = true; route(); });
   const overview = document.querySelector('#diagram').getAttribute('viewBox');
-  check(document.querySelectorAll('.db-table').length === 92, 'overview lost tables');
+  check(document.querySelectorAll('.db-cluster').length === 2, 'overview must collapse connected groups');
+  check(document.querySelector('#diagram').textContent.includes('86 connected tables'), 'overview lost connected count');
+  check(document.querySelector('#diagram').textContent.includes('6 standalone tables'), 'overview lost standalone count');
+  for (const text of document.querySelectorAll('.db-cluster text')) check(text.getBoundingClientRect().height >= 11, 'overview labels too small');
+  await ready(() => document.querySelector('.db-cluster').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  check(new URLSearchParams(location.hash.slice(1)).has('dbgroup'), 'group missing from hash');
+  check(document.querySelectorAll('.db-table').length === 86, 'group must open all its tables');
+  for (const text of document.querySelectorAll('.db-table text')) check(text.getBoundingClientRect().height >= 11, 'group names too small');
+  const groupHash = location.hash;
+  const hubCard = [...document.querySelectorAll('.db-table')].find(node => node.querySelector('.name').textContent === 'hub');
+  await ready(() => hubCard.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  check(new URLSearchParams(location.hash.slice(1)).has('dbgroup'), 'table focus lost its group');
+  await ready(() => up());
+  check(location.hash === groupHash && document.querySelectorAll('.db-table').length === 86, 'up must return to the table group');
+  await ready(() => up());
+  check(!new URLSearchParams(location.hash.slice(1)).has('dbgroup'), 'up must return to overview');
   check(!document.querySelector('.foreign-key'), 'overview has relationship clutter');
   const input = document.querySelector('input[aria-label="Find a database table"]');
   input.value = 'HUB';
@@ -310,12 +325,12 @@ FOCUS_CHECK = r'''
   const results = document.querySelectorAll('.db-table-list button');
   check(results.length === 1 && results[0].textContent === 'hub', 'table search failed');
   await ready(() => results[0].click());
-  check(document.querySelectorAll('.db-table').length === 3, 'focus must bound neighbours');
+  check(document.querySelectorAll('.db-table').length === 7, 'focus must show six neighbours');
   check(document.querySelector('#diagram').getAttribute('viewBox') !== overview, 'focus reused overview camera');
-  check(document.querySelectorAll('.db-col').length === 31, 'long table columns missing from drawer');
+  check(document.querySelectorAll('.db-col').length === 32, 'long table columns missing from drawer');
   const geometry = () => {
-    check(document.querySelectorAll('.db-table').length === 3, 'page lost its tables');
-    check(document.querySelectorAll('.foreign-key').length === 2, 'page lost its column edges');
+    check(document.querySelectorAll('.db-table').length === 7, 'page lost its tables');
+    check(document.querySelectorAll('.foreign-key').length === 6, 'page lost its column edges');
     const stage = document.querySelector('#diagram').getBoundingClientRect();
     for (const node of document.querySelectorAll('.db-table')) {
       const body = node.querySelector('.body').getBoundingClientRect();
@@ -323,13 +338,14 @@ FOCUS_CHECK = r'''
       check(body.top >= stage.top && body.bottom <= stage.bottom, 'table outside viewport');
       for (const text of node.querySelectorAll('text')) {
         const r = text.getBoundingClientRect();
-        check(r.height >= 10, 'focus text too small');
+        check(r.height >= 11, 'focus text too small');
         check(r.left >= body.left && r.right <= body.right + 1, 'text exceeds table card');
         check(r.top >= body.top && r.bottom <= body.bottom + 1, 'text exceeds table height');
       }
     }
   };
   geometry();
+  check(document.querySelector('.db-focus').textContent.includes('Self: parent_id → id'), 'self reference must be inside the focus card');
   const first = [...document.querySelectorAll('.db-table')].map(node => node.dataset.id).join();
   const next = [...document.querySelectorAll('.db-pages button')].find(button => button.textContent === 'Next');
   await ready(() => next.click());
@@ -350,7 +366,7 @@ def test_database_search_focus_pages_and_text_bounds(make_repo, monkeypatch, cap
     if render.find_chrome() is None:
         pytest.skip("no system Chrome or Chromium")
     fields = ", ".join(f"descriptive_column_{i} VARCHAR(255)" for i in range(30))
-    statements = [f"CREATE TABLE hub (id INTEGER PRIMARY KEY, {fields});"]
+    statements = [f"CREATE TABLE hub (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES hub(id), {fields});"]
     for i in range(91):
         foreign = ", hub_id INTEGER REFERENCES hub(id)" if i < 85 else ""
         statements.append(f"CREATE TABLE sample_{i} (id INTEGER PRIMARY KEY{foreign});")
