@@ -224,8 +224,8 @@ def retry_write(conn, fn, attempts=8):
             delay = min(delay * 2, 0.4)
 
 
-def ref_reusable(path, ignore_hash, parser_version):
-    """True when a commit model is already stored and still matches this parser and ignore file."""
+def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None):
+    """True when a commit model still matches its parser, ignore file and projections."""
     if not Path(path).exists():
         return False
     try:
@@ -241,7 +241,12 @@ def ref_reusable(path, ignore_hash, parser_version):
         return False
     finally:
         conn.close()
-    return meta.get("parser_version") == str(parser_version) and meta.get("ignore") == ignore_hash
+    return (
+        meta.get("parser_version") == str(parser_version)
+        and meta.get("ignore") == ignore_hash
+        and meta.get("concepts_json", "") == (concepts_text or "")
+        and meta.get("screens_json", "") == (screens_text or "")
+    )
 
 
 def model_flags(path):

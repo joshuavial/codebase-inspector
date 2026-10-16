@@ -538,7 +538,9 @@ def scan_ref(root, out, ref, *, force=False):
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
     db = home / "model.db"
-    if not force and store.ref_reusable(db, files.ignore_token(ignore_text), files.PARSER_VERSION):
+    if not force and store.ref_reusable(
+            db, files.ignore_token(ignore_text), files.PARSER_VERSION,
+            _read(home / "concepts.json"), _read(home / "screens.json")):
         conn = store.read_only(db)
         try:
             return sha, True, store.counts_by_display_kind(conn), tasks.task_counts(conn)

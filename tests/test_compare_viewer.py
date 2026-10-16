@@ -1,6 +1,8 @@
 """data/diff.js: the change list, removed concepts, and changed function source."""
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 from cbi import build, diff, store
@@ -138,3 +140,52 @@ def test_compare_flag_rejects_a_bad_range(capsys):
 def test_compare_flag_rejects_ref(capsys):
     assert main(["build", "--compare", "a..b", "--ref", "HEAD"]) == 2
     assert "not both" in capsys.readouterr().err
+
+
+def test_compare_copied_model_projects_concepts_onto_an_unseen_head(
+        make_repo, monkeypatch, tmp_path, capsys):
+    root = make_repo({"src/app.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    model = tmp_path / "main-model"
+    assert main(["init", "--out", str(model)]) == 0
+    document = {
+        "summary": "A small application.",
+        "concepts": [{
+            "id": "app", "name": "App", "summary": "Runs the application.",
+            "role": "app", "files": ["src/app.py"],
+        }],
+        "externals": [{
+            "id": "terminal", "name": "Terminal", "summary": "Starts the app.",
+            "kind": "terminal",
+        }],
+        "relationships": [{
+            "from": "terminal", "to": "app", "label": "starts", "via": "CLI",
+            "at": "src/app.py:run",
+        }],
+    }
+    concept_text = json.dumps(document, indent=2) + "\n"
+    (model / "concepts.json").write_text(concept_text)
+    assert main(["scan", "--out", str(model)]) == 0
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    base_home = model / "refs" / base
+    base_home.mkdir(parents=True)
+    (base_home / "concepts.json").write_text(concept_text)
+    assert main(["scan", "--out", str(model), "--ref", base]) == 0
+
+    (root / "README.md").write_text("# Viewer-only change\n")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "viewer"],
+        cwd=root, check=True,
+    )
+
+    copied = tmp_path / "copied-model"
+    shutil.copytree(model, copied)
+    shutil.rmtree(copied / "viewer", ignore_errors=True)
+    assert main(["build", "--out", str(copied), "--compare", f"{base}..HEAD"]) == 0
+    payload = _payload((copied / "viewer" / "data" / "diff.js").read_text())
+    kinds = {change["kind"] for group in payload["changes"]["groups"] for change in group["changes"]}
+    assert not kinds.intersection({"concept-removed", "relationship-removed", "integration-removed"})

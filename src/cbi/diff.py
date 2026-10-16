@@ -26,6 +26,8 @@ or the directory that contains it. Or pass two git refs:
 `cbi diff <base> <head>` scans each ref (or reuses the stored model) into
 the model directory, `.cbi/` or `--out`, at refs/<commit>/model.db. The
 directory must already be initialised (`cbi init`). Stdout is only the diff.
+When only one ref has a concept map, that map is applied to the other ref
+before comparison. An existing ref-specific concept map is never replaced.
 
 --format text (default) prints the change overview: totals, then one row
 per changed top-level concept (or group) in attention order, with its
@@ -177,20 +179,45 @@ def models_for_refs(base_ref, head_ref, root=None, out=None):
     out = Path(out) if out else root / ".cbi"
     if not (out / "ignore").exists():
         raise DiffError(f"{out} is not initialised. Run `cbi init` first.", code=1)
-    paths = []
+    shas = []
     for ref in (base_ref, head_ref):
         try:
             # Both scans share refs/parse.db, so the head parses only files that differ.
             sha, _reused, _counts, _open = scan_ref(root, out, ref)
         except files.BadRef as err:
             raise DiffError(str(err), code=1) from err
-        paths.append(out / "refs" / sha / "model.db")
+        shas.append(sha)
+    _fill_missing_concepts(root, out, shas, scan_ref)
+    paths = [out / "refs" / sha / "model.db" for sha in shas]
     base = open_model(paths[0])
     try:
         return base, open_model(paths[1])
     except DiffError:
         base.close()
         raise
+
+
+def _fill_missing_concepts(root, out, shas, scan_ref):
+    """Give a concept-less comparison side the map available on the other side.
+
+    A ref-specific map wins. The model-root map is used only when neither ref
+    has one. Writing the fallback invalidates a reusable model, so scan_ref
+    rebuilds its concept, relationship and integration projection.
+    """
+    homes = [out / "refs" / sha for sha in shas]
+    texts = [(home / "concepts.json").read_text() if (home / "concepts.json").is_file() else None
+             for home in homes]
+    fallback = next((text for text in texts if text), None)
+    root_map = out / "concepts.json"
+    if fallback is None and root_map.is_file():
+        fallback = root_map.read_text()
+    if not fallback:
+        return
+    for sha, home, text in zip(shas, homes, texts):
+        if text is not None:
+            continue
+        (home / "concepts.json").write_text(fallback)
+        scan_ref(root, out, sha)
 
 
 def open_model(path):
