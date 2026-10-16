@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("cbi", {
   browseCbi: (): Promise<CbiInfo | null> => ipcRenderer.invoke("browse-cbi"),
   copy: (text: string): Promise<void> => ipcRenderer.invoke("copy", text),
   back: (): Promise<void> => ipcRenderer.invoke("back"),
+  reportBug: (error: string) => ipcRenderer.invoke("report-bug", { error, view: "Mapping" }),
   startCompare: (form: unknown): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke("start-compare", form),
   leaveCompare: (): Promise<void> => ipcRenderer.invoke("leave-compare"),
   setCompareOpen: (open: boolean): void => ipcRenderer.send("compare-open", open),

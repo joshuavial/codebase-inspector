@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { app, BrowserWindow, Menu, WebContentsView, clipboard, dialog, ipcMain, nativeTheme, shell, webContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { reportBug, reportBugItem, type BugView } from "./bug-report";
 import { findCbi, isExecutable, readSetting, writeSetting } from "./cbi-bin";
 import {
   commitFromViewer,
@@ -1721,6 +1722,18 @@ function openExternalUrl(url: string): void {
   void shell.openExternal(url).catch(() => undefined);
 }
 
+function openBugReport(view: BugView, error = ""): void {
+  void reportBug({
+    appVersion: app.getVersion(), view, error,
+    run: async (args) => {
+      const found = lookupCbi();
+      if (!found.ok) throw new Error("cbi unavailable");
+      return runProcess(found.path, args, app.getPath("temp"), () => undefined, 10000);
+    },
+    open: openExternalUrl,
+  });
+}
+
 function checkForUpdatesItem(): Electron.MenuItemConstructorOptions {
   return {
     id: "check-for-updates",
@@ -1771,7 +1784,10 @@ function installEditMenu(): void {
     edit,
     { role: "viewMenu" },
     { role: "windowMenu" },
-    ...(process.platform === "darwin" ? [] : [{ label: "Help", submenu: [checkForUpdatesItem()] }]),
+    { label: "Help", submenu: [
+      reportBugItem(() => openBugReport("Help menu")),
+      ...(process.platform === "darwin" ? [] : [checkForUpdatesItem()]),
+    ] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -1845,6 +1861,11 @@ function createWindow(fromLink = false) {
 }
 
 function registerIpc() {
+  ipcMain.handle("report-bug", (event, payload: unknown) => {
+    if (event.sender !== win?.webContents && event.sender !== viewer?.webContents) return;
+    const body = payload && typeof payload === "object" ? payload as { error?: unknown; view?: unknown } : {};
+    openBugReport(body.view === "Mapping" ? "Mapping" : "Map", typeof body.error === "string" ? body.error : "");
+  });
   ipcMain.handle("pick-folder", async () => {
     // The smoke test sets this so it can click Open folder without a system dialog.
     if (process.env.CBI_PICK_FOLDER) return process.env.CBI_PICK_FOLDER;

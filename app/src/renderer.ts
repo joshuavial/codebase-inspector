@@ -98,6 +98,7 @@ interface CbiApi {
   browseCbi(): Promise<CbiInfo | null>;
   copy(text: string): Promise<void>;
   back(): Promise<void>;
+  reportBug(error: string): Promise<void>;
   startCompare(form: unknown): Promise<{ ok: true } | { ok: false; error: string }>;
   leaveCompare(): Promise<void>;
   setCompareOpen(open: boolean): void;
@@ -412,6 +413,12 @@ function appendProgress(progressEvent: Progress) {
       if (text) progress.textContent += `${progress.textContent ? "\n" : ""}${text}`;
     }
     if (progressEvent.line) progress.textContent += `\n${progressEvent.line}`;
+  }
+  if (progressEvent.phase === "error") {
+    const report = document.createElement("button");
+    report.textContent = "Report a bug…";
+    report.addEventListener("click", () => { void window.cbi.reportBug(progressEvent.error ?? ""); });
+    progress.append(document.createTextNode("\n"), report);
   }
   progress.scrollTop = progress.scrollHeight;
   reportBounds();

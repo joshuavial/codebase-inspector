@@ -97,6 +97,20 @@ uv run cbi --help
 
 Design notes live in `docs/vision.md`, `docs/architecture.md` and `docs/implementation-plan.md`.
 
+## Reporting a bug
+
+Run `cbi bug` to open a GitHub bug report draft in your browser. Use
+`cbi bug --title "Short summary" --message "What happened"` to add your own text,
+or `cbi bug --print` to copy the URL. In the desktop app, choose Help > Report a
+bug… or use the link beside a map error.
+
+Reports are public. Review and edit the draft before submitting it. cbi adds
+only runtime versions, OS, architecture and the command or view. Automatic error
+text removes paths and replaces unknown details with `<detail>` so repository
+content stays private. Long messages are trimmed. Do not put private code,
+repository details or credentials in your title, message or reproduction steps.
+No GitHub token is needed in cbi.
+
 ## License
 
 Released under the MIT license. See [LICENSE](LICENSE).

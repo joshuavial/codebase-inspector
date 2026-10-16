@@ -3729,7 +3729,18 @@ function empty(msg) {
   const t = svgEl("text", { class: "empty", x: 200, y: 24, "text-anchor": "middle" });
   t.textContent = msg;
   svg.append(t);
-  content = { w: 400, h: 40 };
+  if (window.cbiReportBug && /failed|error/i.test(msg)) {
+    const link = svgEl("a", { href: "#", role: "button", "aria-label": "Report a bug" });
+    const label = svgEl("text", { x: 200, y: 52, "text-anchor": "middle", fill: "#718fff" });
+    label.textContent = "Report a bug…";
+    link.append(label);
+    link.addEventListener("click", event => {
+      event.preventDefault();
+      window.cbiReportBug(msg);
+    });
+    svg.append(link);
+  }
+  content = { w: 400, h: window.cbiReportBug && /failed|error/i.test(msg) ? 72 : 40 };
   fit(false);
   if (window.cbiOnDiagram) window.cbiOnDiagram(svg, []);
   if (new URLSearchParams(location.search).has("render")) document.title = "cbi-viewer-ready";

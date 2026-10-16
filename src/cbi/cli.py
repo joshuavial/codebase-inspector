@@ -9,10 +9,11 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
+    "bug": "Open a public GitHub bug report draft for you to review.",
     "init": "Create .cbi/ in this repo and write the ignore file.",
     "team": "Opt in to committing the map's judgement.",
     "scan": "Map the repo into .cbi/model.db and open judgement tasks.",
@@ -69,6 +70,12 @@ def build_parser():
         if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps"):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds = sub.choices
+    cmds["bug"].add_argument("--print", dest="print_url", action="store_true", help="print the URL without opening it")
+    cmds["bug"].add_argument("--title", default="", help="issue title")
+    cmds["bug"].add_argument("--message", default="", help="what happened (public text you supply)")
+    cmds["bug"].add_argument("--app-version", help=argparse.SUPPRESS)
+    cmds["bug"].add_argument("--view", choices=("Help menu", "Map", "Mapping"), help=argparse.SUPPRESS)
+    cmds["bug"].add_argument("--error", default="", help=argparse.SUPPRESS)
     cmds["search"].add_argument("text", nargs="+", help="words to look for; each word also matches as a prefix")
     cmds["search"].add_argument("--limit", type=int, default=20, help="most results to print (default 20)")
     cmds["search"].add_argument("--kind", metavar="K", help="only nodes of this display kind (class, test case, folder) or kind")
@@ -1115,6 +1122,22 @@ def _cmd_build_compare(args):
     return 0
 
 
+def cmd_bug(args):
+    url = bug_report.build_url(version=package_version(), title=args.title, message=args.message,
+                               app_version=args.app_version, view=args.view or "cbi bug", error=args.error)
+    if args.print_url:
+        print(url)
+        return 0
+    try:
+        code, _detail = open_link.open_url(url)
+    except OSError:
+        code = 1
+    if code:
+        print("Could not open the browser. Use cbi bug --print to copy the URL.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_open(args):
     return open_link.run(args)
 
@@ -1191,7 +1214,7 @@ def cmd_team(args):
     return 2
 
 
-HANDLERS = {"init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
+HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
             "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,

@@ -349,6 +349,23 @@ Recorded during the build; the code is the reference where these and earlier sec
 - Submitted answers are data: they are stored as text and rendered in the viewer with `textContent`, never as HTML, because an agent could paste content from the repo.
 - `.cbi/` is created with its own `.gitignore` containing `*`.
 
+## Bug reports
+
+`src/cbi/bug_report.py` builds a GitHub issue-form URL without reading the
+repository. `cbi bug` uses the existing URL opener. The app calls the same builder
+with `--print` and opens the result through `openExternalUrl`. The viewer preload
+bridges its error link to the main process. The Help menu and mapping failures
+also offer reports. If the CLI is unavailable, the app opens a minimal draft with
+unavailable versions marked.
+
+The environment contains only cbi and app versions, OS, architecture, Python
+version and a fixed command or view label. Automatic errors retain known
+diagnostic phrases and replace other details, including repository identifiers.
+Absolute paths become `<path>`. User-written titles and messages are public text;
+paths are removed there too. The URL is capped at 7,900 encoded characters, with
+a marker on trimmed messages. Users review the draft in their browser before
+submitting it. There is no API posting or authentication in cbi.
+
 ## Test strategy
 
 - Unit tests per module against small synthetic repos built by fixtures (`git init` in a temp dir, so submodule cases are real).
