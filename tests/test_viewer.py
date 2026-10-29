@@ -335,7 +335,7 @@ def test_build_writes_both_data_files(tmp_path):
     assert text.startswith('cbiLoad("concepts", ') and "</script>" not in text and "\\u003c/script>" in text
     tree = (viewer.parent / "data" / "tree.js").read_text()
     assert tree.startswith('cbiLoad("tree", ') and FN in tree
-    html = viewer.read_text()
+    html = viewer.read_text(encoding="utf-8")
     assert html.index("app.js") < html.index("data/diff.js") < html.index("data/concepts.js") < html.index("data/context.js")
     assert "data/tree.js" not in html
     assert (viewer.parent / "data" / "diff.js").read_text() == 'cbiLoad("diff", null);\n'

@@ -155,7 +155,7 @@ def test_build_writes_the_editor_config(tmp_path):
     assert text.startswith('cbiLoad("editor", ')
     assert '"editor":"vscode"' in text
     assert project.resolve().as_posix() in text
-    html = viewer.read_text()
+    html = viewer.read_text(encoding="utf-8")
     assert html.index("open-editor.js") < html.index("app.js") < html.index("data/editor.js")
     assert html.index("app.js") < html.index("data/diff.js") < html.index("data/concepts.js")
     assert (viewer.parent / "open-editor.js").is_file()

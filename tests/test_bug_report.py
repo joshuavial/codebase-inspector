@@ -55,7 +55,7 @@ def test_automatic_error_cannot_copy_repository_content():
     assert "<detail>" in clean
 
 
-@pytest.mark.parametrize("message", ["x" * 20000, "🦄 &+?\n" * 3000])
+@pytest.mark.parametrize("message", ["x" * 20000, "🦄 &+?\n" * 3000], ids=["ascii", "emoji"])
 def test_encoded_length_cap(message):
     url = bug_report.build_url(version="0.1.0", title="🦄" * 300, message=message)
     assert len(url) <= bug_report.MAX_URL

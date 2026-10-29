@@ -294,7 +294,7 @@ def test_viewer_sources_expose_copy_for_agent():
     assert "Copy for agent" in app and "copy-agent" in app
     assert 'ev.key === "c" || ev.key === "C"' in app
     assert "function cbiCopy" in app and "getSelection" in app
-    html = (root / "src/cbi/viewer/index.html").read_text()
+    html = (root / "src/cbi/viewer/index.html").read_text(encoding="utf-8")
     assert 'id="toast"' in html and "data/context.js" in html
     main = (root / "app/src/main.ts").read_text()
     assert "clipboard-sanitized-write" in main

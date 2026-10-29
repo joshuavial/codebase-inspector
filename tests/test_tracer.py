@@ -102,7 +102,7 @@ def test_tracer_loop(pair_repo, tmp_path, capsys):
     assert tree.startswith('cbiLoad("tree", ') and summary in tree
     payload = json.loads(tree.removeprefix('cbiLoad("tree", ').removesuffix(");\n"))
     assert any(n["id"] == f"local:repo:{SUBJECT}#DeviceRegistry" for n in payload["nodes"])
-    html = (viewer / "index.html").read_text()
+    html = (viewer / "index.html").read_text(encoding="utf-8")
     assert "app.js" in html and "data/tree.js" not in html
     app = (viewer / "app.js").read_text(encoding="utf-8")
     assert 's.src = "data/tree.js"' in app

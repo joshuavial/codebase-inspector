@@ -151,7 +151,7 @@ def test_history_cli_writes_markdown_and_reuses_point_models(make_repo, monkeypa
     assert latest["model"]["concepts"]
     assert latest["diff"]["changes"]["groups"]
     assert "cbi diff" not in latest["text"]
-    assert (root / ".cbi" / "viewer" / "index.html").read_text().find("data/history.js") > 0
+    assert (root / ".cbi" / "viewer" / "index.html").read_text(encoding="utf-8").find("data/history.js") > 0
     conn = store.read_only(next(iter(mtimes)))
     try:
         assert store.get_meta(conn, "commit")

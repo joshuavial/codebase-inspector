@@ -38,14 +38,14 @@ function fail(message) {
 }
 
 const release = {
-  tag_name: "v0.2.0",
-  html_url: "https://github.com/joshuavial/codebase-inspector/releases/tag/v0.2.0",
+  tag_name: "v99.0.0",
+  html_url: "https://github.com/joshuavial/codebase-inspector/releases/tag/v99.0.0",
   draft: false,
   prerelease: false,
   assets: [
     {
-      name: "Codebase-Inspector-0.2.0-arm64.dmg",
-      browser_download_url: "https://example.com/Codebase-Inspector-0.2.0-arm64.dmg",
+      name: "Codebase-Inspector-99.0.0-arm64.dmg",
+      browser_download_url: "https://example.com/Codebase-Inspector-99.0.0-arm64.dmg",
     },
   ],
 };
@@ -170,7 +170,7 @@ async function waitSkipped() {
   while (Date.now() - started < 10_000) {
     if (fs.existsSync(statePath)) {
       const saved = JSON.parse(fs.readFileSync(statePath, "utf8"));
-      if (saved.skipped === "0.2.0") return;
+      if (saved.skipped === "99.0.0") return;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -203,7 +203,7 @@ async function clickCheckForUpdates() {
   await openMap(page);
   await waitBanner(page, true);
   const text = await page.locator("#update-message").innerText();
-  if (text !== "Codebase Inspector 0.2.0 is available") fail(`banner text: ${text}`);
+  if (text !== "Codebase Inspector 99.0.0 is available") fail(`banner text: ${text}`);
   await page.getByRole("button", { name: "Release notes" }).waitFor();
   await page.getByRole("button", { name: "Download" }).waitFor();
   await page.locator("#update-skip").click();
@@ -213,7 +213,7 @@ async function clickCheckForUpdates() {
   await clickCheckForUpdates();
   await waitBanner(page, true);
   const again = await page.locator("#update-message").innerText();
-  if (again !== "Codebase Inspector 0.2.0 is available") fail(`manual banner text: ${again}`);
+  if (again !== "Codebase Inspector 99.0.0 is available") fail(`manual banner text: ${again}`);
   await page.locator("#update-skip").click();
   await waitBanner(page, false);
 
