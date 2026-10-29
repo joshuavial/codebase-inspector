@@ -34,10 +34,10 @@ From a checkout:
 uv tool install .
 ```
 
-From the 0.1.0 wheel:
+From the 0.2.0 wheel:
 
 ```
-uv tool install https://github.com/joshuavial/codebase-inspector/releases/download/v0.1.0/codebase_inspector-0.1.0-py3-none-any.whl
+uv tool install https://github.com/joshuavial/codebase-inspector/releases/download/v0.2.0/codebase_inspector-0.2.0-py3-none-any.whl
 ```
 
 On Windows, if `uv` says its executable directory is not on `PATH`, run

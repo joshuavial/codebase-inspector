@@ -2,7 +2,7 @@
   "name": "codebase-inspector-app",
   "productName": "Codebase Inspector",
   "desktopName": "com.codebaseinspector.app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop shell that opens a git repository and shows the cbi concept map.",
   "homepage": "https://github.com/joshuavial/codebase-inspector",

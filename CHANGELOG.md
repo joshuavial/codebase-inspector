@@ -7,9 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
 ### Added
 
+- `cbi history` prints an architecture changelog for the default branch, built incrementally and including pre-merge commits. It filters by date or concept, writes `.cbi/CHANGELOG-ARCHITECTURE.md` with `--write`, and `--narrate` opens a task to summarise one entry. The viewer shows it as a timeline.
+- System views: database diagrams from SQL migrations and common ORMs, with code reads and writes linked to tables, and an API endpoint view. The viewer shows them as system tabs, and large schemas focus on the connected columns.
+- A ranked change overview in `cbi diff`, `cbi review` and the viewer. The diff viewer defaults to changed concepts and their neighbours.
+- `cbi prime` guides stored ref models.
 - `cbi bug` opens a public GitHub issue draft, with `--print`, `--title` and `--message` options. The desktop Help menu and map errors offer the same report flow. Drafts include a small runtime environment block and strip private details from automatic error text.
+
+### Changed
+
+- Long concept chains lay out as a snake grid that fills the window, with labels kept off lines.
+- Orphan reports trace reachability from framework roots, package script entries, agent scripts and host extensions, Python `__main__` modules and package initializers, and barrel modules. Conventional tool configuration and test support files are no longer reported as orphans.
+- Functions passed as values count as references. Empty files get a deterministic summary. Newer committed concept answers win.
+- Scan, build, diff and history are faster on large repositories, and ref models share parse results.
+
+### Fixed
+
+- Stale or concept-less ref models no longer show unchanged concepts as removed.
+- History concepts from submodule files no longer collide, history date filters are inclusive, and history navigation stays stable across system tabs.
+- The screens check keeps excluded templates excluded.
+- Python imports resolve under package directories that are not identifiers, and committed virtualenvs are no longer ignored by default.
+- Team judgement files stay visible to Git.
 
 ## [0.1.0] - 2026-10-10
 

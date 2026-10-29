@@ -1,6 +1,6 @@
 [project]
 name = "codebase-inspector"
-version = "0.1.0"
+version = "0.2.0"
 description = "Deterministic CLI that maps a codebase into a layered model for AI agents and a static viewer."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -170,7 +170,7 @@ def project_concepts(current, point_conn, current_conn=None):
     by_folder = defaultdict(list)  # indexed once: scanning every file per unowned file was quadratic
     for item in point_files.values():
         by_folder[posixpath.dirname(item["path"])].append(item["path"])
-    assigned, provisional = {}, []
+    assigned, provisional, folder_choice = {}, [], {}
     for fid, item in sorted(point_files.items(), key=lambda pair: pair[1]["path"]):
         path = item["path"]
         owner = current_owner.get(path)
@@ -179,8 +179,11 @@ def project_concepts(current, point_conn, current_conn=None):
             owner = _choose(hashes.get(item["hash"], []))
             by = "content"
         if not owner:
-            owner = _choose(current_owner.get(other) for other in by_folder[posixpath.dirname(path)]
-                            if other != path)
+            # This file has no owner, so it never votes; the folder's choice is the same for every such file.
+            folder = posixpath.dirname(path)
+            if folder not in folder_choice:
+                folder_choice[folder] = _choose(current_owner.get(other) for other in by_folder[folder])
+            owner = folder_choice[folder]
             by = "folder"
         if not owner:
             neighbours = []
