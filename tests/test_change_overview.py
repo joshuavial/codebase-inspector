@@ -125,7 +125,7 @@ def test_binary_counts_as_one_changed_file(make_repo, tmp_path):
     base = sha(root)
     (root / "logo.bin").write_bytes(b"\x00\x01")
     subprocess.run(["git", "add", "logo.bin"], cwd=root, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "binary"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "binary"], cwd=root, check=True)
     stats = change_overview.git_line_stats(root, base, sha(root))
     measure = change_overview._measure(binary=1 if stats["logo.bin"]["binary"] else 0)
     assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary")
