@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -486,23 +486,28 @@ def _ref_judgement(out):
                                _read(out / "answers.jsonl"))
 
 
-def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parsed=None):
+def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parsed=None, reporter=None):
     """Run the scan pipeline over an already enumerated tree. root supplies file bytes.
     parsed is the shared parse store a ref scan reads and fills."""
+    reporter = reporter or progress.Progress()
     concepts_text = _read(out / "concepts.json")
     screens_text = _read(out / "screens.json")
     fp = _scan_fingerprint(
         workspaces, ignore_text, out, _read(out / "structure.json"), concepts_text, screens_text)
+    mechanical_fp = files.fingerprint(workspaces, ignore_text, _read(out / "structure.json"))
     conn = store.open_db(out / "model.db")
     try:
-        tasks.attach_cache(conn)
+        with reporter.phase("open answer cache"):
+            tasks.attach_cache(conn)
         with conn:
             # Reserve the writer before reading the snapshot used by this scan.
             # A deferred read transaction cannot wait when another writer commits.
-            conn.execute("BEGIN IMMEDIATE")
+            with reporter.phase("waiting for model writer"):
+                conn.execute("BEGIN IMMEDIATE")
             old = store.file_states(conn)
             same_files = {p: s[2] for p, s in states.items()} == {p: s[2] for p, s in old.items()}
             shortcut = (same_files and store.get_meta(conn, "fingerprint") == fp
+                        and store.get_meta(conn, "mechanical_fingerprint") == mechanical_fp
                         and (not commit or store.get_meta(conn, "ref_judgement") == _ref_judgement(out)))
             store.replace_file_states(conn, {p: s[:4] for p, s in states.items()})
             store.set_meta(conn, "scanned_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
@@ -515,24 +520,38 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
                 store.set_meta(conn, "commit", commit)
             if not shortcut:
                 previous_concepts = store.get_meta(conn, "concepts_json")
-                known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
-                store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states, root))
-                _parse_changed(conn, root, tracked, states, old, known, parsed)
-                store.drop_orphan_symbols(conn)
-                resolve.resolve(conn, root)
-                data.apply(conn, root)
-                manifests.apply(conn, root, _read(out / "structure.json"))
-                concepts.apply(conn, concepts_text)
-                screens.apply(conn, screens_text, root)
-                tasks.refresh(conn, root, out, previous_concepts=previous_concepts)
+                mechanical = not same_files or store.get_meta(conn, "mechanical_fingerprint") != mechanical_fp
+                if mechanical:
+                    with reporter.phase("enumerated nodes"):
+                        known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
+                        store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states, root))
+                    with reporter.phase("parse"):
+                        _parse_changed(conn, root, tracked, states, old, known, parsed, reporter)
+                        store.drop_orphan_symbols(conn)
+                    with reporter.phase("resolve"):
+                        resolve.resolve(conn, root, reporter=reporter)
+                    with reporter.phase("data"):
+                        data.apply(conn, root)
+                    with reporter.phase("manifests"):
+                        manifests.apply(conn, root, _read(out / "structure.json"))
+                else:
+                    reporter.emit("reusing unchanged mechanical relationships")
+                with reporter.phase("judgement"):
+                    concepts.apply(conn, concepts_text)
+                    screens.apply(conn, screens_text, root)
+                    tasks.refresh(conn, root, out, previous_concepts=previous_concepts)
                 # ponytail: full search rebuild per scan; index only changed nodes if it gets slow.
-                store.reindex(conn)
-                docs.index(conn, root)
+                with reporter.phase("search and docs"):
+                    store.reindex(conn)
+                    docs.index(conn, root)
                 # refresh may have written structure.json or concepts.json from the answer cache
                 fp = _scan_fingerprint(
                     workspaces, ignore_text, out, _read(out / "structure.json"),
                     _read(out / "concepts.json"), _read(out / "screens.json"))
                 store.set_meta(conn, "fingerprint", fp)
+                # Accepted structure changes rebuild their relationships during refresh.
+                store.set_meta(conn, "mechanical_fingerprint", files.fingerprint(
+                    workspaces, ignore_text, _read(out / "structure.json")))
             if commit:
                 store.set_meta(conn, "ref_judgement", _ref_judgement(out))
         return shortcut, store.counts_by_display_kind(conn), tasks.task_counts(conn)
@@ -542,16 +561,19 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
 
 def scan(root, out):
     """Run the scan pipeline on the working tree. Returns (shortcut hit, counts, (open, blocked))."""
+    reporter = progress.Progress()
     ignore_text = _read(out / "ignore")
-    workspaces, tracked = files.enumerate_repo(root, files.Ignore(ignore_text or ""))
+    with reporter.phase("enumerate"):
+        workspaces, tracked = files.enumerate_repo(root, files.Ignore(ignore_text or ""))
     conn = store.open_db(out / "model.db")
     try:
         tasks.attach_cache(conn)
         old = store.file_states(conn) if store.get_meta(conn, "content_id") == "blob" else {}
     finally:
         conn.close()
-    states = files.hash_files(root, tracked, old)
-    return _map(root, out, ignore_text, workspaces, tracked, states)
+    with reporter.phase("hash"):
+        states = files.hash_files(root, tracked, old, reporter=reporter)
+    return _map(root, out, ignore_text, workspaces, tracked, states, reporter=reporter)
 
 
 def scan_ref(root, out, ref, *, force=False):
@@ -561,6 +583,8 @@ def scan_ref(root, out, ref, *, force=False):
     the schema, parser version and ignore file still match.
     """
     ignore_text = _read(out / "ignore")
+    reporter = progress.Progress()
+    reporter.emit("enumerate ref")
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
     db = home / "model.db"
@@ -585,11 +609,12 @@ def scan_ref(root, out, ref, *, force=False):
         finally:
             conn.close()
     home.mkdir(parents=True, exist_ok=True)
-    tree = files.CommitTree(root, sha, files.Ignore(ignore_text or ""))
+    with reporter.phase("enumerate ref files"):
+        tree = files.CommitTree(root, sha, files.Ignore(ignore_text or ""))
     parsed = store.open_parse_store(out / "refs" / "parse.db")
     try:
         _shortcut, counts, task_counts = _map(
-            tree, home, ignore_text, tree.workspaces, tree.tracked, tree.file_states(), sha, parsed)
+            tree, home, ignore_text, tree.workspaces, tree.tracked, tree.file_states(), sha, parsed, reporter)
     finally:
         parsed.commit()  # parse results are pure, so keep them even when the scan failed later
         parsed.close()
@@ -597,14 +622,16 @@ def scan_ref(root, out, ref, *, force=False):
     return sha, False, counts, task_counts
 
 
-def _parse_changed(conn, root, tracked, states, old, known, parsed=None):
+def _parse_changed(conn, root, tracked, states, old, known, parsed=None, reporter=None):
     """Parse code files whose content or parser version changed, or that are new to the model.
     With a shared parse store, a file version parsed for another ref is read from it instead."""
     by_ws = {}
     for _top, ws, rel in tracked:
         by_ws.setdefault(ws["id"], []).append(rel)
     roots = {wid: files.cs_test_roots(paths) for wid, paths in by_ws.items()}
-    for top, ws, rel in tracked:
+    for index, (top, ws, rel) in enumerate(tracked, 1):
+        if reporter:
+            reporter.file("parse", index, len(tracked), top)
         state = states.get(top)
         if not state or state[4]:  # gone from disk, or a symlink
             continue
