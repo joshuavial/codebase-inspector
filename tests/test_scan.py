@@ -345,3 +345,35 @@ def test_generated_artifact_rules_cover_later_data_but_keep_new_source(make_repo
     (root / ".cbi" / "ignore").write_bytes(ignore + b"data/nested/tool.JSON\n")
     assert main(["scan"]) == 0
     assert "data/nested/tool.JSON" not in {row[6] for row in nodes(root).values()}
+
+
+def test_named_build_sources_added_after_init_survive_artifact_rules(make_repo, monkeypatch):
+    from cbi import files
+
+    root = make_repo({f"data/item{i}.json": "{}\n" for i in range(201)}, name="named-source")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    source = {
+        "data/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(sample)\n",
+        "data/Makefile": "all:\n\t@echo ready\n",
+        "data/Dockerfile": "FROM scratch\n",
+        "data/justfile": "build:\n    echo ready\n",
+        "data/GNUmakefile": "all:\n\t@echo ready\n",
+        "data/Containerfile": "FROM scratch\n",
+        "data/Dockerfile.preview.txt": "FROM scratch\n",
+    }
+    for name, text in {**source, "data/notes.txt": "Saved output.\n"}.items():
+        (root / name).write_text(text)
+    git(root, "add", "data")
+    git(root, "commit", "-m", "add named build sources")
+    assert main(["scan"]) == 0
+    paths = {row[6] for row in nodes(root).values()}
+    assert source.keys() <= paths
+    assert "data/notes.txt" not in paths
+    assert all(files.source_like(path) for path in source)
+    assert main(["scan", "--ref", "HEAD"]) == 0
+    sha = git(root, "rev-parse", "HEAD").strip()
+    conn = sqlite3.connect(root / ".cbi" / "refs" / sha / "model.db")
+    ref_paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind = 'file'")}
+    conn.close()
+    assert source.keys() <= ref_paths and "data/notes.txt" not in ref_paths

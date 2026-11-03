@@ -396,3 +396,11 @@ artifact block preserves tracked source identified by extension or a bounded
 shebang prefix, including newly added scripts with data-like suffixes. This
 policy applies to filesystem and Git snapshots. Rules outside that block keep
 ordinary gitignore behavior and can explicitly exclude those scripts.
+
+
+The generated artifact preservation policy also recognizes named build sources:
+`CMakeLists.txt`, `Makefile`, `GNUmakefile`, `Dockerfile`, `Containerfile` and
+`justfile`, including named recipe variants such as `Dockerfile.preview.txt`.
+These remain mapped when added after initialization in data-heavy directories,
+for both working-tree and historical scans. Ordinary saved `.txt` output remains
+excluded by the generated artifact rules.

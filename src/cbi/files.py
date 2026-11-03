@@ -361,6 +361,8 @@ SHELL_LANGS = {".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell
 STYLE_LANGS = {".css": "css", ".scss": "scss", ".sass": "sass", ".less": "less"}
 MARKUP_LANGS = {".html": "html", ".htm": "html", ".svelte": "svelte", ".astro": "astro"}
 SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, **STYLE_LANGS, **MARKUP_LANGS, ".sql": "sql"}
+NAMED_SOURCE_FILES = {"cmakelists.txt", "makefile", "gnumakefile", "dockerfile", "containerfile", "justfile"}
+NAMED_SOURCE_PREFIXES = ("makefile.", "gnumakefile.", "dockerfile.", "containerfile.", "justfile.")
 
 
 def shebang_language(content):
@@ -383,7 +385,10 @@ def shebang_language(content):
 
 def source_like(path, content=None):
     """Tracked source policy, independent of available symbol parsers."""
-    return posixpath.splitext(path)[1].lower() in SOURCE_LANGS or shebang_language(content) is not None
+    name = posixpath.basename(path).casefold()
+    return (name in NAMED_SOURCE_FILES or name.startswith(NAMED_SOURCE_PREFIXES)
+            or posixpath.splitext(path)[1].lower() in SOURCE_LANGS
+            or shebang_language(content) is not None)
 
 
 def classify(path, test_roots=(), content=None):
