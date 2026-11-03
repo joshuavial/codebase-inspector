@@ -116,3 +116,56 @@ def test_condition(runtime):
     assert main(['init']) == 0 and main(['scan']) == 0
     with sqlite3.connect(root / '.cbi/model.db') as conn:
         assert not conn.execute("SELECT 1 FROM edges WHERE kind='tests'").fetchone()
+
+
+def test_known_empty_loops_skip_guarded_bodies_and_preserve_else(make_repo, monkeypatch):
+    root = make_repo({
+        'pkg/__init__.py': '',
+        'pkg/worker.py': 'def run(): pass\n',
+        'pkg/other.py': 'def run(): pass\n',
+        'tests/test_empty.py': '''import importlib
+
+def test_tuple():
+    for name in ():
+        assert importlib.import_module("pkg.worker")
+
+def test_list():
+    for name in []:
+        if name:
+            importlib.import_module("pkg.worker")
+
+def test_alias():
+    items = ()
+    for name in items:
+        assert importlib.import_module("pkg.worker")
+
+def test_string():
+    for name in "":
+        assert importlib.import_module("pkg.worker")
+
+def test_bytes():
+    for name in b"":
+        assert importlib.import_module("pkg.worker")
+
+def test_dictionary():
+    items = {}
+    for name in items:
+        assert importlib.import_module("pkg.worker")
+
+def test_else():
+    name = "pkg.other"
+    for name in ():
+        assert importlib.import_module("pkg.worker")
+    else:
+        importlib.import_module(name)
+    importlib.import_module(name)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        links = {(src.rsplit('#', 1)[-1], dst.rsplit(':', 1)[-1]) for src, dst in conn.execute(
+            "SELECT src,dst FROM edges WHERE kind='tests'")}
+        details = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind='unsupported_test_mechanism'")]
+    assert links == {('test_else', 'pkg/other.py')}
+    assert not details

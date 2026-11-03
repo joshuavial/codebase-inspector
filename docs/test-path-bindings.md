@@ -28,7 +28,8 @@ Literal loops share a budget of 64 iteration expansions across the entire model,
 including registered fixture modules. Call contexts are cached per file and
 reused by path, SQL, fixture and boundary consumers. A loop exceeding the
 remaining budget is walked once with unknown iteration values and emits an
-`expansion_limit` diagnostic. Guarded or abruptly terminated loop bodies also
+`expansion_limit` diagnostic. Known-empty literal iterables skip the body entirely,
+even when it contains guards, and still process `else` with the incoming bindings. Guarded or abruptly terminated loop bodies also
 keep iteration values unknown, preventing conditional filters from binding every
 literal alternative. Unknown iterables are not mistaken for single literal
 values. These boundaries produce diagnostics when the loop contains an

@@ -33,12 +33,14 @@ def dotted(node, aliases):
 
 def evaluate(node, values, aliases, own):
     """A literal value/path or None. Unknown code is never evaluated."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes, int)):
         return node.value
     if isinstance(node, ast.Name):
         return PathValue(own, True) if node.id == "__file__" else values.get(node.id)
     if isinstance(node, (ast.Tuple, ast.List)):
         return tuple(evaluate(item, values, aliases, own) for item in node.elts)
+    if isinstance(node, ast.Dict) and not node.keys:
+        return ()
     if isinstance(node, ast.JoinedStr):
         parts = [evaluate(item.value if isinstance(item, ast.FormattedValue) else item,
                           values, aliases, own) for item in node.values]
@@ -210,6 +212,11 @@ def contexts(model, file_ids=None):
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 yield from walk(node.iter, values, aliases)
                 value = evaluate(node.iter, values, aliases, own)
+                if isinstance(value, (tuple, str, bytes)) and not value:
+                    # An empty literal cannot enter its body or overwrite its target.
+                    for child in node.orelse:
+                        yield from walk(child, values, aliases)
+                    return
                 choices = value if isinstance(value, tuple) else (None,)
                 guarded = any(isinstance(child, (ast.If, ast.IfExp, ast.While, ast.Match,
                     ast.Try, ast.TryStar, ast.Assert, ast.BoolOp, ast.Break, ast.Continue,
