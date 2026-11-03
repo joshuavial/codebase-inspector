@@ -7,7 +7,7 @@ from pathlib import Path
 from cbi import change_overview, concepts, store
 
 KIND = "summarise-architecture-change"
-VERSION = 2
+VERSION = 3
 INSTRUCTIONS = (
     "Use only the supplied diff facts, ranked overview and direct relationship context. "
     "Write one plain-language paragraph explaining what changed, why it matters, who or what "
@@ -43,9 +43,9 @@ def model_hash(conn):
     return digest.hexdigest()
 
 
-def change_hash(base_model_hash, head_model_hash, concept_id=None):
+def change_hash(base_model_hash, head_model_hash, concept_id=None, evidence=None):
     return hashlib.sha256(json.dumps(
-        [VERSION, KIND, base_model_hash, head_model_hash, concept_id]
+        [VERSION, KIND, base_model_hash, head_model_hash, concept_id, evidence], sort_keys=True
     ).encode()).hexdigest()
 
 
@@ -192,7 +192,7 @@ def enrich(base, head, result):
                     # reference rather than pretending there is source evidence.
                     facts["structural_only"] = True
                     allowed = sorted(citations(facts))
-                digest = change_hash(base_hash, head_hash, cid)
+                digest = change_hash(base_hash, head_hash, cid, facts)
                 task_id = "sac-" + digest[:16]
                 answer = tasks._cached_answer(conn, digest)
                 accepted = isinstance(answer, dict) and answer.get("narrative") and answer.get("citations")

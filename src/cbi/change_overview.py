@@ -89,6 +89,7 @@ def git_line_stats(root, base, head):
 
 
 def build(ctx, grouped, line_stats=None):
+    lines_known = line_stats is not None
     line_stats = dict(line_stats or {})
     # Also key each row by its old path, so a base-side lookup finds a renamed or deleted file.
     for row in list(line_stats.values()):
@@ -111,7 +112,8 @@ def build(ctx, grouped, line_stats=None):
         state = "added" if not left else "removed" if not right else "moved" if moved and left.get("content_hash") == right.get("content_hash") else "changed"
         node = right or left
         measures = _measure(additions=(stat or {}).get("additions", 0), deletions=(stat or {}).get("deletions", 0),
-                            binary=1 if (stat or {}).get("binary") else 0)
+                            binary=1 if (stat or {}).get("binary") else 0,
+                            lines_known=lines_known and (not line_stats or stat is not None))
         measures["files"].update({state: 1, "total": 1})
         files.append({
             "id": node["id"], "canonical_id": fid, "name": node["name"], "path": node.get("path") or "",
@@ -131,7 +133,7 @@ def build(ctx, grouped, line_stats=None):
         fid = ctx.canon.get(_file_id(node), _file_id(node))
         if fid not in by_file:
             continue
-        sm = _symbol_measure(ctx, change, node, line_stats)
+        sm = _symbol_measure(ctx, change, node, line_stats, lines_known)
         untested = ref["id"] in untested_ids
         by_file[fid]["symbols"].append({
             "id": ref["id"], "name": ref["name"], "display_kind": ref.get("display_kind") or "symbol",
@@ -146,8 +148,8 @@ def build(ctx, grouped, line_stats=None):
         row["relationships"] = _crossing([row], index.context(ids))
         _add_symbol_counts(row["measures"], row["symbols"])
 
-    items = _items(ctx, grouped, changes, files, index)
-    total = _measure()
+    items = _items(ctx, grouped, changes, files, index, lines_known)
+    total = _measure(lines_known=lines_known)
     for row in files:
         _roll(total, row["measures"])
     total["concepts"] = sum(1 for item in items if item["kind"] == "concept")
@@ -158,13 +160,13 @@ def build(ctx, grouped, line_stats=None):
     return {"grouping": grouped["grouping"], "totals": total, "items": items}
 
 
-def _items(ctx, grouped, changes, files, index):
+def _items(ctx, grouped, changes, files, index, lines_known=True):
     rel_states = _relationship_states(changes)
     records = {}
 
     def ensure(gid, name=None, kind="concept"):
         if gid not in records:
-            records[gid] = _record(ctx, gid, name or gid, kind)
+            records[gid] = _record(ctx, gid, name or gid, kind, lines_known)
             records[gid]["_direct"] = False
         return records[gid]
 
@@ -226,7 +228,7 @@ def _items(ctx, grouped, changes, files, index):
             module = _module(ctx, file, index)
             target = next((m for m in item["modules"] if m["id"] == module["id"]), None)
             if target is None:
-                target = {**module, "state": "changed", "measures": _measure(), "relationships": [], "files": []}
+                target = {**module, "state": "changed", "measures": _measure(lines_known=lines_known), "relationships": [], "files": []}
                 item["modules"].append(target)
             target["files"].append(file)
     for item in records.values():
@@ -272,7 +274,7 @@ def _items(ctx, grouped, changes, files, index):
                 file["symbols"].sort(key=lambda s: (s["name"].lower(), s["id"]))
             own_files = [f for f in module["files"] if (f["owner_id"] or _file_group(ctx, f["canonical_id"])) == item["id"]]
             if own_files:
-                own_module = {**module, "files": own_files, "measures": _measure()}
+                own_module = {**module, "files": own_files, "measures": _measure(lines_known=lines_known)}
                 for file in own_files:
                     _roll(own_module["measures"], file["measures"])
                 item["own_modules"].append(own_module)
@@ -323,20 +325,21 @@ def _moves(ctx, changes):
     return _dedupe(rows)
 
 
-def _record(ctx, gid, name, kind):
+def _record(ctx, gid, name, kind, lines_known=True):
     node = ctx.head.nodes.get(gid) or ctx.base.nodes.get(gid)
     return {
         "id": gid, "name": node["name"] if node else name,
         "kind": "concept" if node and node["kind"] == "concept" else kind,
-        "summary": (node or {}).get("summary") or "", "state": "changed", "measures": _measure(),
+        "summary": (node or {}).get("summary") or "", "state": "changed", "measures": _measure(lines_known=lines_known),
         "attention": {"integrations": [], "untested": 0, "structure": [], "relationships": [],
                       "env_vars": [], "removed_tests": 0, "provisional": False},
         "reasons": [], "relationships": [], "modules": [], "_changes": [],
     }
 
 
-def _measure(additions=0, deletions=0, binary=0):
+def _measure(additions=0, deletions=0, binary=0, lines_known=True):
     return {
+        "lines_known": bool(lines_known and not binary),
         "additions": additions, "deletions": deletions, "churn": additions + deletions + binary,
         "binary": binary, "files": Counter(), "symbols": Counter(), "tests": Counter(),
         "integrations": 0, "env_vars": 0, "untested": 0, "relationships": 0,
@@ -344,6 +347,7 @@ def _measure(additions=0, deletions=0, binary=0):
 
 
 def _roll(dst, src):
+    dst["lines_known"] = dst.get("lines_known", False) and src.get("lines_known", False)
     for key in ("additions", "deletions", "churn", "binary", "integrations", "env_vars", "untested", "relationships"):
         dst[key] += src.get(key, 0)
     for key in ("files", "symbols", "tests"):
@@ -393,7 +397,9 @@ def _attention(item, changes, changed):
         reasons.append(f"{attention['removed_tests']} removed test" + ("s" if attention["removed_tests"] != 1 else ""))
     if attention["provisional"]:
         reasons.append("provisional ownership")
-    item["reasons"] = reasons or [f"{item['measures']['churn']} changed lines"]
+    churn = item["measures"]["churn"]
+    item["reasons"] = reasons or ([f"{churn} changed line" + ("s" if churn != 1 else "")]
+                                  if item["measures"]["lines_known"] else ["Line counts unavailable"])
 
 
 def _touched(at, changed):
@@ -416,16 +422,18 @@ def _stat_for(stats, left, right):
     return None
 
 
-def _symbol_measure(ctx, change, node, stats):
+def _symbol_measure(ctx, change, node, stats, lines_known=True):
     left = ctx.base.nodes.get(node["id"])
     right = ctx.head.nodes.get(node["id"])
     if change["kind"] == "symbol-moved":
         left = ctx.base.nodes.get(change["before"]["id"])
         right = ctx.head.nodes.get(change["after"]["id"])
-    stat = _stat_for(stats, left, right) or {}
+    stat = _stat_for(stats, left, right)
+    known = lines_known and (not stats or stat is not None) and not (stat or {}).get("binary")
+    stat = stat or {}
     added = sum(1 for n in stat.get("added_lines", []) if right and right.get("start_line", 0) <= n <= right.get("end_line", 0))
     deleted = sum(1 for n in stat.get("deleted_lines", []) if left and left.get("start_line", 0) <= n <= left.get("end_line", 0))
-    return _measure(added, deleted)
+    return _measure(added, deleted, lines_known=known)
 
 
 def _module(ctx, file, index):
@@ -710,17 +718,22 @@ def _measure_line(m):
     files = m.get("files") or {}
     total = files.get("total", 0)
     bits = [f"{total} {'file' if total == 1 else 'files'}"] if total else []
-    bits.append(f"+{m.get('additions', 0)} -{m.get('deletions', 0)}")
+    bits.append(f"+{m.get('additions', 0)} -{m.get('deletions', 0)}" if m.get("lines_known", False)
+                else "Line counts unavailable")
     if m.get("binary"):
-        bits.append(f"{m['binary']} binary")
+        bits.append(f"{m['binary']} binary file" + ("s" if m["binary"] != 1 else ""))
     symbols = m.get("symbols") or {}
     counts = ", ".join(f"{symbols[k]} {k}" for k in ("added", "changed", "removed", "moved") if symbols.get(k))
     if counts:
-        bits.append(f"symbols {counts}")
+        heading = "symbol" if sum(symbols.values()) == 1 else "symbols"
+        bits.append(f"{heading} {counts}")
     tests = m.get("tests") or {}
     if tests.get("added") or tests.get("removed"):
-        bits.append(f"tests +{tests.get('added', 0)} -{tests.get('removed', 0)}")
-    for key, word in (("untested", "untested"), ("integrations", "integrations"), ("env_vars", "env vars")):
+        heading = "test" if tests.get("added", 0) + tests.get("removed", 0) == 1 else "tests"
+        bits.append(f"{heading} +{tests.get('added', 0)} -{tests.get('removed', 0)}")
+    for key, singular, plural in (("untested", "untested", "untested"),
+                                  ("integrations", "integration", "integrations"),
+                                  ("env_vars", "env var", "env vars")):
         if m.get(key):
-            bits.append(f"{m[key]} {word}")
+            bits.append(f"{m[key]} {singular if m[key] == 1 else plural}")
     return "  ".join(bits)

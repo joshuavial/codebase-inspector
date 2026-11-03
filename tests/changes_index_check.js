@@ -79,3 +79,20 @@ app.jumped=null; app.jump=(focus,sel) => {app.jumped={focus,sel};};
 vm.runInContext("shownSide='head'",app);
 sourceLink.onclick();
 assert.strictEqual(app.jumped.sel,'repo:src/tasks.py', 'relationship evidence opens the actual file drawer');
+
+assert.strictEqual(app.changeCounts({measures:{files:{total:1},additions:0,deletions:0,lines_known:false}}),'1 file · Line counts unavailable');
+assert.strictEqual(app.changeCounts({measures:{files:{total:2},additions:0,deletions:0,lines_known:true}}),'2 files · +0 −0','known zero stays zero');
+assert.ok(!app.changeCounts({measures:{files:{total:1}}}).includes('+0'),'older payload without availability is unknown');
+for (const [one,many] of [['file','files'],['integration signal','integration signals'],['observed relationship change','observed relationship changes'],['changed symbol','changed symbols'],['move','moves'],['test link','test links']]) {
+  assert.strictEqual(app.countLabel(1,one), '1 '+one);
+  assert.strictEqual(app.countLabel(2,one), '2 '+many);
+}
+vm.runInContext(`
+  DIFF.overview.items[0].children[0].attention={integrations:['test integration'],removed_tests:1};
+  changesPanel();
+`,app);
+assert.match(text(panel),/1 integration signal/);
+assert.ok(!text(panel).includes('1 integration signals'));
+assert.ok(!text(panel).includes('1 observed relationship changes'));
+assert.ok(!text(panel).includes('1 test links'));
+console.log('count availability and plural checks passed');

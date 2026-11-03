@@ -344,3 +344,19 @@ def test_ancestor_evidence_does_not_combine_paths_from_different_models(
     finally:
         base.close()
         head.close()
+
+
+def test_summary_cache_respects_line_count_availability(comparison):
+    base, head, _result, _root = comparison
+    measured = diff.compare(base, head, {})
+    change_summaries.enrich(base, head, measured)
+    entry = measured["summaries"]["concepts"]["engine"]
+    tasks.submit(head, entry["task_id"], json.dumps(_answer(head, entry)))
+    unknown = diff.compare(base, head)
+    change_summaries.enrich(base, head, unknown)
+    other = unknown["summaries"]["concepts"]["engine"]
+    assert other["task_id"] != entry["task_id"]
+    assert other["state"] == "pending", "measured zero claims must not be reused for unknown counts"
+    repeated = diff.compare(base, head, {})
+    change_summaries.enrich(base, head, repeated)
+    assert repeated["summaries"]["concepts"]["engine"]["state"] == "answered"

@@ -619,9 +619,14 @@ function changeSummary(parent, conceptId = null) {
 
 // ---------- comparison details ----------
 
+function countLabel(count, singular, plural = singular + "s") {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 function changeCounts(item) {
   const m = item.measures || {};
-  return `${(m.files || {}).total || 0} files · +${m.additions || 0} −${m.deletions || 0}`;
+  const files = countLabel((m.files || {}).total || 0, "file");
+  return m.lines_known === true ? `${files} · +${m.additions || 0} −${m.deletions || 0}` : `${files} · Line counts unavailable`;
 }
 
 function changeState(item) {
@@ -749,7 +754,7 @@ function changeReviewSignals(parent, item) {
   const modules = item.modules || [];
   const gaps = modules.flatMap((module) => (module.files || []).flatMap((file) => (file.symbols || []).filter((symbol) => symbol.untested)));
   for (const symbol of gaps) section.append(link(`${symbol.name}: no static test link`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
-  if (attention.removed_tests) section.append(el("p", "", `${attention.removed_tests} test links removed; inspect test evidence.`));
+  if (attention.removed_tests) section.append(el("p", "", `${countLabel(attention.removed_tests, "test link")} removed; inspect test evidence.`));
   if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) section.append(el("p", "", item.unowned ? "Ownership unresolved: these changes have no concept owner." : "Ownership uncertain: provisional assignment needs review."));
   for (const move of item.moves || []) {
     const p = el("p", "");
@@ -777,11 +782,11 @@ function changeReviewSignals(parent, item) {
   if (!observed.length && !gaps.length && !(attention.integrations || []).length && !(item.moves || []).length && !attention.removed_tests && !attention.provisional && !item.unowned)
     section.append(el("p", "hint", "No additional review signals in the structural evidence."));
   const signals = [];
-  if ((attention.integrations || []).length) signals.push(`${attention.integrations.length} integration signals`);
-  if (observed.length) signals.push(`${observed.length} observed relationship changes`);
-  if (gaps.length) signals.push(`${gaps.length} changed symbols without a static test link`);
-  if ((item.moves || []).length) signals.push(`${item.moves.length} moves`);
-  if (attention.removed_tests) signals.push(`${attention.removed_tests} test links removed`);
+  if ((attention.integrations || []).length) signals.push(countLabel(attention.integrations.length, "integration signal"));
+  if (observed.length) signals.push(countLabel(observed.length, "observed relationship change"));
+  if (gaps.length) signals.push(`${countLabel(gaps.length, "changed symbol")} without a static test link`);
+  if ((item.moves || []).length) signals.push(countLabel(item.moves.length, "move"));
+  if (attention.removed_tests) signals.push(`${countLabel(attention.removed_tests, "test link")} removed`);
   if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) signals.push("Ownership needs review");
   wrapper.append(el("p", "", signals.length ? signals.join(" · ") : "No additional review signals in the structural evidence."));
   const firstIntegration = (attention.integrations || [])[0];
@@ -4295,7 +4300,45 @@ function fitCam(minK = 0) {
 }
 
 let minScale = 0;
-function fit(animated, full) { const c = fitCam(full || diffActive() ? 0 : minScale); animated ? animate(c, 250) : setCam(c); }
+const CHANGE_READABLE_SCALE = 1;
+
+function changedFocusBounds() {
+  const focus = view.focus || (selectedChangeConcept() || {}).id;
+  const belongs = (id) => !focus || id === focus || ancestors(id).includes(focus);
+  const changed = Object.entries(rects).filter(([id]) => {
+    const symbol = symById[id];
+    return symbol ? symbolMark(id) && belongs(symbol.leaf.id) : CONCEPT_MARK.has(id) && belongs(id);
+  }).map(([, rect]) => rect);
+  if (!changed.length) return rects[view.sel] || rects[focus] || rects.boundary || { x: 0, y: 0, w: content.w, h: content.h };
+  const x = Math.min(...changed.map((r) => r.x)), y = Math.min(...changed.map((r) => r.y));
+  return { x, y, w: Math.max(...changed.map((r) => r.x + r.w)) - x, h: Math.max(...changed.map((r) => r.y + r.h)) - y };
+}
+
+function readableChangeCamera(fitted) {
+  const size = stageSize();
+  if (size.w / fitted.w >= CHANGE_READABLE_SCALE) return fitted;
+  const bounds = changedFocusBounds();
+  const w = size.w / CHANGE_READABLE_SCALE, h = size.h / CHANGE_READABLE_SCALE;
+  return { x: bounds.x + bounds.w / 2 - w / 2, y: bounds.y + bounds.h / 2 - h / 2, w, h };
+}
+
+function paintZoomNotice(readable) {
+  const notice = document.getElementById("diagram-zoom-note");
+  if (!notice) return;
+  notice.hidden = !readable;
+  notice.textContent = readable ? "Readable zoom centres changed code; some context is off-screen. Use Fit to see the entire diagram." : "";
+}
+
+function fit(animated, full) {
+  const minimum = full || diffActive() ? 0 : minScale;
+  const fitted = fitCam(minimum);
+  const comparison = diffActive() && view.tab !== "database" && view.tab !== "endpoints";
+  const readable = comparison && !full && readableChangeCamera(fitted) !== fitted;
+  paintZoomNotice(readable);
+  const settled = fitCam(minimum);
+  const camera = readable ? readableChangeCamera(settled) : settled;
+  animated ? animate(camera, 250) : setCam(camera);
+}
 
 // A camera that frames rect r with some margin, at the stage's aspect ratio.
 function around(r, margin) {

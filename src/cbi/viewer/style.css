@@ -627,3 +627,6 @@ button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline:
 #changes .change-summary p { margin: 5px 0 8px; }
 #changes .review-signals p { margin: 5px 0; }
 #changes .review-signals h4 { margin: 8px 0 4px; }
+
+#diagram-zoom-note { flex: none; padding: 7px 12px; background: var(--panel); color: var(--text); border-top: 1px solid var(--line); font-size: 12px; }
+#diagram-zoom-note[hidden] { display: none; }

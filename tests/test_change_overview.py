@@ -130,7 +130,7 @@ def test_binary_counts_as_one_changed_file(make_repo, tmp_path):
     subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "binary"], cwd=root, check=True)
     stats = change_overview.git_line_stats(root, base, sha(root))
     measure = change_overview._measure(binary=1 if stats["logo.bin"]["binary"] else 0)
-    assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary")
+    assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary file")
 
 
 def test_nested_index_distinguishes_rollups_and_preserves_evidence_verbs(
@@ -264,3 +264,121 @@ def test_reparented_change_retains_both_ancestor_rollups(make_repo, monkeypatch,
     assert all(child["state_label"] == "Changes inside" for child in item["children"])
     assert next(child for child in item["children"] if child["id"] == "earlier")["children"] == []
     assert next(child for child in item["children"] if child["id"] == "later")["children"][0]["id"] == "engine"
+
+
+def test_line_count_availability_propagates_without_turning_unknown_into_zero(
+        make_repo, monkeypatch, tmp_path, capsys):
+    files = {"src/first.ts": "export function first() { return 1; }\n",
+             "src/second.ts": "export function second() { return 2; }\n"}
+    root = make_repo(files, name="line-availability")
+    monkeypatch.chdir(root)
+    document = _concepts([{"id": "parent", "name": "Parent", "summary": "Groups computation.", "role": "core",
+                           "children": [_concept("engine", "Computation", list(files))]}], [], [])
+    base_sha = sha(root)
+    scan_into(capsys, tmp_path / "base", document)
+    commit_tree(root, {path: body.replace("return ", "return 10 + ") for path, body in files.items()})
+    scan_into(capsys, tmp_path / "head", document)
+    stats = change_overview.git_line_stats(root, base_sha, sha(root))
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        unknown = diff.compare(base, head)
+        measured = diff.compare(base, head, stats)
+        zero = diff.compare(base, head, {})
+        partial = diff.compare(base, head, {"src/first.ts": stats["src/first.ts"]})
+    finally:
+        base.close()
+        head.close()
+
+    def measures(result):
+        found = [result["overview"]["totals"]]
+        def visit(items):
+            for item in items:
+                found.append(item["measures"])
+                for module in [*item["modules"], *item["own_modules"]]:
+                    found.append(module["measures"])
+                    for file in module["files"]:
+                        found.append(file["measures"])
+                        found.extend(symbol["measures"] for symbol in file["symbols"])
+                visit(item["children"])
+        visit(result["overview"]["items"])
+        return found
+
+    assert all(m["lines_known"] is False for m in measures(unknown))
+    assert all(m["lines_known"] is True for m in measures(measured))
+    assert all(m["lines_known"] is True for m in measures(zero))
+    assert measured["overview"]["totals"]["additions"] == 2
+    assert zero["overview"]["totals"]["additions"] == zero["overview"]["totals"]["deletions"] == 0
+    assert "+0 -0" in diff.render(zero)
+    assert "Line counts unavailable" in diff.render(unknown)
+    assert "+0 -0" not in diff.render(unknown)
+    assert "0 changed lines" not in diff.render(unknown)
+    assert partial["overview"]["totals"]["lines_known"] is False
+    [parent] = partial["overview"]["items"]
+    [child] = parent["children"]
+    [module] = child["own_modules"]
+    assert parent["measures"]["lines_known"] is False
+    assert child["measures"]["lines_known"] is False
+    assert module["measures"]["lines_known"] is False
+    by_path = {file["path"]: file for file in module["files"]}
+    assert by_path["src/first.ts"]["measures"]["lines_known"] is True
+    assert by_path["src/second.ts"]["measures"]["lines_known"] is False
+    assert by_path["src/second.ts"]["symbols"][0]["measures"]["lines_known"] is False
+
+
+def test_structural_zero_and_binary_line_availability(make_repo, monkeypatch, tmp_path, capsys):
+    root = make_repo({"src/engine.ts": "export function compute() { return 1; }\n",
+                      "image.dat": "first"}, name="structural-lines")
+    monkeypatch.chdir(root)
+    before = _concepts([_concept("engine", "Earlier label", ["src/engine.ts", "image.dat"])], [], [])
+    after = _concepts([_concept("engine", "Current label", ["src/engine.ts", "image.dat"])], [], [])
+    base_sha = sha(root)
+    scan_into(capsys, tmp_path / "base", before)
+    scan_into(capsys, tmp_path / "head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        unknown = diff.compare(base, head)
+        zero = diff.compare(base, head, {})
+    finally:
+        base.close()
+        head.close()
+    assert unknown["overview"]["totals"]["lines_known"] is False
+    assert unknown["overview"]["items"][0]["measures"]["lines_known"] is False
+    assert zero["overview"]["totals"]["lines_known"] is True
+    assert zero["overview"]["items"][0]["measures"]["lines_known"] is True
+    assert "+0 -0" not in diff.render(unknown)
+    assert "+0 -0" in diff.render(zero)
+    (root / "image.dat").write_bytes(b"\x00\x01")
+    subprocess.run(["git", "add", "image.dat"], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "binary"], cwd=root, check=True)
+    scan_into(capsys, tmp_path / "binary-head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "binary-head")
+    try:
+        binary = diff.compare(base, head, change_overview.git_line_stats(root, base_sha, sha(root)))
+    finally:
+        base.close()
+        head.close()
+    assert binary["overview"]["totals"]["lines_known"] is False
+    assert binary["overview"]["totals"]["binary"] == 1
+    assert "Line counts unavailable" in diff.render(binary)
+    assert "1 binary" in diff.render(binary)
+    assert "+0 -0" not in diff.render(binary)
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_line_and_measure_count_labels_agree_with_quantity(count):
+    measure = change_overview._measure(additions=count, binary=count)
+    measure["files"].update({"total": count})
+    measure["symbols"].update({"changed": count})
+    measure["tests"].update({"added": count})
+    measure.update({"integrations": count, "env_vars": count})
+    text = change_overview._measure_line(measure)
+    suffix = "" if count == 1 else "s"
+    assert f"{count} file{suffix}" in text
+    assert f"{count} binary file{suffix}" in text
+    assert f"symbol{suffix} {count} changed" in text
+    assert f"test{suffix} +{count} -0" in text
+    assert f"{count} integration{suffix}" in text
+    assert f"{count} env var{suffix}" in text
+    item = {"attention": {"provisional": False}, "measures": change_overview._measure(additions=count), "relationships": []}
+    change_overview._attention(item, [], {})
+    assert item["reasons"] == [f"{count} changed line{suffix}"]
