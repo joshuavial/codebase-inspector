@@ -5,7 +5,9 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from cbi import parts, store, tasks, team
+import pytest
+
+from cbi import concepts, parts, store, tasks, team
 from cbi.cli import main
 
 MAP = {
@@ -503,11 +505,14 @@ def test_superseded_concept_answer_cannot_return_after_source_reverts(make_repo,
 
 
 def test_supersession_survives_union_merge_order():
-    live = team._canon("define-concepts", "old", tasks.PROTOCOL_VERSION, {"summary": "Old map."})
-    retired = {**live, "superseded_by": "new"}
-    for records in ([live, retired], [retired, live]):
-        parsed = team._parse("\n".join(json.dumps(row) for row in records))
-        assert parsed[("define-concepts", "old")]["superseded_by"] == "new"
+    for generation in (None, 5):
+        live = team._canon("define-concepts", "old", tasks.PROTOCOL_VERSION, {"summary": "Old map."})
+        if generation is not None:
+            live["generation"] = generation
+        retired = {**live, "superseded_by": "new"}
+        for records in ([live, retired], [retired, live]):
+            parsed = team._parse("\n".join(json.dumps(row) for row in records))
+            assert parsed[("define-concepts", "old")]["superseded_by"] == "new"
 
 
 def test_retired_concept_hash_is_not_restored_from_repopulated_cache(make_repo, monkeypatch, capsys, tmp_path):
@@ -541,15 +546,92 @@ def test_retired_concept_hash_is_not_restored_from_repopulated_cache(make_repo, 
     assert not (out / "concepts.json").exists()
 
     # A historical cache user can publish this old input again after the import.
+    key = ("define-concepts", baseline["input_hash"])
+    retired = team._parse((out / "answers.jsonl").read_text())[key]
     conn = store.open_db(out / "model.db")
     tasks.attach_cache(conn)
     with conn:
+        stale = {**concepts._body(old), "summary": "A stale cached application."}
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
-                     (baseline["input_hash"], json.dumps(concepts._body(old))))
+                     (baseline["input_hash"], json.dumps(stale)))
         concepts.refresh(conn, out, root)
+        assert key not in team._collect(conn)
+        team.sync(conn, out)
     conn.close()
+    assert team._parse((out / "answers.jsonl").read_text())[key] == retired
     assert not (out / "concepts.json").exists()
     reviewed = concepts_answer(run_json(capsys, "task", task_id))
     reviewed["summary"] = "The explicitly reviewed map."
     assert submit(capsys, tmp_path, task_id, reviewed)[0] == 0
     assert json.loads((out / "concepts.json").read_text())["summary"] == reviewed["summary"]
+
+
+@pytest.mark.parametrize("matching_projection", [False, True])
+def test_reaccepted_concept_answer_survives_older_merged_tombstone(make_repo, monkeypatch, capsys, tmp_path, matching_projection):
+    root = make_repo(MAP, name="reaccepted-map")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    out = root / ".cbi"
+    conn = sqlite3.connect(out / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    assert submit(capsys, tmp_path, task_id, concepts_answer(baseline))[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// revised\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    replacement = concepts_answer(run_json(capsys, "task", task_id))
+    replacement["summary"] = "The replacement application."
+    assert submit(capsys, tmp_path, task_id, replacement)[0] == 0
+    path = out / "answers.jsonl"
+    old_key = ("define-concepts", baseline["input_hash"])
+    retired = team._parse(path.read_text())[old_key]
+
+    (root / "b.ts").write_text(original)
+    assert main(["scan"]) == 0
+    reviewed = concepts_answer(run_json(capsys, "task", task_id))
+    reviewed["summary"] = "The explicitly reviewed application."
+    assert reviewed["input_hash"] == baseline["input_hash"]
+    if matching_projection:
+        body = concepts._body(reviewed)
+        (out / "concepts.json").write_text(json.dumps(body, indent=2) + "\n")
+        conn = store.open_db(out / "model.db")
+        tasks.attach_cache(conn)
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                         (baseline["input_hash"], json.dumps(body)))
+        conn.close()
+    assert submit(capsys, tmp_path, task_id, reviewed)[0] == 0
+    accepted = team._parse(path.read_text())[old_key]
+    other_rows = {key: row for key, row in team._parse(path.read_text()).items() if key != old_key}
+
+    for duplicate_rows in ([retired, accepted], [accepted, retired]):
+        path.write_text(team._dump(other_rows) + "".join(json.dumps(row) + "\n" for row in duplicate_rows))
+        assert team.committed_answer(out, *old_key, tasks.PROTOCOL_VERSION) == accepted["answer"]
+        assert not team.answer_superseded(out, *old_key)
+        conn = store.open_db(out / "model.db")
+        tasks.attach_cache(conn)
+        with conn:
+            team.import_answers(conn, out)
+            restored = json.loads(conn.execute(
+                "SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (old_key[1],)
+            ).fetchone()[0])
+            assert restored == accepted["answer"]
+            assert team._collect(conn)[old_key]["generation"] == accepted["generation"]
+            team.sync(conn, out)
+        conn.close()
+        assert team._parse(path.read_text())[old_key] == accepted
+    assert accepted["generation"] > retired["generation"]
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        conn.execute("UPDATE cache.summary_answers SET answer = ? WHERE input_hash = ?",
+                     (json.dumps(concepts._body(concepts_answer(baseline))), old_key[1]))
+        assert old_key not in team._collect(conn)
+        team.sync(conn, out)
+    conn.close()
+    assert team._parse(path.read_text())[old_key] == accepted

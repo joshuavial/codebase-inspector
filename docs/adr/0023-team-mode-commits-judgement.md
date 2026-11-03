@@ -37,7 +37,7 @@ invalidates the previous task hash.
 Explicitly accepting a replacement concept map retires the older concept input
 keys for that repository. Team answer rows retain a `superseded_by` marker,
 which survives a fresh cache import and takes precedence over a duplicate live
-row in a union merge. Retired keys are removed from the attached cache and are
+row at the same or an older acceptance generation in a union merge. Retired keys are removed from the attached cache and are
 never eligible for automatic restoration, even if source later returns to its
 old content. A new explicit submit may accept that input again. Historical
 file and group summaries remain reusable by content as before.
@@ -48,3 +48,21 @@ the shared cache. Deleting a retired cache row during import alone is not
 sufficient: another model can subsequently publish that old input hash again.
 The marker remains authoritative even when the row reappears. An explicit new
 submission may still accept a reviewed answer for that input.
+
+
+## Acceptance generations (2026-11-03)
+
+Each explicit concept acceptance records a `generation` greater than every
+previously observed generation for that task kind. It assigns that generation
+to the accepted row and to the older keys it supersedes. Union import selects
+the highest generation for each kind/key pair. A retirement marker wins a tie;
+unversioned legacy rows count as generation zero. A later explicit acceptance
+therefore beats an older retirement marker regardless of line order, while a
+stale live row cannot erase a retirement at the same generation.
+
+Import and export retain generation metadata in the model and team file. The
+model also remembers the digest of each accepted answer, so an unrelated cache
+write cannot acquire a newer acceptance generation merely by being exported.
+Reaccepting an input whose cached answer and projection already match still
+advances its generation when its key is marked retired. Content-keyed file and
+group summary rows keep their existing unversioned behavior.

@@ -8,6 +8,7 @@ for those keys. `cbi check` reads `check` from team.toml. The part splitter
 reads `brief_budget` from the same file.
 """
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -109,7 +110,9 @@ def import_answers(conn, out):
         return 0
     from cbi import tasks
     applied = 0
-    for row in _parse(path.read_text()).values():
+    rows = _parse(path.read_text())
+    _remember_revisions(conn, rows.values())
+    for row in rows.values():
         if row.get("superseded_by"):
             conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (row["key"],))
             continue
@@ -139,7 +142,7 @@ def import_answers(conn, out):
 def committed_answer(out, kind, key, protocol):
     """The current committed answer for a task key, or None.
 
-    This is the same last-row-wins view import_answers writes into the shared
+    This is the same generation-aware view import_answers writes into the shared
     cache. Callers use it when accepting the row also updates model-local state.
     """
     directory = team_dir(out)
@@ -185,13 +188,32 @@ def supersede(conn, out, kind, key):
     rows = _parse(path.read_text()) if path and path.is_file() else {}
     meta_key = "accepted_keys:" + kind
     previous = set(json.loads(store.get_meta(conn, meta_key) or "[]"))
+    revisions = _answer_revisions(conn)
+    known = revisions.get(kind, {})
+    previous.update(known)
     previous.update(k for (task_kind, k) in rows if task_kind == kind)
+    clock = json.loads(store.get_meta(conn, "answer_generation_clock") or "{}")
+    generation = max(
+        [clock.get(kind, 0)] + [revision.get("generation", 0) for revision in known.values()]
+        + [_generation(row) for (task_kind, _), row in rows.items() if task_kind == kind]
+    ) + 1
+    revised = []
     for old in previous - {key}:
         conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (old,))
+        revision = {"kind": kind, "key": old, "generation": generation, "superseded_by": key}
+        revised.append(revision)
         if (kind, old) in rows:
-            rows[(kind, old)]["superseded_by"] = key
-    if (kind, key) in rows:
-        rows[(kind, key)].pop("superseded_by", None)
+            rows[(kind, old)].update({"generation": generation, "superseded_by": key})
+    from cbi import tasks
+    accepted = conn.execute(
+        "SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (key,)
+    ).fetchone()
+    if accepted is None:
+        raise ValueError("cannot accept an uncached document answer")
+    rows[(kind, key)] = {**_canon(kind, key, tasks.PROTOCOL_VERSION, json.loads(accepted[0])),
+                         "generation": generation}
+    revised.append(rows[(kind, key)])
+    _remember_revisions(conn, revised)
     store.set_meta(conn, meta_key, json.dumps(sorted(previous | {key})))
     if path:
         _atomic(path, _dump(rows))
@@ -336,6 +358,7 @@ def _collect(conn):
     """Cache rows this model uses, keyed by (kind, key). The cache is attached as `cache`."""
     from cbi import tasks
     found = {}
+    revisions = _answer_revisions(conn)
     protocol = tasks.PROTOCOL_VERSION
     hashes = [
         row[0] for row in conn.execute(
@@ -366,8 +389,53 @@ def _collect(conn):
         except json.JSONDecodeError:
             continue
         if isinstance(answer, (dict, list)):
-            found[(kind, key)] = _canon(kind, key, protocol, answer)
+            revision = revisions.get(kind, {}).get(key, {})
+            if revision.get("superseded_by"):
+                continue
+            if (revision.get("generation")
+                    and revision.get("answer_digest") != _answer_digest(answer)):
+                continue
+            found[(kind, key)] = {**_canon(kind, key, protocol, answer),
+                                  **{name: revision[name] for name in ("generation", "superseded_by")
+                                     if name in revision}}
     return found
+
+
+def _answer_revisions(conn):
+    return json.loads(store.get_meta(conn, "answer_revisions") or "{}")
+
+
+def _remember_revisions(conn, rows):
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'").fetchone():
+        return  # cache-only import callers have no model metadata to retain
+    revisions = _answer_revisions(conn)
+    clock = json.loads(store.get_meta(conn, "answer_generation_clock") or "{}")
+    for row in rows:
+        kind, key = row["kind"], row["key"]
+        revision = {name: row[name] for name in ("generation", "superseded_by") if name in row}
+        clock[kind] = max(clock.get(kind, 0), _generation(row))
+        if revision and "answer" in row:
+            revision["answer_digest"] = _answer_digest(row["answer"])
+        if revision or key in revisions.get(kind, {}):
+            revisions.setdefault(kind, {})[key] = revision
+    store.set_meta(conn, "answer_revisions", json.dumps(revisions, sort_keys=True))
+    store.set_meta(conn, "answer_generation_clock", json.dumps(clock, sort_keys=True))
+
+
+def _answer_digest(answer):
+    text = json.dumps(answer, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _generation(row):
+    return row.get("generation", 0)
+
+
+def _prefer_row(current, candidate):
+    if current is None:
+        return candidate
+    rank = lambda row: (_generation(row), bool(row.get("superseded_by")))
+    return candidate if rank(candidate) >= rank(current) else current
 
 
 def _canon(kind, key, protocol, answer):
@@ -375,7 +443,11 @@ def _canon(kind, key, protocol, answer):
 
 
 def _parse(text):
-    """Valid rows keyed by (kind, key). The last copy of a key wins. Broken lines are dropped."""
+    """Valid rows keyed by (kind, key), ordered by observed generation.
+
+    A tombstone wins a generation tie, including unversioned legacy rows. A
+    later explicit acceptance can revive the key by advancing its generation.
+    """
     rows = {}
     for line in text.splitlines():
         if not line.strip():
@@ -387,8 +459,7 @@ def _parse(text):
         row = _valid(data)
         if row:
             key = (row["kind"], row["key"])
-            if not rows.get(key, {}).get("superseded_by") or row.get("superseded_by"):
-                rows[key] = row
+            rows[key] = _prefer_row(rows.get(key), row)
     return rows
 
 
@@ -403,6 +474,9 @@ def _valid(data):
     if answer is None:
         return None
     row = _canon(kind, key, protocol, answer)
+    generation = data.get("generation")
+    if isinstance(generation, int) and not isinstance(generation, bool) and generation >= 0:
+        row["generation"] = generation
     if isinstance(data.get("superseded_by"), str) and data["superseded_by"]:
         row["superseded_by"] = data["superseded_by"]
     return row
@@ -419,7 +493,8 @@ def _store(directory, rows):
     """Union `rows` into answers.jsonl. Current rows replace the same kind and key. Returns (path, count, changed)."""
     path = Path(directory) / ANSWERS_NAME
     merged = _parse(path.read_text()) if path.is_file() else {}
-    merged.update({key: row for key, row in rows.items() if not merged.get(key, {}).get("superseded_by")})
+    for key, row in rows.items():
+        merged[key] = _prefer_row(merged.get(key), row)
     changed = _atomic(path, _dump(merged))
     return path, len(merged), changed
 

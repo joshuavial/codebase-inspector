@@ -710,7 +710,8 @@ def accept(conn, task, answer, out, root=None):
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
     current = (out / "concepts.json").read_text() if (out / "concepts.json").exists() else None
-    if _cached(conn, task["input_hash"]) == body and current == text and not warnings:
+    if (_cached(conn, task["input_hash"]) == body and current == text and not warnings
+            and not team.answer_superseded(out, "define-concepts", task["input_hash"])):
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
