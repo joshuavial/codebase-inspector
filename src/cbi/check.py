@@ -238,7 +238,7 @@ def _json_findings(conn, root, out):
     found = []
     for name, checker in (
         ("structure.json", _structure_errors),
-        ("concepts.json", _concept_errors),
+        ("concepts.json", lambda conn, text: _concept_errors(conn, text, out)),
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
@@ -305,7 +305,7 @@ def _structure_errors(conn, text):
     return errors
 
 
-def _concept_errors(conn, text):
+def _concept_errors(conn, text, out=None):
     data, errors = _object(text)
     if data is None:
         return errors
@@ -320,6 +320,14 @@ def _concept_errors(conn, text):
         return [f"failed its checks ({err})"]
     if not failed and not concepts.projection_matches(conn, text):
         failed.append("concepts.json does not match the model; run `cbi scan` and review the concept map")
+    task = conn.execute("SELECT input_hash FROM tasks WHERE kind = 'define-concepts'").fetchone()
+    if task is not None:
+        committed = team.committed_answer(out, "define-concepts", task[0], tasks.PROTOCOL_VERSION)
+        if committed is not None and concepts._body(body) != committed:
+            failed.append(
+                "concepts.json does not match the committed define-concepts answer; "
+                "review the map and submit a define-concepts answer"
+            )
     return failed
 
 
