@@ -484,10 +484,13 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
     conn = store.open_db(out / "model.db")
     try:
         tasks.attach_cache(conn)
-        old = store.file_states(conn)
-        same_files = {p: s[2] for p, s in states.items()} == {p: s[2] for p, s in old.items()}
-        shortcut = same_files and store.get_meta(conn, "fingerprint") == fp
         with conn:
+            # Reserve the writer before reading the snapshot used by this scan.
+            # A deferred read transaction cannot wait when another writer commits.
+            conn.execute("BEGIN IMMEDIATE")
+            old = store.file_states(conn)
+            same_files = {p: s[2] for p, s in states.items()} == {p: s[2] for p, s in old.items()}
+            shortcut = same_files and store.get_meta(conn, "fingerprint") == fp
             store.replace_file_states(conn, {p: s[:4] for p, s in states.items()})
             store.set_meta(conn, "scanned_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             store.set_meta(conn, "parser_version", str(files.PARSER_VERSION))
@@ -1279,6 +1282,12 @@ def main(argv=None):
     _configure_windows_output()
     try:
         return _main(argv)
+    except sqlite3.OperationalError as err:
+        if not store.is_busy(err):
+            raise
+        print("CBI database is busy with another writer. Wait for the other cbi command "
+              "to finish, then retry.", file=sys.stderr)
+        return 1
     except OSError as err:
         if not _is_broken_pipe(err):
             raise

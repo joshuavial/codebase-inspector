@@ -85,6 +85,7 @@ Enumeration details settled in deliverable 2:
 - File nodes have `display_kind` `source file`, `test file`, `doc`, `file` (anything else) or `symlink`, and `attrs.role` (`code`, `test`, `doc`, `other`). Markdown gets `kind` `doc`.
 - A workspace node's `workspace_id` and `path` refer to its parent workspace (the mount path). `attrs.root` is its path from the top repo, and `attrs.remote` is the normalised remote, never the raw URL, so credentials in a URL are not stored.
 - `file_state.path` is relative to the top repo. A `meta` table holds the no-change fingerprint (ignore file, `structure.json`, parser version, every workspace's pinned and checked-out commit).
+- Scan reserves a SQLite write transaction before reading model state. Connections wait up to 30 seconds for a writer; if contention persists, CLI commands report a busy diagnostic with retry guidance.
 - The schema version is SQLite's `user_version`. On a mismatch the model is dropped and rebuilt, since it is derived from the repo and answers live in the shared cache.
 - `.cbi/ignore` patterns match paths from the top repo root, so they reach into submodules. An ignored submodule path skips the whole submodule.
 
