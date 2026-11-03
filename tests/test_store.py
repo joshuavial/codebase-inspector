@@ -209,8 +209,8 @@ def test_readers_see_a_writer_that_starts_after_uri_construction(make_repo, monk
         assert not path.with_name(path.name + "-wal").exists()
         writers = []
 
-        def interleave_uri(candidate):
-            uri = real_uri(candidate)
+        def interleave_uri(candidate, **kwargs):
+            uri = real_uri(candidate, **kwargs)
             if candidate == path:
                 writer = sqlite3.connect(path)
                 writer.execute(sql)

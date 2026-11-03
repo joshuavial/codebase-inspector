@@ -228,8 +228,9 @@ def attach_cache(conn, *, readonly=False):
 
     A writable attach creates the file and its tables, so one transaction covers both
     databases. A read-only attach opens an existing file with ``mode=ro`` and does not
-    create it, its directory, or a journal. When that file is missing or cannot be
-    opened, the cache is skipped and the model connection stays usable.
+    create the cache or its directory. A protected cache without WAL sidecars is
+    read as a frozen snapshot; a mutable cache uses normal SQLite locking. When
+    the file is missing or cannot be opened, it is skipped and the model stays usable.
     """
     path = cache_path()
     if readonly:
@@ -252,7 +253,7 @@ def _attach_cache_readonly(conn, path):
     try:
         if not path.is_file():
             return
-        uri = store.read_uri(path)
+        uri = store.read_uri(path, frozen_fallback=True)
         conn.execute("ATTACH DATABASE ? AS cache", (uri,))
         conn.execute("SELECT 1 FROM cache.sqlite_master LIMIT 1").fetchone()
     except (OSError, sqlite3.Error) as err:

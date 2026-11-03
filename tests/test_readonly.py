@@ -1,5 +1,7 @@
 """Read commands open a model they cannot write, and do not create a journal."""
 
+import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -33,19 +35,6 @@ def _sidecars(directory):
 
 
 
-def _export_snapshot(source, dest):
-    # An offline export can use a rollback journal, allowing normal read locks
-    # without writable WAL sidecars in the snapshot's read-only directory.
-    reader = store.read_only(source)
-    target = sqlite3.connect(dest)
-    try:
-        reader.backup(target)
-        target.execute("PRAGMA journal_mode = DELETE")
-    finally:
-        target.close()
-        reader.close()
-
-
 def test_read_only_connection_leaves_no_journal(tmp_path, monkeypatch):
     src = tmp_path / "src"
     src.mkdir()
@@ -55,14 +44,11 @@ def test_read_only_connection_leaves_no_journal(tmp_path, monkeypatch):
     copy = tmp_path / "copy"
     copy.mkdir()
     dest = copy / "model.db"
-    _export_snapshot(src / "model.db", dest)
+    shutil.copy(src / "model.db", dest)
     dest.chmod(0o444)
     copy.chmod(0o555)
     cache = tmp_path / "answer-cache"
     answers = cache / "answers.db"
-    with sqlite3.connect(answers) as writable:
-        writable.execute("PRAGMA journal_mode = DELETE")
-    writable.close()
     answers.chmod(0o444)
     cache.chmod(0o555)
     missing = tmp_path / "no-cache"
@@ -76,8 +62,10 @@ def test_read_only_connection_leaves_no_journal(tmp_path, monkeypatch):
             assert reader.execute("SELECT count(*) FROM cache.file_summaries").fetchone()[0] == 0
         finally:
             reader.close()
-        assert _sidecars(copy) == []
-        assert _sidecars(cache) == []
+        if not os.access(copy, os.W_OK):
+            assert _sidecars(copy) == []
+        if not os.access(cache, os.W_OK):
+            assert _sidecars(cache) == []
         monkeypatch.setenv("CBI_CACHE_DIR", str(missing))
         reader = store.read_only(dest)
         try:
@@ -86,7 +74,8 @@ def test_read_only_connection_leaves_no_journal(tmp_path, monkeypatch):
         finally:
             reader.close()
         assert not missing.exists()
-        assert _sidecars(copy) == []
+        if not os.access(copy, os.W_OK):
+            assert _sidecars(copy) == []
     finally:
         copy.chmod(0o755)
         cache.chmod(0o755)
@@ -101,12 +90,9 @@ def test_read_commands_work_on_a_chmod_copy(make_repo, monkeypatch, capsys, tmp_
     copy = tmp_path / "model"
     copy.mkdir()
     dest = copy / "model.db"
-    _export_snapshot(root / ".cbi" / "model.db", dest)
+    shutil.copy(root / ".cbi" / "model.db", dest)
     ref_dir = root / ".cbi" / "refs" / sha
     ref_db = ref_dir / "model.db"
-    with sqlite3.connect(ref_db) as writable:
-        writable.execute("PRAGMA journal_mode = DELETE")
-    writable.close()
     dest.chmod(0o444)
     ref_db.chmod(0o444)
     copy.chmod(0o555)
@@ -121,8 +107,10 @@ def test_read_commands_work_on_a_chmod_copy(make_repo, monkeypatch, capsys, tmp_
             assert out.strip()
         code, out, err = run(capsys, "status", "--ref", "HEAD")
         assert code == 0 and "last scan:" in out, err
-        assert _sidecars(copy) == copy_before == []
-        assert _sidecars(ref_dir) == ref_before == []
+        if not os.access(copy, os.W_OK):
+            assert _sidecars(copy) == copy_before == []
+        if not os.access(ref_dir, os.W_OK):
+            assert _sidecars(ref_dir) == ref_before == []
         assert not missing.exists()
     finally:
         copy.chmod(0o755)
@@ -150,19 +138,106 @@ def test_immutable_reads_require_an_explicit_frozen_snapshot(tmp_path):
         directory.chmod(0o755)
 
 
-def test_readonly_wal_directory_gets_a_clean_diagnostic(make_repo, monkeypatch, capsys):
+def test_readonly_wal_directory_supports_read_commands(make_repo, monkeypatch, capsys, tmp_path):
     root = make_repo(FILES)
     monkeypatch.chdir(root)
     assert main(["init"]) == 0 and main(["scan"]) == 0
     directory = root / ".cbi"
     path = directory / "model.db"
+    with sqlite3.connect(path) as conn:
+        task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'summarise-files'").fetchone()[0]
+    conn.close()
+    before = path.read_bytes()
+    assert before[18] == 2  # Retain the WAL format; do not export to DELETE journaling.
+    assert _sidecars(directory) == []
+    entries = set(directory.iterdir())
     path.chmod(0o444)
     directory.chmod(0o555)
+    frozen = not os.access(path, os.W_OK) and not os.access(directory, os.W_OK)
+    missing_cache = tmp_path / "missing-cache"
+    monkeypatch.setenv("CBI_CACHE_DIR", str(missing_cache))
     try:
-        code, _out, err = run(capsys, "tasks", "--json")
-        assert code == 1
-        assert "WAL sidecar" in err and "--out DIR" in err
-        assert "Traceback" not in err
+        for argv in (*READS, ("tasks", "--json"), ("task", task_id, "--json")):
+            code, out, err = run(capsys, *argv)
+            assert code == 0, (argv, err)
+            assert out.strip()
+            if frozen:
+                assert "frozen snapshot" in err
+            assert "Traceback" not in err
+        brief = json.loads(out)
+        answer = tmp_path / "answer.json"
+        answer.write_text(json.dumps({"input_hash": brief["input_hash"], "files": [
+            {"path": file["path"], "summary": "A frozen file summary."} for file in brief["files"]]}))
+        code, _out, err = run(capsys, "task", task_id, "--check", str(answer))
+        assert code == 0, err
+        if frozen:
+            assert "frozen snapshot" in err
+            assert set(directory.iterdir()) == entries
+        assert path.read_bytes() == before
+        assert not missing_cache.exists()
     finally:
         directory.chmod(0o755)
         path.chmod(0o644)
+
+
+def test_existing_readonly_wal_uses_normal_locking(make_repo, monkeypatch, capsys):
+    root = make_repo(FILES)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    directory = root / ".cbi"
+    path = directory / "model.db"
+    writer = sqlite3.connect(path)
+    writer.execute("INSERT INTO meta VALUES ('wal_answer', 'current')")
+    writer.commit()
+    assert _sidecars(directory)
+    path.chmod(0o444)
+    directory.chmod(0o555)
+    capsys.readouterr()
+    try:
+        reader = store.read_only(path)
+        try:
+            assert reader.execute("SELECT value FROM meta WHERE key = 'wal_answer'").fetchone() == ("current",)
+        finally:
+            reader.close()
+        assert "frozen snapshot" not in capsys.readouterr().err
+    finally:
+        directory.chmod(0o755)
+        path.chmod(0o644)
+        writer.close()
+
+
+def test_readonly_file_in_writable_directory_still_sees_a_late_writer(
+        make_repo, monkeypatch, capsys):
+    root = make_repo(FILES)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    path = root / ".cbi/model.db"
+    path.chmod(0o444)
+    original_uri = store.read_uri
+    writers = []
+
+    def interleave_uri(candidate, **kwargs):
+        uri = original_uri(candidate, **kwargs)
+        assert "immutable=1" not in uri
+        # A writable directory is still mutable, even if this file was read-only
+        # when the reader started. Let a writer obtain access after URI creation.
+        path.chmod(0o644)
+        writer = sqlite3.connect(path)
+        writer.execute("INSERT INTO meta VALUES ('late_answer', 'current')")
+        writer.commit()
+        writers.append(writer)
+        return uri
+
+    monkeypatch.setattr(store, "read_uri", interleave_uri)
+    capsys.readouterr()
+    try:
+        reader = store.read_only(path)
+        try:
+            assert reader.execute("SELECT value FROM meta WHERE key = 'late_answer'").fetchone() == ("current",)
+        finally:
+            reader.close()
+        assert "frozen snapshot" not in capsys.readouterr().err
+    finally:
+        path.chmod(0o644)
+        for writer in writers:
+            writer.close()

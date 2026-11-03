@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -175,20 +177,29 @@ def open_db(path):
     return conn
 
 
-def read_uri(path, *, immutable=False):
-    """Lock mutable databases normally; immutable is only for frozen snapshots.
+def read_uri(path, *, immutable=False, frozen_fallback=False):
+    """Use normal locks unless explicitly frozen or protected against writes.
 
-    WAL existence cannot prove a database is frozen: a writer can create a WAL
-    immediately after URI construction. Callers must explicitly guarantee that
-    an immutable snapshot cannot change for the lifetime of its connection.
+    WAL absence alone never selects immutable mode: a mutable database may
+    acquire a WAL immediately after URI construction. Read commands may opt in
+    to freezing a database only when both it and its directory deny writes and
+    no WAL or SHM exists. The note makes that snapshot behavior explicit.
     """
-    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    path = Path(path).resolve()
+    if (frozen_fallback and not immutable and path.is_file()
+            and not os.access(path, os.W_OK) and not os.access(path.parent, os.W_OK)
+            and not Path(str(path) + "-wal").exists()
+            and not Path(str(path) + "-shm").exists()):
+        immutable = True
+        print(f"Reading {path} as a frozen snapshot: the database and directory are read-only "
+              "and no WAL sidecars exist. Updates are not followed during this query.", file=sys.stderr)
+    uri = path.as_uri() + "?mode=ro"
     return uri + "&immutable=1" if immutable else uri
 
 
 def read_only(path, *, immutable=False):
-    """Open without migration, using SQLite locks unless this is a frozen snapshot."""
-    uri = read_uri(path, immutable=True) if immutable else read_uri(path)
+    """Read with locks, or freeze a protected database that cannot create sidecars."""
+    uri = read_uri(path, immutable=immutable, frozen_fallback=not immutable)
     conn = sqlite3.connect(uri, uri=True, timeout=BUSY_SECONDS)
     return prepare(conn, wal=False)
 
