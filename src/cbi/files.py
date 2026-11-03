@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 23
+PARSER_VERSION = 24
 
 CODE_LANGS = {
     ".py": "python",
@@ -343,7 +343,9 @@ def _test_tree(path):
 
 
 SHELL_LANGS = {".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell", ".fish": "shell"}
-SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, ".sql": "sql"}
+STYLE_LANGS = {".css": "css", ".scss": "scss", ".sass": "sass", ".less": "less"}
+MARKUP_LANGS = {".html": "html", ".htm": "html", ".svelte": "svelte", ".astro": "astro"}
+SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, **STYLE_LANGS, **MARKUP_LANGS, ".sql": "sql"}
 
 
 def shebang_language(content):

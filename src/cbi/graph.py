@@ -124,7 +124,7 @@ _NEXT_FILE = re.compile(
 
 
 def _framework_roots(conn, files):
-    """File IDs loaded by framework naming conventions rather than code references."""
+    """File IDs loaded by browsers or framework conventions rather than code references."""
     roots = set()
     by_workspace = defaultdict(dict)
     for file in files:
@@ -132,6 +132,7 @@ def _framework_roots(conn, files):
     for paths in by_workspace.values():
         for path, fid in paths.items():
             if (_NEXT_FILE.search(path)
+                    or path.lower().endswith((".html", ".htm"))
                     or ("/app/" in f"/{path}" and re.search(r"(?:^|/)_meta\.[cm]?[jt]sx?$", path))
                     or re.search(r"(?:^|/)\.(?:pi|omp)/extensions/", path)
                     or posixpath.basename(path) == "__main__.py"):  # run by `python -m package`

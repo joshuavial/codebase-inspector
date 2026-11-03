@@ -40,3 +40,14 @@ Ownership and file summaries cover shell scripts (`.sh`, `.bash`, `.zsh`,
 shell, Python or Node shebangs. Files under conventional test directories are
 test support. These files participate in the same task validation and changed
 file gate as parsed languages even when no symbol parser supports them.
+
+
+Styles (`.css`, `.scss`, `.sass`, `.less`) and markup (`.html`, `.htm`,
+`.svelte`, `.astro`) follow the same ownership policy. `SOURCE_LANGS` defines
+source inclusion separately from the symbol parser registry. Missing parser
+support leaves a file without symbols; it still requires a summary and an owner.
+Other tracked assets and documentation may remain unowned.
+
+HTML pages remain browser-loaded roots for orphan analysis; their script
+references are followed when computing reachability. Requiring owners for HTML
+does not make an independently opened page an unused module.
