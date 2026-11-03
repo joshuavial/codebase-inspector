@@ -366,3 +366,29 @@ def test_image_npm_script_cycle_stays_unresolved(make_repo):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('npm run dev', None)]
+
+
+@pytest.mark.parametrize('command', [
+    'CMD ["tail", "-f", "/dev/null"]',
+    'CMD ["sleep", "infinity"]',
+    'ENTRYPOINT ["sleep"]\nCMD ["infinity"]',
+    'CMD ["sh", "-c", "exec tail -f /dev/null"]',
+])
+def test_idle_image_is_an_artifact(make_repo, monkeypatch, command):
+    root = make_repo({'Dockerfile': f'FROM alpine\n{command}\n'}, name='acme')
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    conn = _db(root)
+    image = _nodes(conn, 'deployable')['deployable:acme-image']
+    assert image[0] == 'container image'
+    assert image[1]['entry_points'] == []
+    assert image[1]['artifact_command']
+    assert not conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unresolved_entry'").fetchall()
+
+
+def test_unknown_image_command_stays_unresolved(make_repo):
+    files = {'Dockerfile': 'FROM alpine\nCMD ["sleep", "missing.py"]\n'}
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('sleep missing.py', None)]

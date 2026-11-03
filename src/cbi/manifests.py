@@ -387,6 +387,19 @@ def _project_scripts(ws):
             if d["display_kind"] == "cli" and d["entries"][0][1]}
 
 
+def _idle_command(tokens):
+    """Known intentional keepalive commands, with literal shell/exec wrappers only."""
+    if len(tokens) == 3 and posixpath.basename(tokens[0]) in ("sh", "bash", "ash") and tokens[1] == "-c":
+        tokens = _tokens(tokens[2])
+    if tokens[:1] == ["exec"]:
+        tokens = tokens[1:]
+    if not tokens:
+        return False
+    command = [posixpath.basename(tokens[0]), *tokens[1:]]
+    return command in (["tail", "-f", "/dev/null"], ["tail", "-F", "/dev/null"],
+                       ["tail", "--follow", "/dev/null"], ["sleep", "infinity"], ["sleep", "inf"])
+
+
 def dockerfile(ws):
     """Container image entries resolved through literal stage-local COPY/ADD paths and argv."""
     deployables, builds = [], _docker_builds(ws)
@@ -395,15 +408,19 @@ def dockerfile(ws):
         name = posixpath.basename(here) or ws.name
         if "." in base:
             name += "-" + base.split(".", 1)[1]
-        entries = []
+        entries, artifacts = [], []
         for context, target in dict.fromkeys(builds.get(path) or [(here, None)]):
             state = _docker_state(ws, path, context, target)
             tokens = state["commands"].get("ENTRYPOINT", []) + state["commands"].get("CMD", [])
             raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
+            if _idle_command(tokens):
+                artifacts.append(raw)
+                continue
             resolved = _command_entries(ws, context, tokens, state) if tokens else _compose_image_entries(ws, path)
             entries += resolved or [(raw, None)]
         deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
-                            "ref": f"file:{ws.top(path)}"})
+                            "ref": f"file:{ws.top(path)}",
+                            **({"artifact_command": "; ".join(artifacts)} if artifacts else {})})
     return deployables, []
 
 
@@ -449,6 +466,8 @@ def _npm_entries(ws, here, tokens, state, seen):
 def _command_entries(ws, here, command, state=None, seen=()):
     """Resolve literal module commands and simple shell wrappers without running target code."""
     tokens = _tokens(command)
+    if _idle_command(tokens):
+        return []
     text = " ".join(tokens)
     modules = list(dict.fromkeys(_PY_MODULE.findall(text) + _ASGI_APP.findall(text)))
     found = []
@@ -965,7 +984,8 @@ def apply(conn, root, structure_text):
         nodes.append({"id": did, "display_kind": d["display_kind"], "name": d["name"], "ws": ws.id,
                       "path": d.get("manifest"), "kind": "deployable",
                       "attrs": {"entry_points": [e for _, e in d["entries"] if e], "evidence": d["evidence"],
-                                "members": len(members)}})
+                                "members": len(members),
+                                **({"artifact_command": d["artifact_command"]} if d.get("artifact_command") else {})}})
     for pid, p in sorted(packages.items()):
         nodes.append({"id": pid, "display_kind": p["display_kind"], "name": p["name"], "ws": p["ws"].id,
                       "path": p.get("directory"), "kind": "package",
