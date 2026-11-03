@@ -175,23 +175,21 @@ def open_db(path):
     return conn
 
 
-def read_uri(path):
-    """Read-only URI that includes committed WAL pages while a writer is active.
+def read_uri(path, *, immutable=False):
+    """Lock mutable databases normally; immutable is only for frozen snapshots.
 
-    A checkpointed database can be immutable, avoiding sidecar creation in a
-    read-only directory. An existing WAL must be read through normal SQLite
-    locking: immutable opens ignore it and silently return stale model answers.
+    WAL existence cannot prove a database is frozen: a writer can create a WAL
+    immediately after URI construction. Callers must explicitly guarantee that
+    an immutable snapshot cannot change for the lifetime of its connection.
     """
-    path = Path(path).resolve()
-    uri = path.as_uri() + "?mode=ro"
-    if not Path(str(path) + "-wal").exists():
-        uri += "&immutable=1"
-    return uri
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    return uri + "&immutable=1" if immutable else uri
 
 
-def read_only(path):
-    """Open a model without creating, migrating, or changing its journal mode."""
-    conn = sqlite3.connect(read_uri(path), uri=True, timeout=BUSY_SECONDS)
+def read_only(path, *, immutable=False):
+    """Open without migration, using SQLite locks unless this is a frozen snapshot."""
+    uri = read_uri(path, immutable=True) if immutable else read_uri(path)
+    conn = sqlite3.connect(uri, uri=True, timeout=BUSY_SECONDS)
     return prepare(conn, wal=False)
 
 

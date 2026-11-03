@@ -18,10 +18,10 @@ def test_connections_wait_and_use_wal(tmp_path):
         assert reader.execute("SELECT count(*) FROM nodes").fetchone()[0] == 0
     finally:
         reader.close()
-    # immutable=1 reports delete for the connection. The file header stays WAL (byte 18 == 2)
-    # and the read creates no -wal or -shm.
+    # Mutable databases keep WAL locking even when opened read-only. SQLite
+    # may create its coordination sidecars, but never changes the main file.
     assert path.read_bytes()[18] == 2
-    assert set(path.parent.iterdir()) == before
+    assert before <= set(path.parent.iterdir())
 
 
 def test_schema_has_every_table_and_rebuilds_on_version_change(tmp_path):
@@ -186,3 +186,46 @@ def test_readonly_cache_sees_committed_wal_changes(tmp_path):
     finally:
         reader.close()
         conn.close()
+
+
+def test_readers_see_a_writer_that_starts_after_uri_construction(make_repo, monkeypatch):
+    from cbi.cli import main
+
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    model = root / ".cbi/model.db"
+    cache = tasks.cache_path()
+    real_uri = store.read_uri
+
+    # Both databases are checkpointed here, with no WAL to detect yet. Keep
+    # the new writer open so its committed update remains in the WAL.
+    for path, sql, query in (
+        (model, "INSERT INTO meta VALUES ('late', 'current')", "SELECT value FROM meta WHERE key = 'late'"),
+        (cache, f"INSERT INTO file_summaries VALUES ('late', {tasks.PROTOCOL_VERSION}, 'current')",
+         "SELECT summary FROM cache.file_summaries WHERE content_hash = 'late'"),
+    ):
+        assert not path.with_name(path.name + "-wal").exists()
+        writers = []
+
+        def interleave_uri(candidate):
+            uri = real_uri(candidate)
+            if candidate == path:
+                writer = sqlite3.connect(path)
+                writer.execute(sql)
+                writer.commit()
+                writers.append(writer)
+            return uri
+
+        monkeypatch.setattr(store, "read_uri", interleave_uri)
+        reader = store.read_only(model)
+        try:
+            if path == cache:
+                tasks.attach_cache(reader, readonly=True)
+            assert reader.execute(query).fetchone() == ("current",)
+        finally:
+            reader.close()
+            for writer in writers:
+                writer.close()
+        monkeypatch.setattr(store, "read_uri", real_uri)

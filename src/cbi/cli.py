@@ -696,11 +696,17 @@ def _read_model(args):
         if sha:
             raise NoModel(f"no model for {sha}. Run `cbi scan --ref {args.ref}` first.")
         raise NoModel(f"no model at {path}. Run `cbi init` and `cbi scan` first.")
+    conn = None
     try:
         conn = store.read_only(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.Error as err:
-        raise NoModel(f"Cannot read model at {path}: {err}. Check read permissions or run `cbi scan` to rebuild it.") from err
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if conn is not None:
+            conn.close()
+        raise NoModel(
+            f"Cannot read model at {path}: {err}. Check read permissions and SQLite WAL sidecar "
+            "access, or copy the model to a writable directory and query it with `--out DIR`. "
+            "Run `cbi scan` to rebuild an invalid model.") from err
     if version != store.SCHEMA_VERSION:
         conn.close()
         raise NoModel(
