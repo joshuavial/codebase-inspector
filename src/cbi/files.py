@@ -29,8 +29,8 @@ CODE_LANGS = {
 }
 DOC_EXTS = {".md", ".mdx", ".markdown"}
 DATA_EXTS = {".json", ".txt", ".csv", ".jsonl"}
-DUMP_EXTS = DATA_EXTS | {".sql"}
-NAMED_DATA_DIRS = {"fixtures", "test-data"}
+DUMP_EXTS = DATA_EXTS
+NAMED_DATA_DIRS = {"fixtures", "test-data", "evals", "build"}
 MINIFIABLE_EXTS = {".js", ".mjs", ".cjs", ".css"}
 TEST_NAME = re.compile(
     r"^test_.*\.py$|^.*_test\.py$|^.*[.-](test|spec)\.[cm]?[jt]sx?$|^.*\.cy\.[cm]?[jt]sx?$"
@@ -53,11 +53,7 @@ BASE_IGNORE = """\
 # Tracked files that match are left out of the model. Edit freely:
 # `cbi init` never overwrites this file, and `cbi scan` rescans when it changes.
 
-# Eval snapshots and build output. fixtures/ and test-data/ are added below
-# when most of their files are data, so a directory of source stays in the model.
-evals/
-dist*/
-build/
+# Generated bundles. Directory names alone never exclude tracked source.
 *.min.js
 *.min.css
 """
@@ -436,16 +432,16 @@ def _looks_minified(full):
 
 
 def _named_data_dirs(paths):
-    """fixtures/ and test-data/ directories whose files are mostly data, not code.
+    """Artifact directories whose files are mostly saved data, not code.
 
     A file counts for every such directory above it. Most means more than half of the
-    files are json, csv, txt, jsonl or sql. A directory of TypeScript or C# is kept.
+    files are json, csv, txt or jsonl. SQL and source files are kept.
     """
     groups = defaultdict(list)
     for path in paths:
         parts = path.split("/")
         for i, name in enumerate(parts[:-1]):
-            if name in NAMED_DATA_DIRS:
+            if name in NAMED_DATA_DIRS or name == "dist" or name.startswith("dist-"):
                 groups["/".join(parts[: i + 1])].append(path)
     found = []
     for directory, files in groups.items():
@@ -461,7 +457,7 @@ def _named_data_dirs(paths):
 
 
 def default_ignore(root):
-    """Text of a fresh .cbi/ignore: fixed patterns plus data dirs and minified files found in the repo."""
+    """Exclude identified artifacts, preserving source even in data-heavy directories."""
     _, files = enumerate_repo(root, Ignore(BASE_IGNORE))
     paths = [top for top, _, _ in files]
     named = _named_data_dirs(paths)
@@ -469,22 +465,48 @@ def default_ignore(root):
         paths, lambda p: posixpath.splitext(p)[1].lower() in DATA_EXTS, DATA_DIR_MIN_FILES,
         lambda c, total: c[True] > DATA_DIR_SHARE * total,
     )
-    in_data = Ignore("\n".join(f"/{_escape(d)}/" for d in data_dirs))
     minified = [
         p for p in paths
-        if posixpath.splitext(p)[1].lower() in MINIFIABLE_EXTS and not in_data(p) and _looks_minified(root / p)
+        if posixpath.splitext(p)[1].lower() in MINIFIABLE_EXTS and _looks_minified(root / p)
     ]
     venvs = [posixpath.dirname(p) for p in paths if posixpath.basename(p) == "pyvenv.cfg" and "/" in p]
     text = BASE_IGNORE
     text += "\n# Committed Python virtualenvs (a directory holding pyvenv.cfg)\n"
     text += "".join(f"/{_escape(d)}/\n" for d in venvs)
-    text += "\n# fixtures/ and test-data/ when most of their files are data (json, csv, txt, sql)\n"
-    text += "".join(f"/{_escape(d)}/\n" for d in named)
-    text += "\n# Directories of mostly data files (json, txt, csv, jsonl)\n"
-    text += "".join(f"/{_escape(d)}/\n" for d in data_dirs)
+    artifact_dirs = set(named + data_dirs)
+    artifacts = [p for p in paths if posixpath.splitext(p)[1].lower() in DATA_EXTS
+                 and any(d in artifact_dirs for d in _ancestors(p))
+                 and not _tracked_source(root, p)]
+    text += "\n# Saved data artifacts in fixture and data-heavy directories\n"
+    text += "".join(f"/{_escape(p)}\n" for p in sorted(artifacts))
     text += "\n# Files with minified-looking lines\n"
     text += "".join(f"/{_escape(p)}\n" for p in minified)
     return text
+
+
+def _tracked_source(root, path):
+    """Inspect regular tracked files only; never follow symlinks or read private env files."""
+    full = root / path
+    try:
+        if is_private_env(path) or not stat.S_ISREG(os.lstat(full).st_mode):
+            return False
+        if source_like(path):
+            return True
+        with full.open("rb") as stream:
+            return source_like(path, stream.read(4096))
+    except OSError:
+        return False
+
+
+def excluded_source_files(root, ignore):
+    """Source omitted by the active ignore rules, including ignored submodule trees."""
+    _, tracked = enumerate_repo(root)
+    return [path for path, _, _ in tracked if ignore(path) and _tracked_source(root, path)]
+
+
+def report_excluded_source(root, ignore_text):
+    excluded = excluded_source_files(root, Ignore(ignore_text or ""))
+    print(f"Excluded tracked executable files: {len(excluded)} (by ignore rules)")
 
 
 # --- nodes ----------------------------------------------------------------------

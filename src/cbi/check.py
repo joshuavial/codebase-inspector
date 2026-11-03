@@ -62,7 +62,9 @@ def run(root, out, base_ref, fmt, scan):
     try:
         scan(root, out)
         restore(out, saved)
-        return _report(root, out, base, fmt)
+        result = _report(root, out, base, fmt)
+        files.report_excluded_source(root, (out / "ignore").read_text())
+        return result
     finally:
         restore(out, saved)
 
