@@ -108,7 +108,7 @@ def test_fixture_local_paths_and_migration_globs_remain_case_specific(make_repo,
     assert _targets(conn, "test_schema")["db/schema.sql"][1]["via"] == "fixture"
 
 
-def test_non_autouse_overrides_do_not_inherit_autouse_registration(make_repo, monkeypatch):
+def test_non_autouse_overrides_inherit_ancestor_autouse_names(make_repo, monkeypatch):
     conn = _scan(make_repo, monkeypatch, {
         "production.py": "def original(): return 1\ndef replacement(): return 2\n",
         "tests/conftest.py": "import pytest\nfrom production import original\n@pytest.fixture(autouse=True)\ndef db(): return original()\n",
@@ -116,8 +116,9 @@ def test_non_autouse_overrides_do_not_inherit_autouse_registration(make_repo, mo
         "tests/test_class.py": "import pytest\nfrom production import replacement\nclass TestOverride:\n    @pytest.fixture\n    def db(self): return replacement()\n    def test_class_unrequested(self): pass\n    def test_class_requested(self, db): assert db\n",
         "tests/test_default.py": "def test_still_autouse(): pass\n",
     })
-    assert not _targets(conn, "test_unrequested")
-    assert not _targets(conn, "TestOverride > test_class_unrequested")
-    assert "production.py#replacement" in _targets(conn, "test_requested")
-    assert "production.py#replacement" in _targets(conn, "TestOverride > test_class_requested")
+    for case in ("test_unrequested", "TestOverride > test_class_unrequested",
+                 "test_requested", "TestOverride > test_class_requested"):
+        targets = _targets(conn, case)
+        assert "production.py#replacement" in targets
+        assert "production.py#original" not in targets
     assert "production.py#original" in _targets(conn, "test_still_autouse")

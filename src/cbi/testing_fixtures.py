@@ -286,7 +286,7 @@ def link(m, edges, add):
             for layer in layers:
                 for name, fixture in layer.items():
                     registry[name].append(fixture)
-            auto = {name for name, fixtures in registry.items() if fixtures[-1].autouse}
+            auto = {name for name, fixtures in registry.items() if any(fixture.autouse for fixture in fixtures)}
             pending = [(name, ()) for name in (*requests, *sorted(auto)) if name not in direct]
             visited = set()
             while pending:
