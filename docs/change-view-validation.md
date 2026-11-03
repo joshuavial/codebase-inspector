@@ -6,7 +6,7 @@ The fixture is an isolated two-commit Git repository. Application contains Task 
 
 The accepted concept answer reads:
 
-> Task claiming adds an optional priority argument and raises the claim cap from one to two, changing the work returned to its entry-point caller. Its static test changes with the new call, but broader caller compatibility and runtime safety remain unknown.
+> Task claiming adds an optional priority argument and raises the claim cap from one to two, extending what callers can request. Its static test changes with the new call, but broader caller compatibility and runtime safety remain unknown.
 
 The answer cites `src/tasks.py`. It demonstrates the distinction between observed code changes and unknown behavioural safety.
 
