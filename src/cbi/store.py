@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -177,31 +178,96 @@ def open_db(path):
     return conn
 
 
-def read_uri(path, *, immutable=False, frozen_fallback=False):
-    """Use normal locks unless explicitly frozen or protected against writes.
+def _has_sidecars(path):
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            Path(str(path) + suffix).stat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True  # An inaccessible sidecar cannot be assumed absent.
+        return True
+    return False
 
-    WAL absence alone never selects immutable mode: a mutable database may
-    acquire a WAL immediately after URI construction. Read commands may opt in
-    to freezing a database only when both it and its directory deny writes and
-    no WAL or SHM exists. The note makes that snapshot behavior explicit.
+
+def _windows_frozen(path):
+    # access() does not inspect Windows ACLs. Test actual create permission,
+    # then open the database for writing without truncating or writing bytes.
+    try:
+        fd, probe = tempfile.mkstemp(prefix=".cbi-read-probe-", dir=path.parent)
+    except PermissionError:
+        try:
+            fd = os.open(path, os.O_WRONLY)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        os.close(fd)
+        return False
+    except OSError:
+        return False  # Resource errors do not prove that the directory is frozen.
+    else:
+        os.close(fd)
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass  # Successful creation still proves the directory is mutable.
+        return False
+
+
+def _frozen_database(path):
+    if not path.is_file():
+        return False
+    if sys.platform == "win32":
+        return _windows_frozen(path)
+    try:
+        return (path.stat().st_mode & 0o222 == 0
+                and path.parent.stat().st_mode & 0o222 == 0)
+    except OSError:
+        return False
+
+
+def read_uri(path, *, immutable=False, frozen_fallback=False):
+    """Select a frozen URI only under a snapshot guarantee and without sidecars.
+
+    POSIX fallback requires no owner/group/other write bit on either file or
+    directory, not merely denied access for this reader. Windows uses ACL probes.
+    Callers must validate again immediately before connecting or attaching.
     """
     path = Path(path).resolve()
-    if (frozen_fallback and not immutable and path.is_file()
-            and not os.access(path, os.W_OK) and not os.access(path.parent, os.W_OK)
-            and not Path(str(path) + "-wal").exists()
-            and not Path(str(path) + "-shm").exists()):
-        immutable = True
-        print(f"Reading {path} as a frozen snapshot: the database and directory are read-only "
-              "and no WAL sidecars exist. Updates are not followed during this query.", file=sys.stderr)
+    if immutable or frozen_fallback:
+        if _has_sidecars(path):
+            immutable = False
+        elif not immutable:
+            immutable = _frozen_database(path)
     uri = path.as_uri() + "?mode=ro"
     return uri + "&immutable=1" if immutable else uri
+
+
+def validate_read_uri(path, uri, *, frozen_fallback=False):
+    """Recheck a candidate immediately before SQLite connects or attaches it."""
+    path = Path(path).resolve()
+    if "&immutable=1" in uri and (
+            (frozen_fallback and not _frozen_database(path)) or _has_sidecars(path)):
+        return uri.replace("&immutable=1", "")
+    return uri
+
+
+def note_frozen_read(path, uri):
+    """Describe only the frozen connection that actually opened successfully."""
+    if "&immutable=1" in uri:
+        print(f"Reading {path} as a frozen snapshot; this connection does not follow updates.",
+              file=sys.stderr)
 
 
 def read_only(path, *, immutable=False):
     """Read with locks, or freeze a protected database that cannot create sidecars."""
     uri = read_uri(path, immutable=immutable, frozen_fallback=not immutable)
+    uri = validate_read_uri(path, uri, frozen_fallback=not immutable)
     conn = sqlite3.connect(uri, uri=True, timeout=BUSY_SECONDS)
-    return prepare(conn, wal=False)
+    prepare(conn, wal=False)
+    note_frozen_read(path, uri)
+    return conn
 
 
 def _busy_codes():
