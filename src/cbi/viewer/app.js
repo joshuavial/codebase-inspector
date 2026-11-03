@@ -1431,7 +1431,10 @@ function narrowLeaf(c) {
     if (marked.has(call[1]) && own.has(call[0])) keep.add(call[0]);
   }
   const next = symbols.filter((s) => keep.has(s.id));
-  const calls = (c.calls || []).filter((call) => keep.has(call[0]) || keep.has(call[1]));
+  // A neighbour may also call an unchanged function outside this slice. Both
+  // local ends must survive; foreign ends are drawn from the ghost list.
+  const visible = (id) => keep.has(id) || !!(c.ghosts && c.ghosts[id]);
+  const calls = (c.calls || []).filter((call) => visible(call[0]) && visible(call[1]));
   const ghosts = {};
   for (const call of calls) {
     if (c.ghosts && c.ghosts[call[0]]) ghosts[call[0]] = c.ghosts[call[0]];
@@ -1987,7 +1990,7 @@ async function drawDatabase() {
     const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
     const detail = databaseDetailGraph(slice);
     try {
-      const out = await elk.layout(detail.graph);
+      const out = await layoutGraph(detail.graph);
       if (gen !== layoutGen) return;
       externalGroups = {};
       document.getElementById("diagram").dataset.layout = "database focus";
@@ -2383,6 +2386,47 @@ function componentPanel(s) {
 
 // ---------- layout and render ----------
 
+// Validate the actual drawn graph, including nested nodes and column ports,
+// rather than the full model: filtering and collapsing can remove endpoints.
+function prepareLayoutGraph(graph) {
+  const shapes = new Set();
+  const index = (node) => {
+    shapes.add(node.id);
+    for (const port of node.ports || []) shapes.add(port.id);
+    for (const child of node.children || []) index(child);
+  };
+  index(graph);
+  let omittedEdges = 0;
+  const clean = (node) => ({
+    ...node,
+    ...(node.children ? { children: node.children.map(clean) } : {}),
+    ...(node.edges ? { edges: node.edges.filter((edge) => {
+      const valid = edge.sources && edge.sources.length && edge.targets && edge.targets.length
+        && [...edge.sources, ...edge.targets].every((id) => shapes.has(id));
+      if (!valid) omittedEdges++;
+      return valid;
+    }) } : {}),
+  });
+  const cleaned = clean(graph);
+  return { graph: cleaned, omittedEdges };
+}
+
+async function layoutGraph(graph) {
+  const prepared = prepareLayoutGraph(graph);
+  const out = await elk.layout(prepared.graph);
+  out.omittedEdges = prepared.omittedEdges;
+  return out;
+}
+
+function layoutNotice(count = 0) {
+  const notice = document.getElementById("layout-notice");
+  if (!notice) return;
+  notice.hidden = !count;
+  notice.textContent = count
+    ? `${count} connection${count === 1 ? "" : "s"} hidden because an endpoint is absent from this view.`
+    : "";
+}
+
 async function layout(nodes, edges, opt, onClick, enter, onDbl) {
   const gen = ++layoutGen;
   const toElk = (n) => ({
@@ -2396,7 +2440,7 @@ async function layout(nodes, edges, opt, onClick, enter, onDbl) {
   const a = availSize();
   const graph = { id: "root", layoutOptions: { ...elkOptions(opt), "elk.aspectRatio": String(a.w / a.h) }, children: nodes.map(toElk), edges: edges.map(elkEdge) };
   let out;
-  try { out = await elk.layout(graph); } catch (err) {
+  try { out = await layoutGraph(graph); } catch (err) {
     if (gen !== layoutGen) return;
     return empty("Layout failed: " + err.message);
   }
@@ -3129,7 +3173,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   };
 
   const pinned = firstTier(boundary.children, insideEdges);
-  const layoutInside = (dir, wrapping, ratio) => elk.layout({
+  const layoutInside = (dir, wrapping, ratio) => layoutGraph({
     id: "inner",
     layoutOptions: { ...elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
     children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(pinned.has(n.id) ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
@@ -3257,7 +3301,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       return { ...e, sections: (e.sections || []).map((q) => ({ startPoint: shift(q.startPoint), endPoint: shift(q.endPoint), bendPoints: (q.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) };
     });
     const out = {
-      width: best.width, height: best.height,
+      width: best.width, height: best.height, omittedEdges: p1.omittedEdges || 0,
       edges: [...insideOut, ...crossEdges],
       children: [
         { id: "boundary", x: bx, y: by, width: W, height: H, children: p1.children.map((k) => ({ ...k, x: k.x + OX, y: k.y + OY })) },
@@ -3432,6 +3476,7 @@ function placeEdgeLabels(out, em, obstacles) {
 
 function render(out, nodes, edges, onClick, enter, onDbl) {
   setStage("diagram");
+  layoutNotice(out.omittedEdges);
   // Grouped (big) leaves keep 13px names at 9px or more and pan; everything else fits whole.
   minScale = nodes.some((n) => n.children && n.children.some((k) => k.toggle || (k.children && k.toggle))) ? 0.7 : 0;
   const svg = document.getElementById("diagram");
@@ -3748,6 +3793,7 @@ function empty(msg) {
 }
 
 function setStage(mode) {
+  layoutNotice();
   const stage = document.getElementById("stage");
   stage.dataset.mode = mode;
   const f = view.focus && byId[view.focus];

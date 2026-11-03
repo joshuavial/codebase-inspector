@@ -44,6 +44,33 @@ function hits(a, b) {
 
 async function main() {
   const app = load("src/cbi/viewer/app.js");
+  // A stale comparison edge must not blank a nested graph; ports are valid ends.
+  const RealELK = require("../src/cbi/viewer/vendor/elk.bundled.js");
+  const guarded = load("src/cbi/viewer/app.js", { ELK: RealELK });
+  const damaged = {
+    id: "root", layoutOptions: { "elk.algorithm": "layered" },
+    children: [{ id: "frame", children: [
+      { id: "kept", width: 100, height: 40, ports: [{ id: "kept:out", width: 0, height: 0 }] },
+      { id: "peer", width: 100, height: 40 },
+    ], edges: [{ id: "nested-missing", sources: ["filtered"], targets: ["peer"] }] }],
+    edges: [
+      { id: "good", sources: ["kept:out"], targets: ["peer"] },
+      { id: "missing", sources: ["kept"], targets: ["filtered"] },
+    ],
+  };
+  await assert.rejects(new RealELK().layout(damaged), /Referenced shape does not exist/);
+  const degraded = await guarded.layoutGraph(damaged);
+  assert.strictEqual(degraded.omittedEdges, 2);
+  assert.strictEqual(degraded.edges.length, 1);
+  assert.strictEqual(degraded.children[0].children.length, 2);
+  assert.strictEqual(damaged.edges.length, 2, "validation must not mutate the model");
+  const notice = {};
+  guarded.document.getElementById = () => notice;
+  guarded.layoutNotice(degraded.omittedEdges);
+  assert.strictEqual(notice.hidden, false);
+  assert.match(notice.textContent, /2 connections hidden/);
+  guarded.layoutNotice();
+  assert.strictEqual(notice.hidden, true);
   assert.strictEqual(app.historyTickPosition(0, 15), 0);
   assert.strictEqual(app.historyTickPosition(7, 15), 50);
   assert.strictEqual(app.historyTickPosition(14, 15), 100);
@@ -703,12 +730,14 @@ async function main() {
     const narrowed = app.narrowLeaf({
       id: "ui",
       symbols: [{ id: "fn", name: "run", file: "ui.ts" }, { id: "helper", name: "help", file: "ui.ts" }, { id: "other", name: "other", file: "other.ts" }],
-      calls: [["fn", "helper"], ["other", "zzz"]],
+      calls: [["fn", "helper"], ["helper", "other"], ["other", "helper"], ["helper", "zzz"], ["other", "zzz"]],
       ghosts: { zzz: { name: "zzz", concept: "app" } },
       importsIn: [{ concept: "app", files: ["ui.ts"] }, { concept: "store", files: ["other.ts"] }],
       reexports: [{ name: "run", def: "fn" }, { name: "other", def: "other" }],
     });
     assert.deepStrictEqual(narrowed.symbols.map((s) => s.id), ["fn", "helper"]);
+    assert.deepStrictEqual(narrowed.calls, [["fn", "helper"], ["helper", "zzz"]],
+      "a retained neighbour must not keep calls to filtered-out local functions");
     assert.deepStrictEqual(narrowed.importsIn.map((imp) => imp.concept), ["app"]);
     assert.deepStrictEqual(narrowed.reexports.map((row) => row.name), ["run"]);
     vm.runInContext('view = { scope: "billing", tab: "concept" };', app);
