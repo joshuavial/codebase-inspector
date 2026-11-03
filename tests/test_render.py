@@ -546,3 +546,23 @@ def test_parallel_renders_finish_together(tmp_path):
     assert len(texts) == 4
     for text in texts:
         assert ">UI</text>" in text and ">App</text>" not in text
+
+
+def test_kill_group_allows_delayed_reaping_on_loaded_hosts(monkeypatch):
+    waits = []
+
+    class SlowReap:
+        pid = 12345
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            if timeout < 60:
+                raise subprocess.TimeoutExpired(["headless-browser"], timeout)
+            return -9
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(render.os, "killpg", lambda *args: None, raising=False)
+    render._kill_group(SlowReap())
+    assert waits == [60]

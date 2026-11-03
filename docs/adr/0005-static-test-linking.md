@@ -8,7 +8,7 @@ The map should show which code has tests with no extra setup. Coverage and pass 
 
 ## Decision
 
-Static links are always computed. A test case links to the symbols it calls and, at lower confidence, to the modules it imports. A literal read of a tracked file links the test to that file. A file-name match adds a link: `x.test.ts` to `x.ts`, and `test_x.py` to `x.py`. The overlay labels static links as static.
+Static links are always computed. A test case links to the symbols it calls and, at lower confidence, to the modules it imports. A literal read of a tracked file links the test to that file. Registered pytest fixtures trace dependencies and production targets. In-process TestClient calls bind to handlers of the selected app and mounted routers. Literal importlib modules, local file paths, tracked SQL glob contracts and subprocess programs also add static links; unsupported runtime mechanisms retain located `unsupported_test_mechanism` diagnostics. See the test-binding pages in `docs/` for each evidence boundary. A file-name match adds a link: `x.test.ts` to `x.ts`, and `test_x.py` to `x.py`. The overlay labels static links as static.
 
 Confidence on a static `tests` edge is the call's own confidence, 1.0 for a literal read, 0.8 for a name match, and 0.5 for an imported code file. A test file with no links is an `unmatched_test` diagnostic.
 

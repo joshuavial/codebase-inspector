@@ -77,6 +77,8 @@ _WIN_PATH_NAMES = ("chrome.exe", "chrome", "chromium.exe", "chromium")
 _SIDES = (("base", "before.png", "before.svg"), ("head", "after.png", "after.svg"))
 _ASSETS = Path(__file__).parent / "viewer"
 _TIMEOUT = 120
+# A loaded host can take longer to reap a killed browser before profile cleanup.
+_REAP_TIMEOUT = 60
 
 
 class RenderError(Exception):
@@ -396,20 +398,20 @@ def _kill_group(proc):
         except OSError:
             pass
         try:
-            proc.wait(timeout=5)
+            proc.wait(timeout=_REAP_TIMEOUT)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait(timeout=5)
+            proc.wait(timeout=_REAP_TIMEOUT)
         return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except OSError:
         pass
     try:
-        proc.wait(timeout=5)
+        proc.wait(timeout=_REAP_TIMEOUT)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait(timeout=5)
+        proc.wait(timeout=_REAP_TIMEOUT)
 
 
 def _drain(stream, chunks):
