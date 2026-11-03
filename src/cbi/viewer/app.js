@@ -200,18 +200,39 @@ function relChangeClass(rels) {
 
 const MARK_LABEL = { new: "new", removed: "removed", volume: "volume changed", mechanism: "mechanism changed" };
 
+function conceptChangeItem(id) {
+  const find = (items) => {
+    for (const item of items) {
+      if (item.id === id) return item;
+      const child = find(item.children || []);
+      if (child) return child;
+    }
+    return null;
+  };
+  return find(diffOverviewItems());
+}
+
 function conceptTag(id) {
   if (!DIFF || !byId[id] || byId[id].ext) return null;
-  if (PROVISIONAL.has(id)) return "provisional";
-  return CONCEPT_MARK.get(id) || null;
+  const item = conceptChangeItem(id);
+  if (item) {
+    if (item.state === "added") return "Added";
+    if (item.state === "removed") return "Removed";
+    if (item.state === "moved") return "Moved";
+    return item.change_scope === "descendants" ? "Changes inside" : "Changed here";
+  }
+  const mark = CONCEPT_MARK.get(id);
+  if (!mark) return null;
+  return mark === "changed" ? "Changed here" : mark[0].toUpperCase() + mark.slice(1);
 }
 
 function conceptClass(id) {
   if (!DIFF) return "";
   const marks = [];
-  const own = CONCEPT_MARK.get(id);
+  const item = conceptChangeItem(id);
+  const own = item ? (item.change_scope === "descendants" ? "inside" : item.state) : CONCEPT_MARK.get(id);
   if (own) marks.push("chg-" + own);
-  if (PROVISIONAL.has(id)) marks.push("chg-provisional");
+  if (PROVISIONAL.has(id)) marks.push("ownership-uncertain");
   return marks.length ? " " + marks.join(" ") : "";
 }
 
@@ -369,7 +390,9 @@ function initCompare() {
     if (!button) return;
     go(view.focus, view.sel, { side: button.dataset.side, v: view.mode, w: view.screen });
   };
-  document.getElementById("chg-toggle").onclick = () => document.body.classList.toggle("changes-open");
+  document.getElementById("chg-toggle").onclick = () => {
+    document.getElementById("changes").scrollIntoView({ block: "start", behavior: "smooth" });
+  };
 }
 
 function diffActive() {
@@ -455,11 +478,16 @@ function setDiffScope(scope) {
 
 function paintCompare() {
   const on = diffActive();
+  document.body.classList.toggle("comparison", on);
+  const note = document.getElementById("snapshot-note");
+  if (note) note.hidden = !on;
   document.getElementById("compare").hidden = !on;
   document.getElementById("chg-toggle").hidden = !on;
   if (!on) return;
   for (const button of document.querySelectorAll("#compare button")) {
-    button.classList.toggle("on", (button.dataset.side || "head") === (shownSide || "head"));
+    const selected = (button.dataset.side || "head") === (shownSide || "head");
+    button.classList.toggle("on", selected);
+    button.setAttribute("aria-pressed", String(selected));
   }
 }
 
@@ -572,7 +600,11 @@ function changeSummary(parent, conceptId = null) {
         const file = diffConceptItems().flatMap((row) => (row.own_modules || row.modules || []).flatMap((mod) => mod.files || [])).find((row) => row.path === citation || row.id === citation);
         const owner = file && diffConceptItems().find((row) => row.id === file.owner_id);
         if (symbol || (file && (owner || item))) sources.append(link(citation, () => inspectChangeEvidence(symbol ? citation : file.id, owner || item || {id: symbol.leaf.id}, file && file.state)));
-        else sources.append(el("p", "path", citation));
+        else if (byId[citation]) sources.append(link(citation, () => jump(citation, null, { force: true })));
+        else if (/\.[a-z0-9]+(?:#.*)?$/i.test(citation)) {
+          const path = citation.split("#")[0].split(":").pop();
+          sources.append(link(`Copy source command: ${citation}`, () => copyChangeSource(path)));
+        } else sources.append(el("p", "path", citation));
       }
       section.append(sources);
     }
@@ -603,12 +635,37 @@ function changeDisclosure(title, cls = "") {
   return details;
 }
 
+function changeFile(id) {
+  return diffConceptItems().flatMap((item) => (item.own_modules || item.modules || []).flatMap((module) => module.files || []))
+    .find((file) => file.id === id || file.canonical_id === id || file.path === id);
+}
+
+function copyChangeSource(path, state) {
+  const revision = state === "removed" ? DIFF.base : state === "added" ? DIFF.head : shownSide === "base" ? DIFF.base : DIFF.head;
+  const command = `git show ${revision}:${path}`;
+  if (typeof copyText === "function") copyText(command);
+  else if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).then(() => showToast("Copied git show command"), () => fallbackCopy(command));
+  else fallbackCopy(command);
+}
+
+function fileEvidenceDrawer(parent, file) {
+  parent.append(el("h2", "", file.name), el("p", "path", file.path), el("p", "", `${changeState(file)} · ${changeCounts(file)}`));
+  if (file.old_path && file.old_path !== file.path) parent.append(el("p", "path", `Previous path: ${file.old_path}`));
+  parent.append(link("Copy git show command", () => copyChangeSource(shownSide === "base" ? file.old_path || file.path : file.path, file.state)));
+  if (typeof editorButton === "function" && file.state !== "removed") {
+    const button = editorButton(file.path, 1);
+    if (button) parent.append(button);
+  }
+  const item = selectedChangeConcept();
+  for (const symbol of file.symbols || []) parent.append(link(`${symbol.name} — ${symbol.verb || changeState(symbol)}`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+  if (!(file.symbols || []).length) parent.append(el("p", "hint", "No changed symbols were projected for this file. Inspect its source at the compared revision."));
+}
+
 function inspectChangeEvidence(id, item, state) {
+  if (state === "removed" && shownSide !== "base") return go(item.id, id, { side: "base", scope: item.id });
+  if (state === "added" && shownSide === "base") return go(item.id, id, { side: "head", scope: item.id });
   const symbol = symById[id];
   if (symbol) return jump(symbol.leaf.id, id, { force: true });
-  if (state === "removed" && shownSide !== "base") {
-    return go(item.id, id, { side: "base", scope: item.id });
-  }
   return jump(groupFocus(item) || view.focus, id, { force: true });
 }
 
@@ -666,9 +723,16 @@ function changeEvidence(parent, item) {
   parent.append(evidence);
 }
 
+function changeSourceLink(at, item, label = "Inspect source evidence") {
+  const path = String(at || "").split(":")[0];
+  const file = changeFile(path);
+  return link(label, () => file ? inspectChangeEvidence(file.id, item, file.state) : copyChangeSource(path));
+}
+
 function changeReviewSignals(parent, item) {
-  const section = el("section", "review-signals");
-  section.append(el("h3", "", "Review signals"));
+  const wrapper = el("section", "review-signals");
+  wrapper.append(el("h3", "", "Review signals"));
+  const section = changeDisclosure("Review signal evidence");
   const attention = item.attention || {};
   const observed = (item.relationships || []).filter((row) => row.state !== "unchanged");
   if (observed.length) {
@@ -678,7 +742,7 @@ function changeReviewSignals(parent, item) {
       p.append(`${changeState(row)}: `, link(row.from_name || row.from, () => jump(row.from, null, { force: true })),
         ` → ${row.label || "uses"} → `, link(row.to_name || row.to, () => jump(row.to, null, { force: true })),
         row.mechanism ? ` · ${row.mechanism}` : "");
-      if (row.at) p.append(el("small", "path", `Evidence: ${row.at}`));
+      if (row.at) p.append(changeSourceLink(row.at, item, `Evidence: ${row.at}`));
       section.append(p);
     }
   }
@@ -692,7 +756,12 @@ function changeReviewSignals(parent, item) {
     p.append("Ownership move: ", link(move.from_name || "Unowned", () => setDiffScope(move.from)), " → ", link(move.to_name || "Unowned", () => setDiffScope(move.to)));
     section.append(p);
   }
-  for (const integration of attention.integrations || []) section.append(el("p", "", `Integration evidence: ${integration}`));
+  for (const integration of attention.integrations || []) {
+    const p = el("p", "", `Integration evidence: ${integration}`);
+    const relationship = (item.relationships || []).find((row) => row.integration && row.at && integration.includes(row.at));
+    if (relationship) p.append(changeSourceLink(relationship.at, item, "Inspect integration source"));
+    section.append(p);
+  }
   const context = (item.relationships || []).filter((row) => row.state === "unchanged");
   if (context.length) {
     const details = changeDisclosure("Possible downstream context (inferred)");
@@ -707,8 +776,23 @@ function changeReviewSignals(parent, item) {
   }
   if (!observed.length && !gaps.length && !(attention.integrations || []).length && !(item.moves || []).length && !attention.removed_tests && !attention.provisional && !item.unowned)
     section.append(el("p", "hint", "No additional review signals in the structural evidence."));
-  section.append(el("p", "hint", "Risk is unknown from structural evidence. Missing static test links do not establish test coverage."));
-  parent.append(section);
+  const signals = [];
+  if ((attention.integrations || []).length) signals.push(`${attention.integrations.length} integration signals`);
+  if (observed.length) signals.push(`${observed.length} observed relationship changes`);
+  if (gaps.length) signals.push(`${gaps.length} changed symbols without a static test link`);
+  if ((item.moves || []).length) signals.push(`${item.moves.length} moves`);
+  if (attention.removed_tests) signals.push(`${attention.removed_tests} test links removed`);
+  if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) signals.push("Ownership needs review");
+  wrapper.append(el("p", "", signals.length ? signals.join(" · ") : "No additional review signals in the structural evidence."));
+  const firstIntegration = (attention.integrations || [])[0];
+  if (firstIntegration) wrapper.append(el("p", "hint", `Inspect first: ${firstIntegration}`));
+  else if (gaps.length) wrapper.append(link(`Inspect first: ${gaps[0].name} has no static test link`, () => inspectChangeEvidence(gaps[0].id, item, gaps[0].state)));
+  else if (observed.length) {
+    const row = observed[0];
+    wrapper.append(el("p", "hint", `Inspect first: ${row.from_name || row.from} → ${row.label || "uses"} → ${row.to_name || row.to} (${row.state}).`));
+  }
+  wrapper.append(el("p", "hint", "Risk is unknown from structural evidence. Missing static test links do not establish test coverage."), section);
+  parent.append(wrapper);
 }
 
 function changesPanel() {
@@ -737,13 +821,17 @@ function changesPanel() {
       button.append(el("strong", "", item.name), el("span", "change-state", changeState(item)), el("small", "", changeCounts(item)));
       button.onclick = () => setDiffScope(item.id);
       li.append(button);
-      if ((item.children || []).length) renderItems(item.children, li);
+      if ((item.children || []).length) {
+        const children = changeDisclosure(`Changes inside (${item.children.length})`);
+        children.open = !!selected && (selected.id === item.id || ancestors(selected.id).includes(item.id));
+        renderItems(item.children, children);
+        li.append(children);
+      }
       ul.append(li);
     }
     parent.append(ul);
   };
   renderItems(items, index);
-  panel.append(index);
   if (selected) {
     const section = el("section", "selected-change");
     section.append(el("h2", "", selected.name));
@@ -757,8 +845,7 @@ function changesPanel() {
     }
     panel.append(section);
   }
-  const active = panel.querySelector('[aria-current="true"]');
-  if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+  panel.append(el("h3", "", "Changed concepts"), index);
 }
 
 function changeTarget(ch, g) {
@@ -1571,8 +1658,6 @@ function nodeCarriesChange(node, area) {
   return false;
 }
 
-// Changed boxes plus siblings on the other end of one of their relationships.
-// changedIds is null when this view has nothing to drop, so the caller draws it whole.
 function filterScopeKids(kids, focus, scope) {
   const area = scope === "changed" ? null : scope;
   const changed = [];
@@ -1582,19 +1667,10 @@ function filterScopeKids(kids, focus, scope) {
     changed.push(kid);
     scopeNodeIds(kid, changedTree);
   }
-  if (!changed.length) return { kids: kids || [], changedIds: null };
+  if (!changed.length) return { kids: [], changedIds: new Set() };
   const changedIds = new Set(changed.map((kid) => kid.id));
-  const context = new Set();
-  for (const rel of (M && M.relationships) || []) {
-    const fromIn = changedTree.has(rel.from);
-    const toIn = changedTree.has(rel.to);
-    if (fromIn === toIn) continue;
-    const other = fromIn ? rel.to : rel.from;
-    const box = project(other, focus);
-    if (box && !changedIds.has(box) && (kids || []).some((kid) => kid.id === box)) context.add(box);
-  }
-  const keep = new Set([...changedIds, ...context]);
-  return { kids: kids.filter((kid) => keep.has(kid.id)), changedIds };
+  return { kids: (kids || []).filter((kid) => changedIds.has(kid.id)), changedIds };
+
 }
 
 function focusCarriesChange(focus, scope) {
@@ -1648,7 +1724,11 @@ function drawConcepts(f, enter) {
   const shown = new Set(kids.map((c) => c.id));
   const seedExternals = !f && !changedIds;
   let edges = conceptEdges(f ? f.id : null, new Set([...shown, ...(seedExternals ? M.externals.map((x) => x.id) : [])]));
-  if (changedIds) edges = edges.filter((e) => changeEdge(e, changedIds, focusCarriesChange(f ? f.id : null, scope)));
+  if (changedIds) edges = edges.filter((e) => {
+    const marked = !!relChangeClass(e.rels);
+    return changeEdge(e, changedIds, focusCarriesChange(f ? f.id : null, scope))
+      && (marked || (shown.has(e.a) && shown.has(e.b)));
+  });
   const outside = new Set(seedExternals ? M.externals.map((x) => x.id) : []);
   for (const e of edges) for (const x of [e.a, e.b]) if (x !== "boundary" && !shown.has(x)) outside.add(x);
 
@@ -1672,6 +1752,12 @@ function drawConcepts(f, enter) {
     cls: [kind(e), statedClass(e.stated, top), relChangeClass(e.rels)].filter(Boolean).join(" "),
     rels: e.rels, count: e.count, lane: e.lane,
   })), shown);
+  elkEdges = elkEdges.map((edge) => {
+    const states = (edge.cls || "").split(" ").filter((c) => c.startsWith("chg-")).map((c) => MARK_LABEL[c.slice(4)] || c.slice(4));
+    if (!states.length) return edge;
+    const text = `${states.join(", ")} · ${edge.text}`;
+    return { ...edge, text, labels: [text] };
+  });
   {
     // An outside concept or system linked to several inner boxes the same way gets one line, with its
     // labels on its own box so each label stays attached; hovering the box lights up the inner boxes.
@@ -1697,7 +1783,7 @@ function drawConcepts(f, enter) {
       const text = labels.slice(0, 3).join(", ") + (labels.length > 3 ? ` +${labels.length - 3}` : "") + (vias.length ? ` (${vias.join(", ")})` : "");
       const ctx = node.cls.includes("ctx");
       node.w = Math.max(node.w, 232);
-      const summary = ctx ? [] : wrap(byId[other].summary || "", node.w - 32, 12, 1);
+      const summary = ctx ? [] : wrap(diffActive() ? "Unchanged context" : byId[other].summary || "", node.w - 32, 12, 1);
       node.lines = [...summary, ...wrap(text, node.w - 32, 12, 3)];
       node.h = (ctx ? 40 : 46) + node.lines.length * 16;
       const inner = childEs.map((e) => (incoming ? e.b : e.a));
@@ -1737,10 +1823,16 @@ function box(c, cls, startsHere = !!c.entry) {
   const mark = conceptClass(c.id);
   const tag = conceptTag(c.id);
   const tagW = tag ? textW(tag, 600, 10.5, true) + 18 : 0;
-  if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(c.name, 500, 14) + 42 + tagW, h: 38, name: c.name, lines: [], tag };
+  if (cls === "ctx") {
+    const name = diffActive() && !tag ? `${c.name} · unchanged context` : c.name;
+    return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(name, 500, 14) + 42 + tagW, h: 38, name, lines: [], tag };
+  }
   const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
-  const lines = wrap(c.summary || "", w - 32, 12, 3);
-  const env = envOf(c).length, entry = !c.ext && startsHere;
+  const context = diffActive() && !tag;
+  const description = diffActive() ? (context ? "Unchanged context" : "") : (c.summary || "");
+  const lines = wrap(description, w - 32, 12, 3);
+  if (PROVISIONAL.has(c.id)) lines.push("Ownership uncertain");
+  const env = diffActive() ? 0 : envOf(c).length, entry = !c.ext && startsHere;
   const extra = (env ? textW(`env ${env}`, 600, 10.5, true) + 18 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0) + tagW;
   return { id: c.id, cls: `node ${cls} ${tone}${mark}`, w: w + extra, h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env, entry, tag };
 }
@@ -3795,6 +3887,9 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
         g.classList.add("clickable");
         t.setAttribute("tabindex", 0);
         t.setAttribute("role", "button");
+        t.setAttribute("aria-label", [m.label, conceptTag(m.concept)].filter(Boolean).join(", "));
+        t.onfocus = () => { if (m.concept) linkHover(m.concept, true); };
+        t.onblur = () => { if (m.concept) linkHover(m.concept, false); };
         t.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
         t.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
       }
@@ -3802,7 +3897,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       continue;
     }
     const groupedSel = !!(sel && externalGroups[n.id] && externalGroups[n.id].members.includes(sel));
-    const g = svgEl("g", { class: m.cls + (n.id === sel || groupedSel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": m.name || n.id });
+    const g = svgEl("g", { class: m.cls + (n.id === sel || groupedSel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": [m.name || n.id, m.tag || m.mark || (diffActive() ? "Unchanged context" : "")].filter(Boolean).join(", "), "aria-pressed": String(n.id === sel || groupedSel) });
     const ov = overlayClass(n.id, m);
     if (ov) g.classList.add(ov);
     if (m.stack) g.append(svgEl("rect", { class: "stack", x: 4, y: 4, width: n.width, height: n.height, rx: 10 }));
@@ -3829,7 +3924,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       if (m.tag) {
         px -= textW(m.tag, 600, 10.5, true) + 12;
         const p = envPill(m.tag, px, 9, m.tag);
-        p.classList.add("mark-" + m.tag);
+        p.classList.add("mark-" + m.tag.toLowerCase().replaceAll(" ", "-"));
         g.append(p);
       }
       m.lines.forEach((line, i) => {
@@ -3844,6 +3939,8 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     g.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
     g.onmouseenter = () => { hot(edgeEls, n.id, true); touch(m.touches, true); };
     g.onmouseleave = () => { hot(edgeEls, n.id, false); touch(m.touches, false); };
+    g.onfocus = g.onmouseenter;
+    g.onblur = g.onmouseleave;
     g.dataset.id = n.id;
     if (m.lane) g.dataset.lane = m.lane;
     const concept = byId[n.id] ? n.id : m.cls.includes("ghost") && m.sym ? m.sym.concept : null;
@@ -3851,6 +3948,8 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       g.dataset.concept = concept;
       g.addEventListener("mouseenter", () => linkHover(concept, true));
       g.addEventListener("mouseleave", () => linkHover(concept, false));
+      g.addEventListener("focus", () => linkHover(concept, true));
+      g.addEventListener("blur", () => linkHover(concept, false));
     }
     nodeG.append(g);
   }
@@ -4009,7 +4108,7 @@ const KEY_STORE = "cbi.keyCollapsed";
 function keyCollapsed() {
   if (window.cbiRender) return true; // the headless render page draws its own key
   try { const v = localStorage.getItem(KEY_STORE); if (v !== null) return v === "1"; } catch { /* private mode */ }
-  return innerWidth <= 1100; // narrow windows start folded
+  return diffActive() || innerWidth <= 1100;
 }
 function setKeyCollapsed(v) { try { localStorage.setItem(KEY_STORE, v ? "1" : "0"); } catch { /* private mode */ } }
 
@@ -4096,7 +4195,8 @@ function legendFromDiagram(svg) {
       has(".chg-added") && [miniBox("node chg-added", true), "Added"],
       has(".chg-removed") && [miniBox("node chg-removed", true), "Removed"],
       has(".chg-changed") && [miniBox("node chg-changed", true), "Changed"],
-      has(".chg-provisional") && [miniBox("node chg-provisional", true), "Provisional"],
+      has(".ownership-uncertain") && [miniBox("node ownership-uncertain", true), "Ownership uncertain"],
+      has(".chg-inside") && [miniBox("node chg-inside", true), "Changes inside"],
       has(".edge.chg-new") && [miniLine("chg-new"), "New line"],
       has(".edge.chg-removed") && [miniLine("chg-removed"), "Removed line"],
       has(".edge.chg-volume") && [miniLine("chg-volume"), "Volume changed"],
@@ -4114,6 +4214,7 @@ function legendFromDiagram(svg) {
     const pill = el("button", "key-pill", "Key");
     pill.type = "button";
     pill.title = "Show the key";
+    pill.setAttribute("aria-expanded", "false");
     pill.onclick = () => { setKeyCollapsed(false); legendFromDiagram(svg); refit = true; route(); };
     lg.append(pill);
     return;
@@ -4123,6 +4224,7 @@ function legendFromDiagram(svg) {
   fold.type = "button";
   fold.title = "Hide the key";
   fold.setAttribute("aria-label", "Hide the key");
+  fold.setAttribute("aria-expanded", "true");
   fold.onclick = () => { setKeyCollapsed(true); legendFromDiagram(svg); refit = true; route(); };
   head.append(el("strong", "", "Key"), fold);
   for (const [title, rows] of sections) {
@@ -4193,7 +4295,7 @@ function fitCam(minK = 0) {
 }
 
 let minScale = 0;
-function fit(animated, full) { const c = fitCam(full ? 0 : minScale); animated ? animate(c, 250) : setCam(c); }
+function fit(animated, full) { const c = fitCam(full || diffActive() ? 0 : minScale); animated ? animate(c, 250) : setCam(c); }
 
 // A camera that frames rect r with some margin, at the stage's aspect ratio.
 function around(r, margin) {
@@ -4426,6 +4528,8 @@ function drawer() {
     b.classList.add("overview");
     d.append(b);
   }
+  const selectedFile = diffActive() && view.sel && changeFile(view.sel);
+  if (selectedFile) return fileEvidenceDrawer(d, selectedFile);
   if (view.sel && externalGroups[view.sel]) return groupDrawer(d, externalGroups[view.sel]);
   if (view.sel && view.sel.startsWith("bundle:")) return bundleDrawer(d, view.sel);
   if (s && here && !here.children && s.leaf !== here) return linkDrawer(d, here, s);

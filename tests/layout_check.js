@@ -698,7 +698,7 @@ async function main() {
     `, app);
     assert.strictEqual(app.diffViewScope(), "changed");
     const changed = app.filterScopeKids(app.__kids, null, "changed");
-    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["app", "ui", "store", "billing"]);
+    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["ui", "store", "billing"]);
     assert.ok(changed.changedIds.has("ui") && changed.changedIds.has("billing") && changed.changedIds.has("store"));
     assert.ok(!changed.changedIds.has("app") && !changed.changedIds.has("quiet"));
     const billing = app.filterScopeKids(app.__kids, null, "billing");

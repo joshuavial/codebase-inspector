@@ -33,13 +33,15 @@ assert.match(text(panel), /Application.*Changes inside.*Task runner.*Changed her
 assert.match(text(panel), /Body changed/);
 assert.match(text(panel), /No static test link/);
 assert.ok(!text(panel).includes('symbol-changed'));
-const details = all(panel).filter(n => n.tag === 'details');
+const evidence = all(panel).find(n => n.className === 'change-evidence');
+const details = all(evidence).filter(n => n.tag === 'details');
 assert.ok(details.length >= 3, 'evidence, modules and files each disclose');
 assert.ok(details.every(n => !n.open), 'implementation evidence starts closed');
 assert.strictEqual(all(panel).filter(n => n.attributes?.['aria-current'] === 'true').length, 1);
 vm.runInContext(`view.sel='repo:src/tasks.py#run';symById[view.sel]={leaf:{id:'tasks'}}`,app);
 assert.strictEqual(app.selectedChangeConcept().id,'tasks', 'symbol inspection retains the concept');
 assert.strictEqual(app.diffConceptItems().length,2);
+assert.ok(text(panel).indexOf('Review signals') < text(panel).indexOf('Changed concepts'), 'large index cannot bury the selected explanation');
 assert.strictEqual(typeof app.diffAreaTabs,'undefined');
 console.log('changes index checks passed');
 vm.runInContext(`
@@ -55,5 +57,25 @@ assert.match(text(panel), /Task execution accepts an explicit limit/);
 assert.match(text(panel), /Observed relationship changes.*Added:.*Task runner.*sends.*Delivery/s);
 assert.match(text(panel), /Possible downstream context \(inferred\)/);
 assert.match(text(panel), /Risk is unknown from structural evidence/);
+assert.match(text(panel), /Inspect first: Task runner → sends → Delivery \(added\)/);
 assert.ok(text(panel).indexOf('Task execution accepts') < text(panel).indexOf('Evidence'), 'narrative precedes evidence');
 console.log('review signals checks passed');
+const filePanel = element('aside');
+app.filePanel=filePanel;
+vm.runInContext(`fileEvidenceDrawer(filePanel, changeFile('repo:src/tasks.py'))`,app);
+assert.match(text(filePanel), /tasks.py.*src\/tasks.py.*Copy git show command/s);
+assert.match(text(filePanel), /run — Body changed/);
+app.copied='';app.copyText = value => { app.copied=value; };
+app.copyChangeSource('src/tasks.py','removed');
+assert.strictEqual(app.copied,'git show aaa:src/tasks.py','removed file source comes from base');
+console.log('file evidence checks passed');
+
+vm.runInContext("shownSide='base'",app);
+app.copyChangeSource('src/tasks.py','added');
+assert.strictEqual(app.copied,'git show bbb:src/tasks.py','added file source comes from head even during base inspection');
+
+const sourceLink = app.changeSourceLink('src/tasks.py:run', {id:'tasks'});
+app.jumped=null; app.jump=(focus,sel) => {app.jumped={focus,sel};};
+vm.runInContext("shownSide='head'",app);
+sourceLink.onclick();
+assert.strictEqual(app.jumped.sel,'repo:src/tasks.py', 'relationship evidence opens the actual file drawer');
