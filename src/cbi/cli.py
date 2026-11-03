@@ -499,7 +499,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
             if not shortcut:
                 previous_concepts = store.get_meta(conn, "concepts_json")
                 known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
-                store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states))
+                store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states, root))
                 _parse_changed(conn, root, tracked, states, old, known, parsed)
                 store.drop_orphan_symbols(conn)
                 resolve.resolve(conn, root)

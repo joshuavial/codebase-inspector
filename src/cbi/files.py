@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 22
+PARSER_VERSION = 23
 
 CODE_LANGS = {
     ".py": "python",
@@ -342,7 +342,34 @@ def _test_tree(path):
     return any(part.lower() in ("test", "tests", "e2e") for part in posixpath.normpath(path).split("/")[:-1])
 
 
-def classify(path, test_roots=()):
+SHELL_LANGS = {".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell", ".fish": "shell"}
+SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, ".sql": "sql"}
+
+
+def shebang_language(content):
+    if not content:
+        return None
+    line = content.splitlines()[0]
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    if not line.startswith("#!"):
+        return None
+    interpreters = re.findall(r"[\w.+-]+", line[2:])
+    if any(word in {"sh", "bash", "dash", "zsh", "ksh", "fish"} for word in interpreters):
+        return "shell"
+    if any(re.fullmatch(r"python[0-9.]*", word) for word in interpreters):
+        return "python"
+    if any(word in {"node", "nodejs"} for word in interpreters):
+        return "javascript"
+    return None
+
+
+def source_like(path, content=None):
+    """Tracked source policy, independent of available symbol parsers."""
+    return posixpath.splitext(path)[1].lower() in SOURCE_LANGS or shebang_language(content) is not None
+
+
+def classify(path, test_roots=(), content=None):
     """Return (role, lang): role is code, test, doc or other.
 
     `test_roots` are directories of `*Tests.csproj` and `*Testing.csproj`. A `.cs`
@@ -355,7 +382,7 @@ def classify(path, test_roots=()):
     ext = posixpath.splitext(name)[1].lower()
     if ext in DOC_EXTS:
         return "doc", "markdown"
-    lang = CODE_LANGS.get(ext)
+    lang = SOURCE_LANGS.get(ext) or shebang_language(content)
     if not lang:
         return "other", None
     if (TEST_NAME.match(name) or name == "conftest.py" or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
@@ -466,7 +493,7 @@ def _parent_id(ws_id, path):
     return group_id(ws_id, d) if d else ws_id
 
 
-def build_nodes(workspaces, files, states):
+def build_nodes(workspaces, files, states, root=None):
     """Workspace, group and file nodes for the enumerated files present on disk."""
     nodes = []
     by_ws = defaultdict(list)
@@ -507,7 +534,13 @@ def build_nodes(workspaces, files, states):
             })
         for top, rel in ws_files:
             _, _, digest, _, is_link = states[top]
-            role, lang = classify(rel, test_roots)
+            content = None
+            if root is not None and not is_link and posixpath.splitext(rel)[1].lower() not in SOURCE_LANGS:
+                try:
+                    content = (root / top).read_bytes()[:4096]
+                except OSError:
+                    pass
+            role, lang = classify(rel, test_roots, content)
             nodes.append({
                 "id": file_id(wid, rel),
                 "parent_id": _parent_id(wid, rel),

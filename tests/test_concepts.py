@@ -818,3 +818,27 @@ def test_concept_input_hash_includes_file_summaries(make_repo, monkeypatch, caps
     conn.close()
     assert concept_brief(capsys)["input_hash"] != before
 
+
+def test_shell_sql_and_shebang_files_require_owners(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({
+        "scripts/run.sh": "#!/bin/sh\necho ready\n",
+        "scripts/launch": "#!/usr/bin/env -S bash -eu\necho ready\n",
+        "db/schema.sql": "CREATE TABLE items (id INTEGER);\n",
+        "tests/test_run.sh": "#!/bin/sh\ntest 1 = 1\n",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    confirm_structure(capsys, tmp_path)
+    brief = concept_brief(capsys)
+    assert {f["path"] for f in brief["files"]} == {
+        "scripts/run.sh", "scripts/launch", "db/schema.sql", "tests/test_run.sh",
+    }
+    assert next(f for f in brief["files"] if f["path"] == "tests/test_run.sh")["role"] == "test"
+    conn = store.open_db(root / ".cbi" / "model.db")
+    errors, _ = concepts.problems(conn, {
+        "summary": "A utility.", "concepts": [], "externals": [], "relationships": [],
+    })
+    conn.close()
+    assert all(any(path in error for error in errors) for path in ("scripts/run.sh", "scripts/launch", "db/schema.sql"))
+
