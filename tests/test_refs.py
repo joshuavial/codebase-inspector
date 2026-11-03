@@ -375,7 +375,7 @@ def test_worktrees_json(make_repo, tmp_path, monkeypatch, capsys):
     assert next(b for b in data["branches"] if b["current"])["name"] == "lane"
 
 
-def test_ref_scan_loads_committed_concepts(make_repo, monkeypatch, capsys):
+def test_ref_scan_loads_committed_concepts(make_repo, monkeypatch, capsys, tmp_path):
     document = {"summary": "Committed map.", "concepts": [
         {"id": "core", "name": "Committed core", "summary": "Core logic.",
          "role": "core", "files": ["core.py"]}], "externals": [], "relationships": []}
@@ -387,7 +387,15 @@ def test_ref_scan_loads_committed_concepts(make_repo, monkeypatch, capsys):
     (root / ".cbi/concepts.json").write_text("{}")
     assert main(["team", "init"]) == 0
     worktree_answers = (root / ".cbi/answers.jsonl").read_bytes()
-    sha, _ = scan_ref(capsys, committed)
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    log = _git_shim(shim)
+    with monkeypatch.context() as patch:
+        patch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+        sha, _ = scan_ref(capsys, committed)
+    recorded = log.read_text()
+    assert "DENIED" not in recorded
+    assert f"cat-file blob {sha}:.cbi/concepts.json" in recorded
     home = root / ".cbi/refs" / sha
     assert json.loads((home / "concepts.json").read_text()) == document
     conn = sqlite3.connect(home / "model.db")
@@ -438,3 +446,33 @@ def test_ref_upgrade_rebuilds_for_committed_structure_and_answers(make_repo, mon
     assert not (home / "concepts.json").exists()
     assert not (home / "screens.json").exists()
     assert "reused" in scan_ref(capsys, "HEAD")[1]
+
+
+
+def test_historical_concept_submit_does_not_export_into_worktree_team(
+        make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import tasks
+
+    source = "def run():\n    return 1\n"
+    root = make_repo({"core.py": source})
+    historical = git(root, "rev-parse", "HEAD").strip()
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["team", "init"]) == 0
+    answers_path = root / ".cbi/answers.jsonl"
+    worktree_row = {"kind": "summarise-files", "key": files.blob_id(source.encode()),
+                    "protocol": tasks.PROTOCOL_VERSION, "answer": "Worktree-only summary."}
+    answers_path.write_text(json.dumps(worktree_row) + "\n")
+    before = answers_path.read_bytes()
+    sha, _ = scan_ref(capsys, historical)
+    home = root / ".cbi/refs" / sha
+    assert not (home / "team.toml").exists()
+    accepted = finish(capsys, tmp_path, historical)
+    with sqlite3.connect(home / "model.db") as conn:
+        task_id, state = conn.execute("SELECT id, state FROM tasks WHERE kind = 'define-concepts'").fetchone()
+        assert task_id in accepted and state == "done"
+    conn.close()
+    assert (home / "concepts.json").is_file()
+    assert not (root / ".cbi/concepts.json").exists()
+    assert answers_path.read_bytes() == before
+    assert not (home / "answers.jsonl").exists()
