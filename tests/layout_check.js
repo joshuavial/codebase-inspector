@@ -247,16 +247,16 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
-  // Entries that call each other (a fundsorter top level). ELK threw "fromIndex: 2 > toIndex: 1"
+  // Entries that call each other at the top level. ELK threw "fromIndex: 2 > toIndex: 1"
   // while both ends of an edge were in its first layer.
-  const entryIds = ["admin-ui", "api", "client-ui", "crawler", "platform", "public-ui", "workers"];
-  const kids = [...entryIds, "funding-engine", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
-  const calls = [["admin-ui", "api"], ["api", "crawler"], ["client-ui", "api"], ["public-ui", "api"], ["platform", "records"],
-    ["workers", "crawler"], ["workers", "funding-engine"], ["workers", "records"], ["funding-engine", "api"], ["platform", "api"],
-    ["records", "api"], ["workers", "api"], ["records", "crawler"], ["funding-engine", "records"], ["funding-engine", "platform"]]
+  const entryIds = ["control-ui", "api", "client-ui", "fetcher", "tools", "public-ui", "workers"];
+  const kids = [...entryIds, "compute-core", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
+  const calls = [["control-ui", "api"], ["api", "fetcher"], ["client-ui", "api"], ["public-ui", "api"], ["tools", "records"],
+    ["workers", "fetcher"], ["workers", "compute-core"], ["workers", "records"], ["compute-core", "api"], ["tools", "api"],
+    ["records", "api"], ["workers", "api"], ["records", "fetcher"], ["compute-core", "records"], ["compute-core", "tools"]]
     .map(([a, b], i) => ({ id: "e" + i, a, b }));
   const first = app.firstTier(kids, calls);
-  assert.deepStrictEqual([...first].sort(), ["admin-ui", "client-ui", "platform", "public-ui", "workers"]);
+  assert.deepStrictEqual([...first].sort(), ["client-ui", "control-ui", "public-ui", "tools", "workers"]);
   for (const [dir, wrapping] of [["RIGHT", null], ["RIGHT", "MULTI_EDGE"], ["DOWN", null]]) {
     await elk.layout({
       id: "inner",
@@ -478,7 +478,7 @@ async function main() {
     { id: "up1", w: 150, h: 38 },
   ];
   const aboveEdges = [
-    { id: "u0", a: "shell", b: "up0", text: "stores device token verifiers and the write ledger", via: "security CLI" },
+    { id: "u0", a: "shell", b: "up0", text: "stores device token verifiers and the audit log", via: "security CLI" },
     { id: "u1", a: "shell", b: "up1", text: "preflights serve status before the shell will start", via: "exec CLI" },
   ];
   const sideOf = {};
