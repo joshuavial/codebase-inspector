@@ -412,7 +412,7 @@ def _collect(conn):
             revision = revisions.get(kind, {}).get(key, {})
             if revision.get("superseded_by") or revision.get("conflicts"):
                 continue
-            if (revision.get("generation")
+            if ("answer_digest" in revision
                     and revision.get("answer_digest") != _answer_digest(answer)):
                 continue
             found[(kind, key)] = {**_canon(kind, key, protocol, answer),

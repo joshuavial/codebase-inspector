@@ -818,6 +818,36 @@ def _accept_document_key(conn, out, key, summary):
         team.supersede(conn, out, "define-concepts", key)
 
 
+@pytest.mark.parametrize("generation", [None, 0, 1])
+def test_cache_export_cannot_change_a_causal_acceptance_body(make_repo, generation):
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    out = root / ".cbi"
+    out.mkdir()
+    (out / "team.toml").write_text(team.TEMPLATE)
+    key = ("define-concepts", "reviewed-input")
+    accepted = {**team._canon(*key, tasks.PROTOCOL_VERSION, {"summary": "The reviewed map."}),
+                "acceptance_id": "reviewed-acceptance", "retired_acceptances": []}
+    if generation is not None:
+        accepted["generation"] = generation
+    path = out / "answers.jsonl"
+    path.write_text(json.dumps(accepted) + "\n")
+    conn = store.open_db(out / "model.db")
+    try:
+        tasks.attach_cache(conn)
+        with conn:
+            conn.execute("INSERT INTO tasks (id, kind, node_id, input_hash, state) VALUES (?, ?, ?, ?, ?)",
+                         ("map-task", key[0], "workspace", key[1], "done"))
+            team.import_answers(conn, out)
+            assert team._collect(conn)[key] == accepted
+            conn.execute("UPDATE cache.summary_answers SET answer = ? WHERE input_hash = ?",
+                         (json.dumps({"summary": "A different cached map."}), key[1]))
+            assert key not in team._collect(conn)
+            team.sync(conn, out)
+        assert team._parse(path.read_text())[key] == accepted
+    finally:
+        conn.close()
+
+
 def _branched_document_answers(make_repo, tmp_path, branch_keys, higher_generation=False):
     root = make_repo({"core.py": "def run():\n    return 1\n"}, name="concurrent-maps")
     out = root / ".cbi"

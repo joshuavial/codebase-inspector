@@ -75,6 +75,9 @@ content allow a new acceptance to supersede those observed records. Import and
 export preserve causal context in both model metadata and the team file. The
 model retains answer digests so cache writes cannot impersonate an acceptance,
 and unversioned cache exports cannot overwrite causal team history.
+Export checks every retained answer digest, including causal acceptances with
+an absent or zero `generation`; generation is not required to protect an
+acceptance identity from a different cache body.
 
 
 Secret checks inspect every raw conflict answer body, including alternatives
