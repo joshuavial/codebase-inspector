@@ -228,3 +228,39 @@ def test_readme_has_the_team_init_snippet():
     text = README.read_text()
     for line in team.CI_SNIPPET.splitlines():
         assert line.strip() in text
+
+
+def test_check_rejects_concept_projection_drift(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import store
+    from cbi.cli import scan
+
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="projection-drift")
+    out = root / ".cbi"
+
+    def incomplete_scan(root, out):
+        scan(root, out)
+        conn = store.open_db(out / "model.db")
+        with conn:
+            conn.execute("DELETE FROM nodes WHERE id = 'core'")
+        conn.close()
+
+    assert check.run(root, out, None, "text", incomplete_scan) == 1
+    assert "concepts.json does not match the model" in capsys.readouterr().out
+
+
+def test_check_validates_original_concepts_after_scan(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi.cli import scan
+
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="rewritten-map")
+    out = root / ".cbi"
+    original = (out / "concepts.json").read_text()
+
+    def rewriting_scan(root, out):
+        data = json.loads(original)
+        data["concepts"][0]["summary"] = "A different summary."
+        (out / "concepts.json").write_text(json.dumps(data))
+        scan(root, out)
+
+    assert check.run(root, out, None, "text", rewriting_scan) == 1
+    assert (out / "concepts.json").read_text() == original
+    assert "concepts.json does not match the model" in capsys.readouterr().out

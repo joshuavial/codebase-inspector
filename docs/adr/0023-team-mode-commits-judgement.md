@@ -19,3 +19,14 @@ A repository opts in with `cbi team init`. It then commits only the judgement: `
 ## Consequences
 
 Clones get the full map for free; concept changes are reviewed in PRs; CI needs only the CLI. Non-team repositories keep ADR-0006 behaviour. Committed answers are checked for secret-looking values.
+
+
+## Gate consistency (2026-11-03)
+
+`cbi check` restores the original judgement files before validating them. It
+compares the concept nodes, authored externals, ownership and relationships
+against a fresh projection of `concepts.json`, so a valid document with an
+incomplete or different model fails the gate. This comparison rolls back its
+projection and leaves the model unchanged. Concept task input hashes include
+file summaries as well as source hashes and cross-file pairs; revising a summary
+invalidates the previous task hash.

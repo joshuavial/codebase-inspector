@@ -805,3 +805,16 @@ def test_hosted_renderer_is_not_an_entry(make_repo, monkeypatch, capsys, tmp_pat
     shell = run(capsys, "show", "shell")[1]
     assert "starts here" not in shell and "hosted by" not in shell
     assert "starts here (a.ts)" in run(capsys, "show", "desktop")[1]
+
+
+def test_concept_input_hash_includes_file_summaries(make_repo, monkeypatch, capsys, tmp_path):
+    root = repo_fixture(make_repo, monkeypatch, capsys, tmp_path)()
+    before = concept_brief(capsys)["input_hash"]
+    conn = store.open_db(root / ".cbi" / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        conn.execute("UPDATE nodes SET summary = 'Revised file summary.' WHERE path = 'a.ts' AND kind = 'file'")
+        concepts.refresh(conn, root / ".cbi", root)
+    conn.close()
+    assert concept_brief(capsys)["input_hash"] != before
+

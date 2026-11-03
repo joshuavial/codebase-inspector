@@ -61,6 +61,7 @@ def run(root, out, base_ref, fmt, scan):
     saved = snapshot(out)
     try:
         scan(root, out)
+        restore(out, saved)
         return _report(root, out, base, fmt)
     finally:
         restore(out, saved)
@@ -304,6 +305,8 @@ def _concept_errors(conn, text):
         failed, _warnings = concepts.problems(conn, body)
     except (KeyError, TypeError) as err:
         return [f"failed its checks ({err})"]
+    if not failed and not concepts.projection_matches(conn, text):
+        failed.append("concepts.json does not match the model; run `cbi scan` and review the concept map")
     return failed
 
 

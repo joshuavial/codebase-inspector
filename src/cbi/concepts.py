@@ -198,7 +198,7 @@ def _pairs(conn, files):
 def _input_hash(files, pairs):
     from cbi import tasks
     payload = ["define-concepts", tasks.PROTOCOL_VERSION,
-               [[f["path"], f["content_hash"]] for f in files],
+               [[f["path"], f["content_hash"], f["summary"]] for f in files],
                [[p["from"], p["to"], p["kind"], p["count"]] for p in pairs]]
     return hashlib.sha1(json.dumps(payload).encode()).hexdigest()[:16]
 
@@ -369,6 +369,30 @@ def apply(conn, text):
         edges,
     )
     return old, [n["id"] for n in nodes]
+
+
+def projection_matches(conn, text):
+    """Compare the model with a fresh projection without changing any stored state."""
+    def projected():
+        nodes = [tuple(row) for row in conn.execute(
+            "SELECT id, parent_id, kind, display_kind, name, workspace_id, summary, attrs "
+            "FROM nodes WHERE kind = 'concept' OR "
+            "(kind = 'external' AND json_extract(attrs, '$.source') = 'concepts') ORDER BY id"
+        )]
+        edges = [tuple(row) for row in conn.execute(
+            "SELECT src, dst, kind, confidence, weight, attrs, ordinal FROM edges "
+            "WHERE source = 'agent' AND kind IN ('owns', 'relates') ORDER BY src, dst, kind, ordinal"
+        )]
+        return nodes, edges
+
+    before = projected()
+    conn.execute("SAVEPOINT concept_projection_check")
+    try:
+        apply(conn, text)
+        return before == projected()
+    finally:
+        conn.execute("ROLLBACK TO concept_projection_check")
+        conn.execute("RELEASE concept_projection_check")
 
 
 # --- checks ---------------------------------------------------------------------

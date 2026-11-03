@@ -1440,6 +1440,7 @@ def submit(conn, task_id, text, root=None, out=None):
         conn.execute("UPDATE tasks SET state = 'done' WHERE id = ?", (task_id,))
         before = _open_ids(conn)
         refresh_summaries(conn)
+        concepts.refresh(conn, out)
         _sync_team(conn, out)
         return changed, _opened(before, conn)
 
