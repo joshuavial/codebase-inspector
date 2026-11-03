@@ -263,7 +263,7 @@ Part of the parsers, stored as facts like calls and reads:
 The concept viewer replaces the bare list viewer from PRD-01 deliverable 3. It is built from the mockup's `app.js`, rewired to read `cbi build` output:
 
 - `data/concepts.js`: concept tree, externals, relationships with their rolled-up code edges, env vars per concept, screens, and per-leaf symbol lists with calls (including `via: jsx` renders), test counts and env chips. Small enough to load at once for sample-desktop; for sample-monorepo the per-leaf symbol lists move to the existing chunk files.
-- Layout with elkjs 0.12 (`elk.bundled.js`, vendored, about 1.6 MB) running layered layout per view. Zoom and pan change the SVG `viewBox`, so text stays sharp.
+- Layout with elkjs 0.12 (`elk.bundled.js`, vendored, about 1.6 MB) running layered layout per view. Zoom and pan change the SVG `viewBox`, so text stays sharp. All ELK calls pass through `layoutGraph`, which checks edge endpoints against the drawn nested nodes and ports, drops dangling edges, and carries their count to a small diagram notice. Changed leaf slices keep calls only when both endpoints are visible (retained local functions or foreign ghosts). Concept cards reserve measured header-marker widths, including change badges on compact context neighbours, so markers do not cover titles as the SVG zooms.
 - Colours come from role and kind classes with light and dark values on `:root`; the key is built from the roles and kinds present in the current view.
 - When the model has no concepts yet, the viewer shows deployables, packages and externals as boxes with `depends_on` edges, so a fresh scan still opens on a diagram (PRD-02 B4).
 

@@ -542,3 +542,11 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 .db-table-list button { text-align: left; max-width: 100%; overflow-wrap: anywhere; }
 #drawer input[type="search"] { width: 100%; margin-top: 12px; padding: 8px; }
 .db-pages { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+
+/* A partial diagram stays useful when a filtered endpoint is unavailable. */
+#layout-notice {
+  position: absolute; top: 12px; left: 12px; max-width: min(420px, calc(100% - 24px));
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--muted); font-size: 12px;
+}
+#layout-notice[hidden] { display: none; }
