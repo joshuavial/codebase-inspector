@@ -59,15 +59,14 @@ JUDGEMENT = (
 def team_dir(out):
     """The model directory that holds team.toml, or None.
 
-    A ref model lives at `.cbi/refs/<sha>/` and uses the worktree's `.cbi/`.
+    A ref model uses the judgement copied from that commit into its own home.
+    It must not import or export answers through the current worktree.
     """
     if out is None:
         return None
     out = Path(out)
     if (out / "team.toml").is_file():
         return out
-    if out.parent.name == "refs" and (out.parent.parent / "team.toml").is_file():
-        return out.parent.parent
     return None
 
 

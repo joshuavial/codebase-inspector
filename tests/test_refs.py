@@ -10,7 +10,7 @@ from pathlib import Path
 
 from conftest import write_standin
 
-from cbi import files, store
+from cbi import files, store, team
 from cbi.cli import main
 
 WS = "github.com/acme/app"
@@ -373,3 +373,29 @@ def test_worktrees_json(make_repo, tmp_path, monkeypatch, capsys):
     current = next(w for w in data["worktrees"] if w["current"])
     assert Path(current["path"]).resolve() == lane.resolve() and current["lane"] == "lane-wt"
     assert next(b for b in data["branches"] if b["current"])["name"] == "lane"
+
+
+def test_ref_scan_loads_committed_concepts(make_repo, monkeypatch, capsys):
+    document = {"summary": "Committed map.", "concepts": [
+        {"id": "core", "name": "Committed core", "summary": "Core logic.",
+         "role": "core", "files": ["core.py"]}], "externals": [], "relationships": []}
+    root = make_repo({"core.py": "def run():\n    return 1\n",
+                      ".cbi/concepts.json": json.dumps(document)})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    committed = git(root, "rev-parse", "HEAD").strip()
+    (root / ".cbi/concepts.json").write_text("{}")
+    assert main(["team", "init"]) == 0
+    worktree_answers = (root / ".cbi/answers.jsonl").read_bytes()
+    sha, _ = scan_ref(capsys, committed)
+    home = root / ".cbi/refs" / sha
+    assert json.loads((home / "concepts.json").read_text()) == document
+    conn = sqlite3.connect(home / "model.db")
+    try:
+        assert conn.execute("SELECT name FROM nodes WHERE kind = 'concept'").fetchall() == [("Committed core",)]
+    finally:
+        conn.close()
+    assert (root / ".cbi/concepts.json").read_text() == "{}"
+    assert (root / ".cbi/answers.jsonl").read_bytes() == worktree_answers
+    assert team.team_dir(home) is None
+    assert "reused" in scan_ref(capsys, committed)[1]

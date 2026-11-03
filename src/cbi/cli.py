@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -545,6 +546,16 @@ def scan_ref(root, out, ref, *, force=False):
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
     db = home / "model.db"
+    # Ref judgement comes from that commit, never from the current worktree.
+    # Keep locally answered ref tasks when no committed projection exists.
+    for name in ("structure.json", "concepts.json", "screens.json", "team.toml", "answers.jsonl"):
+        result = subprocess.run(
+            ["git", "cat-file", "blob", f"{sha}:.cbi/{name}"], cwd=root, capture_output=True)
+        if result.returncode == 0:
+            home.mkdir(parents=True, exist_ok=True)
+            path = home / name
+            if not path.exists() or path.read_bytes() != result.stdout:
+                path.write_bytes(result.stdout)
     if not force and store.ref_reusable(
             db, files.ignore_token(ignore_text), files.PARSER_VERSION,
             _read(home / "concepts.json"), _read(home / "screens.json")):
