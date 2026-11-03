@@ -80,7 +80,7 @@ def _writer(head):
         if (out / "model.db").is_file():
             path = out / "model.db"
         else:
-            (out / "refs" / "comparison-inbox.json").write_text(json.dumps({"head": path.parent.name}) + "\n")
+            (out / "refs" / "comparison-inbox.json").write_text(json.dumps({"head": path.parent.name}) + "\n", encoding="utf-8")
     return store.open_db(path), True
 
 

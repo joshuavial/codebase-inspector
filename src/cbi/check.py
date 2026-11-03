@@ -63,7 +63,7 @@ def run(root, out, base_ref, fmt, scan):
         scan(root, out)
         restore(out, saved)
         result = _report(root, out, base, fmt)
-        files.report_excluded_source(root, (out / "ignore").read_text())
+        files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
         return result
     finally:
         restore(out, saved)
@@ -238,11 +238,11 @@ def _json_findings(conn, root, out):
     found = []
     for name, checker in (
         ("structure.json", _structure_errors),
-        ("concepts.json", _concept_errors),
+        ("concepts.json", lambda conn, text: _concept_errors(conn, text, out)),
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
-        text = path.read_text() if path.is_file() else None
+        text = path.read_text(encoding="utf-8") if path.is_file() else None
         if text is None or not text.strip():
             if name == "concepts.json" and (
                 (store.get_meta(conn, "concepts_json") or "").strip()
@@ -305,7 +305,7 @@ def _structure_errors(conn, text):
     return errors
 
 
-def _concept_errors(conn, text):
+def _concept_errors(conn, text, out=None):
     data, errors = _object(text)
     if data is None:
         return errors
@@ -320,6 +320,14 @@ def _concept_errors(conn, text):
         return [f"failed its checks ({err})"]
     if not failed and not concepts.projection_matches(conn, text):
         failed.append("concepts.json does not match the model; run `cbi scan` and review the concept map")
+    task = conn.execute("SELECT input_hash FROM tasks WHERE kind = 'define-concepts'").fetchone()
+    if task is not None:
+        committed = team.committed_answer(out, "define-concepts", task[0], tasks.PROTOCOL_VERSION)
+        if committed is not None and concepts._body(body) != committed:
+            failed.append(
+                "concepts.json does not match the committed define-concepts answer; "
+                "review the map and submit a define-concepts answer"
+            )
     return failed
 
 
@@ -352,7 +360,7 @@ def _stale_findings(conn, root, out):
     if team.team_dir(out) is None:
         return []
     path = _answers_file(out)
-    have = team._parse(path.read_text()) if path.is_file() else {}
+    have = team._parse(path.read_text(encoding="utf-8")) if path.is_file() else {}
     found = []
     shown = _show(root, path)
     for (kind, key), row in sorted(have.items()):
@@ -385,7 +393,7 @@ def _secret_findings(conn, root, out):
     tracked = set(tasks._tracked_paths(conn))
     if path.is_file():
         shown = _show(root, path)
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:

@@ -85,3 +85,13 @@ cached answer temporarily restored the map during scanning. The original
 absence is preserved after the check, and the report identifies the missing
 file. A repository without a concept document or projected concept state remains
 valid without a map.
+
+
+## Concept document consistency (2026-11-03)
+
+The check gate compares `concepts.json` with the unambiguous live committed
+`define-concepts` answer for the current task input hash. This applies to both
+existing models and fresh CI models with an empty shared cache. A structurally
+valid but different document fails with a request to review and submit the map;
+the gate preserves the original judgement files. Conflicting or retired answers
+remain governed by the causal acceptance rules in ADR-0023.

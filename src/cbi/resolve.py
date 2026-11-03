@@ -143,7 +143,7 @@ class _Model:
             return self._tsconfigs[key]
         self._tsconfigs[key] = {}  # guards against extends cycles
         try:
-            data = _jsonc((self.ws_dir[wid] / path).read_text())
+            data = _jsonc((self.ws_dir[wid] / path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
         out = {}
@@ -481,7 +481,7 @@ class _Model:
         key = (wid, path)
         if key not in self._pyprojects:
             try:
-                data = tomllib.loads((self.ws_dir[wid] / path).read_text())
+                data = tomllib.loads((self.ws_dir[wid] / path).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 data = {}
             sources = data.get("tool", {}).get("uv", {}).get("sources", {})
@@ -700,7 +700,7 @@ def _collapse_partials(m, found):
 def _csproj_using_names(path):
     """`<Using Include="Namespace" />` from a csproj. Static usings are types, not namespaces."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return []
     try:
@@ -1212,7 +1212,7 @@ def resolve(conn, root, reporter=None):
         if posixpath.splitext(path)[1].lower() not in (".html", ".htm"):
             continue
         try:
-            text = (m.ws_dir[wid] / path).read_text(errors="replace")
+            text = (m.ws_dir[wid] / path).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for src in _script_srcs(text):

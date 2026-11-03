@@ -658,7 +658,7 @@ def refresh(conn, out=None, root=None, previous=None):
     text = store.get_meta(conn, "concepts_json")
     if text is None and out is not None:
         path = out / "concepts.json"
-        text = path.read_text() if path.exists() else ""
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         store.set_meta(conn, "concepts_json", text)
     data = _document(text)
     tracked = _tracked_files(conn)
@@ -675,7 +675,7 @@ def refresh(conn, out=None, root=None, previous=None):
             and not problems(conn, {**committed, "input_hash": digest})[0]:
         written = json.dumps(committed, indent=2) + "\n"
         if data != committed and out is not None:
-            (out / "concepts.json").write_text(written)
+            (out / "concepts.json").write_text(written, encoding="utf-8")
             apply(conn, written)
         _save_snapshot(conn, tracked, committed)
         data = committed
@@ -684,7 +684,7 @@ def refresh(conn, out=None, root=None, previous=None):
     absent = out is not None and not (out / "concepts.json").exists()
     if cached and data is None and absent and not problems(conn, {**cached, "input_hash": digest})[0]:
         written = json.dumps(cached, indent=2) + "\n"
-        (out / "concepts.json").write_text(written)
+        (out / "concepts.json").write_text(written, encoding="utf-8")
         apply(conn, written)
         _save_snapshot(conn, tracked, cached)
         data = cached
@@ -712,14 +712,14 @@ def accept(conn, task, answer, out, root=None):
         raise tasks.AnswerError("\n".join(errors + warnings))
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
-    current = (out / "concepts.json").read_text() if (out / "concepts.json").exists() else None
+    current = (out / "concepts.json").read_text(encoding="utf-8") if (out / "concepts.json").exists() else None
     if (_cached(conn, task["input_hash"]) == body and current == text and not warnings
             and not team.answer_superseded(out, "define-concepts", task["input_hash"])
             and not team.answer_conflicts(out, "define-concepts")):
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
-        (out / "concepts.json").write_text(text)
+        (out / "concepts.json").write_text(text, encoding="utf-8")
         old, new = apply(conn, text)
         _save_snapshot(conn, _tracked_files(conn), body)
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",

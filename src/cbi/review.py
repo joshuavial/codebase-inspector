@@ -118,7 +118,7 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
         repo_name=repo_name,
     )
     path = folder / "review.md"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     if post:
         if not spec.get("pr"):
             raise ReviewError(f"wrote {path}\n--post needs a pull request number", code=2)

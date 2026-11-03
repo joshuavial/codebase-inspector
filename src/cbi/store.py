@@ -319,7 +319,7 @@ def ref_judgement(structure_text, team_text, answers_text):
 
 
 def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None,
-                 *, structure_text=None, team_text=None, answers_text=None):
+                 *, classification_version, structure_text=None, team_text=None, answers_text=None):
     """True when a ref model matches every judgement input and has current provenance."""
     if not Path(path).exists():
         return False
@@ -338,6 +338,7 @@ def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_
         conn.close()
     return (
         meta.get("parser_version") == str(parser_version)
+        and meta.get("classification_version") == str(classification_version)
         and meta.get("ignore") == ignore_hash
         and meta.get("concepts_json", "") == (concepts_text or "")
         and meta.get("screens_json", "") == (screens_text or "")

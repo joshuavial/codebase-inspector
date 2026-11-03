@@ -370,3 +370,23 @@ def test_resolved_stale_conflict_payloads_are_checked_for_secrets(make_repo, mon
     assert code == 1, output + err
     assert "answer looks like a github token" in output
     assert "conflicting accepted answers" not in output
+
+
+@pytest.mark.parametrize("fresh_model", [False, True])
+def test_stale_concept_document_disagrees_with_committed_answer(
+    make_repo, monkeypatch, capsys, tmp_path, fresh_model,
+):
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path)
+    path = root / ".cbi" / "concepts.json"
+    stale = json.loads(path.read_text(encoding="utf-8"))
+    stale["summary"] = "An older description of the app."
+    path.write_text(json.dumps(stale), encoding="utf-8")
+    commit(root, "keep stale document")
+    if fresh_model:
+        (root / ".cbi" / "model.db").unlink()
+        monkeypatch.setenv("CBI_CACHE_DIR", str(tmp_path / "empty-cache"))
+    before = check.snapshot(root / ".cbi")
+    code, out, err = run(capsys, "check")
+    assert code == 1, out + err
+    assert "concepts.json does not match the committed define-concepts answer" in out
+    assert check.snapshot(root / ".cbi") == before

@@ -74,29 +74,29 @@ def build(conn, out, root=None, compare=None, history=None, place=None, *, edito
         shutil.copyfile(ASSETS / "vendor" / name, vendor / name)
     data = out / "data"
     data.mkdir(exist_ok=True)
-    (data / "tree.js").write_text(_script("tree", {"nodes": _tree(conn)}))
+    (data / "tree.js").write_text(_script("tree", {"nodes": _tree(conn)}), encoding="utf-8")
     concepts = concept_view(conn, root)
-    (data / "concepts.js").write_text(_script("concepts", concepts))
-    (data / "database.js").write_text(_script("database", system_views.database_view(conn)))
-    (data / "endpoints.js").write_text(_script("endpoints", system_views.endpoint_view(conn)))
+    (data / "concepts.js").write_text(_script("concepts", concepts), encoding="utf-8")
+    (data / "database.js").write_text(_script("database", system_views.database_view(conn)), encoding="utf-8")
+    (data / "endpoints.js").write_text(_script("endpoints", system_views.endpoint_view(conn)), encoding="utf-8")
     if place is None:
         place = context.infer_place(out, root, compare)
-    (data / "context.js").write_text(_script("context", context.embed(conn, concepts, place)))
+    (data / "context.js").write_text(_script("context", context.embed(conn, concepts, place)), encoding="utf-8")
     payload = None
     if compare:
         payload = compare_payload(
             conn, compare["base"], compare["changes"], root, compare.get("base_root"),
             compare.get("base_label") or "", compare.get("head_label") or "",
         )
-    (data / "diff.js").write_text(_script("diff", payload))
-    (data / "history.js").write_text(_script("history", history))
+    (data / "diff.js").write_text(_script("diff", payload), encoding="utf-8")
+    (data / "history.js").write_text(_script("history", history), encoding="utf-8")
     editor_payload = {
         "editor": editor if editor in ("vscode", "cursor", "none") else "vscode",
         "root": _project_root(root, project),
     }
     if ref_sha:
         editor_payload["sha"] = ref_sha
-    (data / "editor.js").write_text(_script("editor", editor_payload))
+    (data / "editor.js").write_text(_script("editor", editor_payload), encoding="utf-8")
     return out / "index.html"
 
 

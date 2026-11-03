@@ -413,7 +413,8 @@ def test_read_accepts_a_commit_tree():
         def __truediv__(self, other):
             return self
 
-        def read_text(self, errors=None):
+        def read_text(self, encoding="utf-8", errors=None):
+            assert encoding == "utf-8" and errors == "replace"
             return "export function App() { return <div />; }\n"
 
     assert screens._read(Tree(), "App.tsx", {}) == "export function App() { return <div />; }\n"

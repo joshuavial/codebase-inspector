@@ -453,21 +453,21 @@ def cmd_init(args):
     # Team mode rewrote this file. Putting `*` back would hide the committed judgement.
     if (out / "team.toml").is_file():
         if not (out / ".gitignore").exists():
-            (out / ".gitignore").write_text(team.DERIVED_GITIGNORE)
+            (out / ".gitignore").write_text(team.DERIVED_GITIGNORE, encoding="utf-8")
     else:
-        (out / ".gitignore").write_text("*\n")
+        (out / ".gitignore").write_text("*\n", encoding="utf-8")
     ignore = out / "ignore"
     if ignore.exists():
         print(f"{out} already initialised; kept {ignore}")
     else:
-        ignore.write_text(files.default_ignore(root))
+        ignore.write_text(files.default_ignore(root), encoding="utf-8")
         print(f"Created {out} and wrote {ignore}. Edit it to skip more paths, then run `cbi scan`.")
-    files.report_excluded_source(root, ignore.read_text())
+    files.report_excluded_source(root, ignore.read_text(encoding="utf-8"))
     return 0
 
 
 def _read(path):
-    return path.read_text() if path.exists() else None
+    return path.read_text(encoding="utf-8") if path.exists() else None
 
 
 def _scan_fingerprint(workspaces, ignore_text, out, structure_text, concepts_text, screens_text):
@@ -512,6 +512,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
             store.replace_file_states(conn, {p: s[:4] for p, s in states.items()})
             store.set_meta(conn, "scanned_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             store.set_meta(conn, "parser_version", str(files.PARSER_VERSION))
+            store.set_meta(conn, "classification_version", str(files.CLASSIFICATION_VERSION))
             store.set_meta(conn, "ignore", files.ignore_token(ignore_text))
             # content_hash is the git blob id. A model written before that misses this key,
             # so the next scan rehashes instead of reusing the old digest from mtime.
@@ -580,7 +581,7 @@ def scan_ref(root, out, ref, *, force=False):
     """Map one commit from git objects into out/refs/<sha>/model.db.
 
     Returns (sha, reused, counts, (open, blocked)). A stored model is reused when
-    the schema, parser version and ignore file still match.
+    the schema, parser and classification versions, and ignore file still match.
     """
     ignore_text = _read(out / "ignore")
     reporter = progress.Progress()
@@ -601,6 +602,7 @@ def scan_ref(root, out, ref, *, force=False):
     if not force and store.ref_reusable(
             db, files.ignore_token(ignore_text), files.PARSER_VERSION,
             _read(home / "concepts.json"), _read(home / "screens.json"),
+            classification_version=files.CLASSIFICATION_VERSION,
             structure_text=_read(home / "structure.json"), team_text=_read(home / "team.toml"),
             answers_text=_read(home / "answers.jsonl")):
         conn = store.read_only(db)
@@ -703,7 +705,7 @@ def _locate(args):
     if not ref:
         if getattr(args, "command", None) in ("tasks", "task", "submit") and not (out / "model.db").exists():
             try:
-                head = json.loads((out / "refs" / "comparison-inbox.json").read_text())["head"]
+                head = json.loads((out / "refs" / "comparison-inbox.json").read_text(encoding="utf-8"))["head"]
                 if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40,64}", head):
                     home = out / "refs" / head
                     return root, home, home / "model.db", head
@@ -934,7 +936,7 @@ def cmd_task(args):
 
 def _cmd_check(args, conn, root):
     try:
-        text = args.check.read_text()
+        text = args.check.read_text(encoding="utf-8")
     except OSError as err:
         print(f"rejected: cannot read the answer: {err}", file=sys.stderr)
         return 2
@@ -991,7 +993,7 @@ def cmd_submit(args):
     source = _source(root, sha)
     try:
         try:
-            text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text()
+            text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
         except OSError as err:
             print(f"rejected: cannot read the answer: {err}", file=sys.stderr)
             return 2
@@ -1124,7 +1126,7 @@ def _cmd_build_history(args):
         print("history has not been built. Run `cbi history` first.", file=sys.stderr)
         return 1
     try:
-        entries = json.loads(index.read_text()).get("entries") or []
+        entries = json.loads(index.read_text(encoding="utf-8")).get("entries") or []
     except (OSError, json.JSONDecodeError) as err:
         print(f"cannot read history index: {err}", file=sys.stderr)
         return 1
@@ -1353,6 +1355,9 @@ def main(argv=None):
     _configure_windows_output()
     try:
         return _main(argv)
+    except UnicodeDecodeError as err:
+        print(f"Cannot read input as UTF-8: {err}. Save the file with UTF-8 encoding and retry.", file=sys.stderr)
+        return 1
     except sqlite3.OperationalError as err:
         if not store.is_busy(err):
             raise

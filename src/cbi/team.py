@@ -82,7 +82,7 @@ def settings(out):
     if not path.is_file():
         return None
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return None
     if not isinstance(data, dict):
@@ -110,7 +110,7 @@ def import_answers(conn, out):
         return 0
     from cbi import tasks
     applied = 0
-    rows = _parse(path.read_text())
+    rows = _parse(path.read_text(encoding="utf-8"))
     _remember_revisions(conn, rows.values())
     for row in rows.values():
         if row.get("superseded_by") or row.get("conflicts"):
@@ -144,7 +144,7 @@ def _committed_row(out, kind, key):
     path = directory / ANSWERS_NAME if directory is not None else None
     if path is None or not path.is_file():
         return None
-    return _parse(path.read_text()).get((kind, key))
+    return _parse(path.read_text(encoding="utf-8")).get((kind, key))
 
 
 def committed_answer(out, kind, key, protocol):
@@ -166,7 +166,7 @@ def answer_conflicts(out, kind, key=None):
         return row.get("conflicts", []) if row else []
     directory = team_dir(out)
     path = directory / ANSWERS_NAME if directory is not None else None
-    rows = _parse(path.read_text()) if path is not None and path.is_file() else {}
+    rows = _parse(path.read_text(encoding="utf-8")) if path is not None and path.is_file() else {}
     return [candidate for (task_kind, _), row in rows.items() if task_kind == kind
             for candidate in row.get("conflicts", [])]
 
@@ -182,7 +182,7 @@ def committed_answers_changed(conn, out):
     except json.JSONDecodeError:
         return False
     previous = fingerprint.get("answers") if isinstance(fingerprint, dict) else None
-    return isinstance(previous, str) and previous != files.ignore_token(path.read_text())
+    return isinstance(previous, str) and previous != files.ignore_token(path.read_text(encoding="utf-8"))
 
 
 def supersede(conn, out, kind, key):
@@ -193,7 +193,7 @@ def supersede(conn, out, kind, key):
     """
     directory = team_dir(out)
     path = directory / ANSWERS_NAME if directory else None
-    rows = _parse(path.read_text()) if path and path.is_file() else {}
+    rows = _parse(path.read_text(encoding="utf-8")) if path and path.is_file() else {}
     meta_key = "accepted_keys:" + kind
     previous = set(json.loads(store.get_meta(conn, meta_key) or "[]"))
     revisions = _answer_revisions(conn)
@@ -256,7 +256,7 @@ def cmd_init(root, out):
     ignore = out / "ignore"
     ignore_existed = ignore.exists()
     if not ignore_existed:
-        ignore.write_text(files.default_ignore(root))
+        ignore.write_text(files.default_ignore(root), encoding="utf-8")
     attr_note, created_attr = _attributes(root, out)
     ignore_changed = _scan_ignore(ignore, created_attr)
     if not ignore_existed:
@@ -269,9 +269,9 @@ def cmd_init(root, out):
     if toml_path.exists():
         lines.append(f"Kept {_show(root, toml_path)}")
     else:
-        toml_path.write_text(TEMPLATE)
+        toml_path.write_text(TEMPLATE, encoding="utf-8")
         lines.append(f"Wrote {_show(root, toml_path)}")
-    (out / ".gitignore").write_text(DERIVED_GITIGNORE)
+    (out / ".gitignore").write_text(DERIVED_GITIGNORE, encoding="utf-8")
     lines.append(f"Wrote {_show(root, out / '.gitignore')}")
     rows, problem = _model_rows(out / "model.db")
     path, count, changed = _store(out, rows)
@@ -321,11 +321,11 @@ def ensure_judgement_visible(root, out):
         source = Path(ignored["source"])
         if not source.is_absolute():
             source = root / source
-        lines = source.read_text().splitlines(keepends=True)
+        lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
         index = ignored["line"] - 1
         if 0 <= index < len(lines) and lines[index].rstrip("\r\n") in (".cbi", ".cbi/"):
             del lines[index]
-            source.write_text("".join(lines))
+            source.write_text("".join(lines), encoding="utf-8")
             removed = {**ignored, "source": source}
             ignored = judgement_ignore(root)
     return removed, ignored
@@ -412,7 +412,7 @@ def _collect(conn):
             revision = revisions.get(kind, {}).get(key, {})
             if revision.get("superseded_by") or revision.get("conflicts"):
                 continue
-            if (revision.get("generation")
+            if ("answer_digest" in revision
                     and revision.get("answer_digest") != _answer_digest(answer)):
                 continue
             found[(kind, key)] = {**_canon(kind, key, protocol, answer),
@@ -570,7 +570,7 @@ def _dump(rows):
 def _store(directory, rows):
     """Merge collected rows into answers.jsonl without inventing acceptance events."""
     path = Path(directory) / ANSWERS_NAME
-    merged = _parse(path.read_text()) if path.is_file() else {}
+    merged = _parse(path.read_text(encoding="utf-8")) if path.is_file() else {}
     for key, row in rows.items():
         current = merged.get(key)
         if (current and (current.get("acceptance_id") or current.get("conflicts") or "retired_acceptances" in current)
@@ -582,11 +582,11 @@ def _store(directory, rows):
 
 
 def _atomic(path, text):
-    if path.is_file() and path.read_text() == text:
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     return True
 
@@ -597,7 +597,7 @@ def _attributes(root, out):
         return "Left .gitattributes unchanged because the model directory is not .cbi/.", False
     path = Path(root) / ".gitattributes"
     existed = path.exists()
-    text = path.read_text() if existed else ""
+    text = path.read_text(encoding="utf-8") if existed else ""
     if _marked(text):
         return "Kept .gitattributes", False
     kept = []
@@ -611,7 +611,7 @@ def _attributes(root, out):
             kept.append(line)
     if not replaced:
         kept.append(ATTR_LINE.rstrip("\n"))
-    path.write_text("\n".join(kept) + "\n")
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
     return ("Wrote .gitattributes", not existed)
 
 
@@ -633,7 +633,7 @@ def _scan_ignore(path, created_attr):
     `.gitattributes` would become a root file. Either one changes the workspace
     summary hash, so a clone would open that task again.
     """
-    text = path.read_text() if path.exists() else ""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
     lines = text.splitlines()
     directory, attributes = SCAN_IGNORE
     extra = []
@@ -647,7 +647,7 @@ def _scan_ignore(path, created_attr):
         text += "\n"
     text += "# Team mode. The committed judgement is not part of the map.\n"
     text += "".join(f"{line}\n" for line in extra)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return True
 
 
@@ -665,7 +665,7 @@ def _show(root, path):
 
 def _commit_paths(root, out):
     listed = []
-    if _is_repo_cbi(root, out) and _marked((Path(root) / ".gitattributes").read_text()
+    if _is_repo_cbi(root, out) and _marked((Path(root) / ".gitattributes").read_text(encoding="utf-8")
                                            if (Path(root) / ".gitattributes").exists() else ""):
         listed.append(".gitattributes")
     for name in JUDGEMENT:

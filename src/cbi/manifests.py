@@ -44,14 +44,14 @@ class _Workspace:
     def json(self, path):
         if path not in self._json:
             try:
-                self._json[path] = resolve._jsonc((self.dir / path).read_text())
+                self._json[path] = resolve._jsonc((self.dir / path).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 self._json[path] = None
         return self._json[path]
 
     def toml(self, path):
         try:
-            return tomllib.loads((self.dir / path).read_text())
+            return tomllib.loads((self.dir / path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
@@ -61,7 +61,7 @@ class _Workspace:
 
     def text(self, path):
         try:
-            return (self.dir / path).read_text()
+            return (self.dir / path).read_text(encoding="utf-8")
         except OSError:
             return None
 

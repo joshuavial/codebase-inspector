@@ -205,18 +205,18 @@ def _fill_missing_concepts(root, out, shas, scan_ref):
     rebuilds its concept, relationship and integration projection.
     """
     homes = [out / "refs" / sha for sha in shas]
-    texts = [(home / "concepts.json").read_text() if (home / "concepts.json").is_file() else None
+    texts = [(home / "concepts.json").read_text(encoding="utf-8") if (home / "concepts.json").is_file() else None
              for home in homes]
     fallback = next((text for text in texts if text), None)
     root_map = out / "concepts.json"
     if fallback is None and root_map.is_file():
-        fallback = root_map.read_text()
+        fallback = root_map.read_text(encoding="utf-8")
     if not fallback:
         return
     for sha, home, text in zip(shas, homes, texts):
         if text is not None:
             continue
-        (home / "concepts.json").write_text(fallback)
+        (home / "concepts.json").write_text(fallback, encoding="utf-8")
         scan_ref(root, out, sha)
 
 

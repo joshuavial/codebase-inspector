@@ -774,7 +774,7 @@ def _with_ids(doc, ws_id):
 def _atomic_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -787,7 +787,7 @@ def refresh_structure(conn, root, out=None, force_ws=None):
     """
     snapshots = _snapshots(conn, root)
     path = Path(out) / "structure.json" if out else None
-    existing_text = path.read_text() if path and path.exists() else None
+    existing_text = path.read_text(encoding="utf-8") if path and path.exists() else None
     existing = _load_doc(existing_text)
     updates = {}
     for ws_id, snap in snapshots.items():
@@ -1080,7 +1080,7 @@ def _summary_brief(conn, task, root):
             try:
                 src = _content_root(root) / path
                 if isinstance(src, Path):
-                    with open(src, errors="replace") as f:
+                    with open(src, encoding="utf-8", errors="replace") as f:
                         head = "".join(line for _, line in zip(range(README_LINES), f))
                 else:
                     lines = src.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
