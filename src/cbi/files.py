@@ -59,6 +59,10 @@ BASE_IGNORE = """\
 """
 
 
+ARTIFACT_START = "# cbi: artifact rules preserve tracked source"
+ARTIFACT_END = "# cbi: end artifact rules"
+
+
 class NotARepo(Exception):
     pass
 
@@ -140,8 +144,15 @@ class Ignore:
 
     def __init__(self, text):
         self.rules = []
+        preserve_source = False
         for line in text.splitlines():
             line = line.rstrip()
+            if line == ARTIFACT_START:
+                preserve_source = True
+                continue
+            if line == ARTIFACT_END:
+                preserve_source = False
+                continue
             if not line or line.startswith("#"):
                 continue
             negate = line.startswith("!")
@@ -152,13 +163,21 @@ class Ignore:
             anchored = "/" in line
             body = _glob_to_regex(line.lstrip("/"))
             regex = re.compile(body if anchored else "(?:.*/)?" + body)
-            self.rules.append((negate, dir_only, regex))
+            self.rules.append((negate, dir_only, regex, preserve_source))
         self._dirs = {}
 
-    def _match(self, path, is_dir):
+    def _match(self, path, is_dir, source=None):
         ignored = False
-        for negate, dir_only, regex in self.rules:
+        is_source = None
+        for negate, dir_only, regex, preserve_source in self.rules:
             if (is_dir or not dir_only) and regex.fullmatch(path):
+                if preserve_source and not negate:
+                    if is_dir:
+                        continue
+                    if is_source is None:
+                        is_source = source_like(path) or bool(source() if callable(source) else source)
+                    if is_source:
+                        continue
                 ignored = not negate
         return ignored
 
@@ -168,14 +187,14 @@ class Ignore:
             self._dirs[path] = (bool(parent) and self._dir_ignored(parent)) or self._match(path, True)
         return self._dirs[path]
 
-    def __call__(self, path, is_dir=False):
+    def __call__(self, path, is_dir=False, source=None):
         """True if the path, or any directory above it, is ignored."""
         if not self.rules:
             return False
         if is_dir:
             return self._dir_ignored(path)
         parent = posixpath.dirname(path)
-        return (bool(parent) and self._dir_ignored(parent)) or self._match(path, False)
+        return (bool(parent) and self._dir_ignored(parent)) or self._match(path, False, source)
 
 
 # --- enumeration ----------------------------------------------------------------
@@ -241,7 +260,7 @@ def enumerate_repo(root, ignore=None):
             if mode == b"160000":
                 if not ignore(top, is_dir=True):
                     submodules.append((path, top, sha.decode()))
-            elif not ignore(top):
+            elif not ignore(top, source=lambda: _tracked_source(root, top)):
                 files.append((top, ws, path))
         gitmodules = None
         for path, top, sha in submodules:
@@ -473,12 +492,13 @@ def default_ignore(root):
     text = BASE_IGNORE
     text += "\n# Committed Python virtualenvs (a directory holding pyvenv.cfg)\n"
     text += "".join(f"/{_escape(d)}/\n" for d in venvs)
-    artifact_dirs = set(named + data_dirs)
-    artifacts = [p for p in paths if posixpath.splitext(p)[1].lower() in DATA_EXTS
-                 and any(d in artifact_dirs for d in _ancestors(p))
-                 and not _tracked_source(root, p)]
-    text += "\n# Saved data artifacts in fixture and data-heavy directories\n"
-    text += "".join(f"/{_escape(p)}\n" for p in sorted(artifacts))
+    text += "\n# Saved data artifacts, including files added after init\n"
+    text += ARTIFACT_START + "\n"
+    for directory in sorted(set(named + data_dirs)):
+        for ext in sorted(DATA_EXTS):
+            suffix = "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in ext)
+            text += f"/{_escape(directory)}/**/*{suffix}\n"
+    text += ARTIFACT_END + "\n"
     text += "\n# Files with minified-looking lines\n"
     text += "".join(f"/{_escape(p)}\n" for p in minified)
     return text
@@ -501,7 +521,8 @@ def _tracked_source(root, path):
 def excluded_source_files(root, ignore):
     """Source omitted by the active ignore rules, including ignored submodule trees."""
     _, tracked = enumerate_repo(root)
-    return [path for path, _, _ in tracked if ignore(path) and _tracked_source(root, path)]
+    return [path for path, _, _ in tracked
+            if ignore(path, source=lambda: _tracked_source(root, path)) and _tracked_source(root, path)]
 
 
 def report_excluded_source(root, ignore_text):
@@ -906,7 +927,11 @@ class CommitTree:
                 if not self.ignore(top, is_dir=True):
                     subs.append((path, top, oid))
                 continue
-            if self.ignore(top) or is_private_env(top):
+            if is_private_env(top):
+                continue
+            source = lambda: mode != "120000" and source_like(
+                top, self._batch(git_dir).get_prefix(oid, 4096))
+            if self.ignore(top, source=source):
                 continue
             self.tracked.append((top, ws, path))
             self.blobs[top] = (str(Path(git_dir).resolve()), oid)

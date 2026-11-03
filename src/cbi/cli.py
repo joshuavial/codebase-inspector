@@ -230,7 +230,7 @@ DESCRIPTIONS = {
 Create .cbi/ in the root of the git repo containing the current directory.
 .cbi/ holds a .gitignore of `*`, so no tracked file changes, and `ignore`,
 a gitignore-syntax list of tracked artifacts to leave out of the model
-(minified bundles, identified virtualenvs, and individual saved data files
+(minified bundles, identified virtualenvs, and saved data patterns
 in data-heavy directories). Source in build, eval and fixture directories
 stays mapped. Prints the number of excluded tracked executable files.
 Edit `ignore` freely; rerunning

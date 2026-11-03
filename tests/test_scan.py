@@ -90,7 +90,7 @@ def test_init_writes_self_ignoring_dir_and_ignore_file(app, capsys):
     assert main(["init"]) == 0
     assert (app / ".cbi" / ".gitignore").read_text() == "*\n"
     ignore = (app / ".cbi" / "ignore").read_text()
-    for line in ("/fixtures/sample.json", "*.min.js", "/data/item0.json", "/public/vendor.js"):
+    for line in ("/fixtures/**/*.[jJ][sS][oO][nN]", "*.min.js", "/data/**/*.[jJ][sS][oO][nN]", "/public/vendor.js"):
         assert line in ignore.splitlines()
     (app / ".cbi" / "ignore").write_text(ignore + "logo.png\n")
     assert main(["init"]) == 0
@@ -116,7 +116,7 @@ def test_fixtures_and_test_data_stay_when_they_are_code(make_repo, monkeypatch, 
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     ignore = (root / ".cbi" / "ignore").read_text().splitlines()
-    assert "/fixtures/leases.json" in ignore and "/fixtures/notes.txt" in ignore
+    assert "/fixtures/**/*.[jJ][sS][oO][nN]" in ignore and "/fixtures/**/*.[tT][xX][tT]" in ignore
     assert not any("e2e/test-data" in line or "kept/fixtures" in line or "tied/test-data" in line for line in ignore)
     assert main(["scan"]) == 0
     conn = sqlite3.connect(root / ".cbi" / "model.db")
@@ -306,3 +306,42 @@ def test_excluded_source_audit_includes_ignored_submodules_and_skips_links(app, 
     os.symlink(outside, app / "link.sh")
     git(app, "add", "link.sh")
     assert excluded_source_files(app, Ignore("vendor/lib/\nlink.sh\n")) == ["vendor/lib/lib.py"]
+
+
+def test_generated_artifact_rules_cover_later_data_but_keep_new_source(make_repo, monkeypatch, capsys):
+    root = make_repo({f"data/item{i}.json": "{}\n" for i in range(201)})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    ignore = (root / ".cbi" / "ignore").read_bytes()
+    added = {
+        "data/item201.json": "{}\n",
+        "data/item202.JSON": "{}\n",
+        "data/nested/batch.jsonl": "{}\n",
+        "data/run.py": "print('run')\n",
+        "data/nested/tool.JSON": "#!/usr/bin/env python3\nprint('run')\n",
+        "data/nested/run.sh": "#!/bin/sh\necho run\n",
+        "data/nested/schema.sql": "select 1;\n",
+    }
+    for name, text in added.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    git(root, "add", "data")
+    git(root, "commit", "-m", "grow data directory")
+    assert main(["scan"]) == 0
+    paths = {row[6] for row in nodes(root).values()}
+    artifacts = {"data/item201.json", "data/item202.JSON", "data/nested/batch.jsonl"}
+    assert not artifacts & paths
+    source = set(added) - artifacts
+    assert source <= paths
+    assert (root / ".cbi" / "ignore").read_bytes() == ignore
+    assert main(["scan", "--ref", "HEAD"]) == 0
+    sha = git(root, "rev-parse", "HEAD").strip()
+    conn = sqlite3.connect(root / ".cbi" / "refs" / sha / "model.db")
+    ref_paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind = 'file'")}
+    conn.close()
+    assert source <= ref_paths and not artifacts & ref_paths
+    # Explicit rules outside the generated block retain their normal meaning.
+    (root / ".cbi" / "ignore").write_bytes(ignore + b"data/nested/tool.JSON\n")
+    assert main(["scan"]) == 0
+    assert "data/nested/tool.JSON" not in {row[6] for row in nodes(root).values()}
