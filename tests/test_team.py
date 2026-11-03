@@ -466,3 +466,54 @@ def test_two_branches_merge_answers_without_a_conflict(make_repo, monkeypatch, c
     keys = [(row["kind"], row["key"]) for row in again]
     assert keys == sorted(keys) and len(keys) == len(set(keys))
     assert {row["answer"] for row in again} >= {"About a.py.", "About b.py.", "About c.py.", "About d.py."}
+
+
+def test_submit_seeds_fresh_cache_before_refreshing_parents(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({"stable/core.py": "def core():\n    return 1\n",
+                      "changed/app.py": "def app():\n    return 2\n",
+                      "package.json": '{"name":"demo","bin":"stable/core.py"}'})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+
+    def complete():
+        for _ in range(20):
+            pending = run_json(capsys, "tasks")
+            if not pending:
+                return
+            for task in pending:
+                b = run_json(capsys, "task", task["id"])
+                body = {"input_hash": b["input_hash"]}
+                if b["kind"] == "summarise-files":
+                    body["files"] = [{"path": f["path"], "summary": "Summary of " + f["path"]} for f in b["files"]]
+                elif b["kind"] == "confirm-structure":
+                    body.update(deployables=[], packages=[])
+                elif b["kind"] == "define-concepts":
+                    body.update(summary="Demo.", concepts=[{"id": "core", "name": "Core",
+                        "role": "core", "summary": "Demo logic.",
+                        "files": [f["path"] for f in b["files"]]}], externals=[], relationships=[])
+                else:
+                    body["summary"] = "Summary of " + b["node"]["name"]
+                code, _, err = submit(capsys, tmp_path, task["id"], body)
+                assert code == 0, err
+        raise AssertionError("tasks did not finish")
+
+    complete()
+    assert main(["team", "init"]) == 0
+    (root / "changed/app.py").write_text("def app():\n    return 3\n")
+    assert main(["scan"]) == 0
+    path = root / ".cbi/model.db"
+    with sqlite3.connect(path) as conn:
+        accepted = conn.execute("SELECT id FROM tasks WHERE state = 'done' AND kind IN "
+                                "('summarise-group', 'summarise-deployable')").fetchall()
+    assert accepted
+    task = run_json(capsys, "tasks", "--kind", "summarise-files")[0]
+    b = run_json(capsys, "task", task["id"])
+    body = {"input_hash": b["input_hash"], "files": [
+        {"path": f["path"], "summary": "Updated " + f["path"]} for f in b["files"]]}
+    monkeypatch.setenv("CBI_CACHE_DIR", str(tmp_path / "fresh-cache"))
+    code, _, err = submit(capsys, tmp_path, task["id"], body)
+    assert code == 0, err
+    with sqlite3.connect(path) as conn:
+        for (task_id,) in accepted:
+            assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone() == ("done",)
