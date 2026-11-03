@@ -304,7 +304,8 @@ def _symbol_verb(change):
 
 
 def _moves(ctx, changes):
-    rows = []
+    rows = {}
+    priority = {"file-moved-concept": 0, "file-moved": 1, "symbol-moved": 2}
     for change in changes:
         kind = change["kind"]
         if kind not in {"file-moved-concept", "file-moved", "symbol-moved"}:
@@ -317,12 +318,20 @@ def _moves(ctx, changes):
             target = ctx.head_owner.get(ctx.canon.get(right.get("id", "").split("#", 1)[0], right.get("id", "").split("#", 1)[0]))
         refs = change.get("code") or []
         target_id = (refs[-1].get("id") if refs else None) or right.get("id")
-        rows.append({"id": kind + ":" + str(left.get("id")) + ":" + str(right.get("id")),
-                     "from": source, "to": target, "from_name": _node_name(ctx, source) if source else "Unowned",
-                     "to_name": _node_name(ctx, target) if target else "Unowned",
-                     "path": right.get("path") or left.get("path") or "", "target_id": target_id,
-                     "kind": kind, "verb": "Moved"})
-    return _dedupe(rows)
+        path = right.get("path") or left.get("path") or ""
+        key = (source, target, path or target_id)
+        row = {"id": "move:" + json.dumps(key, separators=(",", ":")),
+               "from": source, "to": target, "from_name": _node_name(ctx, source) if source else "Unowned",
+               "to_name": _node_name(ctx, target) if target else "Unowned",
+               "path": path, "target_id": target_id, "kind": kind, "verb": "Moved"}
+        if key not in rows:
+            rows[key] = {**row, "kinds": {kind}}
+        else:
+            previous = rows[key]
+            previous["kinds"].add(kind)
+            if priority[kind] < priority[previous["kind"]]:
+                previous.update(row)
+    return [{**row, "kinds": sorted(row["kinds"])} for row in rows.values()]
 
 
 def _record(ctx, gid, name, kind, lines_known=True):

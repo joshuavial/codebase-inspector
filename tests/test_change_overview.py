@@ -382,3 +382,38 @@ def test_line_and_measure_count_labels_agree_with_quantity(count):
     item = {"attention": {"provisional": False}, "measures": change_overview._measure(additions=count), "relationships": []}
     change_overview._attention(item, [], {})
     assert item["reasons"] == [f"{count} changed line{suffix}"]
+
+
+def test_relocated_file_and_ownership_and_symbol_share_one_move_evidence(
+        make_repo, monkeypatch, tmp_path, capsys):
+    files = {"src/producer.ts": "export function produce() { return 1; }\n",
+             "src/consumer.ts": "export function consume() { return 2; }\n",
+             "src/archive.ts": "export function archive() { return 41; }\n"}
+    root = make_repo(files, name="relocation-evidence")
+    monkeypatch.chdir(root)
+    before = _concepts([_concept("producer", "Producer", ["src/producer.ts", "src/archive.ts"]),
+                        _concept("delivery", "Delivery", ["src/consumer.ts"])], [], [])
+    after = _concepts([_concept("producer", "Producer", ["src/producer.ts"]),
+                       _concept("delivery", "Delivery", ["src/consumer.ts", "delivery/archive.ts"])], [], [])
+    scan_into(capsys, tmp_path / "base", before)
+    head_files = {path: body for path, body in files.items() if path != "src/archive.ts"}
+    head_files["delivery/archive.ts"] = files["src/archive.ts"]
+    commit_tree(root, head_files)
+    scan_into(capsys, tmp_path / "head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        result = diff.compare(base, head)
+    finally:
+        base.close()
+        head.close()
+    items = {item["id"]: item for item in result["overview"]["items"]}
+    raw_kinds = {change["kind"] for group in result["groups"] for change in group["changes"]}
+    expected = {"file-moved-concept", "file-moved", "symbol-moved"}
+    assert expected <= raw_kinds
+    assert len(items["producer"]["moves"]) == len(items["delivery"]["moves"]) == 1
+    [move] = items["delivery"]["moves"]
+    assert move == items["producer"]["moves"][0]
+    assert set(move["kinds"]) == expected
+    assert move["from"] == "producer" and move["to"] == "delivery"
+    assert move["path"] == "delivery/archive.ts"
+    assert move["target_id"].endswith(":delivery/archive.ts")
