@@ -367,12 +367,18 @@ def _docker_state(ws, path, context, target=None):
     return named.get(target, state) if target else state
 
 
+def _compose_services(ws, path):
+    """Malformed document and service shapes contribute no services to any manifest reader."""
+    data = _yaml(ws.text(path) or "")
+    services = data.get("services") if isinstance(data, dict) else None
+    return services if isinstance(services, dict) else {}
+
+
 def _docker_builds(ws):
     """Known local build contexts, relative to each Compose file."""
     builds = defaultdict(list)
     for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
-        services = (_yaml(ws.text(path) or "") or {}).get("services") or {}
-        for svc in services.values() if isinstance(services, dict) else ():
+        for svc in _compose_services(ws, path).values():
             build = svc.get("build") if isinstance(svc, dict) else None
             build = {"context": build} if isinstance(build, str) else build
             if not isinstance(build, dict):
@@ -584,8 +590,7 @@ def _compose_image_entries(ws, docker):
     """A commandless build gets startup evidence from its Compose services."""
     entries = []
     for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
-        services = (_yaml(ws.text(path) or "") or {}).get("services") or {}
-        for svc in services.values() if isinstance(services, dict) else ():
+        for svc in _compose_services(ws, path).values():
             build = svc.get("build") if isinstance(svc, dict) else None
             build = {"context": build} if isinstance(build, str) else build
             if not isinstance(build, dict):
@@ -703,9 +708,7 @@ def compose(ws):
     paths = sorted((p for p in ws.paths if COMPOSE.search(p)), key=lambda p: (posixpath.dirname(p), len(p), p))
     for path in paths:
         here = posixpath.dirname(path)
-        data = _yaml(ws.text(path) or "")
-        services = data.get("services") if isinstance(data, dict) else None
-        for name, svc in (services if isinstance(services, dict) else {}).items():
+        for name, svc in _compose_services(ws, path).items():
             if not isinstance(svc, dict):
                 continue
             ref = f"compose:{ws.top(here)}:{{}}"

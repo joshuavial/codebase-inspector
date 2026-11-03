@@ -477,3 +477,20 @@ def test_dockerfile_instructions_accept_tab_separators(make_repo, copy):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /serve', 'start.py')]
+
+
+@pytest.mark.parametrize('reader', ['_docker_builds', '_compose_image_entries'])
+def test_image_compose_readers_ignore_non_mapping_document(make_repo, reader):
+    files = {'Dockerfile': 'FROM python\n', 'compose.yaml': '- invalid\n'}
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    read = getattr(manifests, reader)
+    assert not (read(ws, 'Dockerfile') if reader == '_compose_image_entries' else read(ws))
+
+
+def test_non_mapping_compose_document_does_not_abort_scan(make_repo, monkeypatch):
+    root = make_repo({'Dockerfile': 'FROM python\n', 'compose.yaml': '- invalid\n'}, name='acme')
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    assert set(_nodes(_db(root), 'deployable')) == {'deployable:acme-image'}
