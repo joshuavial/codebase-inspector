@@ -663,7 +663,7 @@ def compose(ws):
                 context = _join(here, build.get("context") or ".")
                 docker = _join(context, build.get("dockerfile") or "Dockerfile")
                 entries = (_service_entries(ws, svc, docker, context)
-                           if svc.get("command") is not None or svc.get("entrypoint") is not None else [])
+                           if any(svc.get(key) is not None for key in ("command", "entrypoint", "working_dir")) else [])
                 if not entries:
                     entries = [] if docker in ws.paths else [(docker, None)]
                 found[ref.format(name)] = {**_deployable(name, "service", path, f"compose service {name}", entries),

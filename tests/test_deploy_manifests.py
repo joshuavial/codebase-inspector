@@ -408,3 +408,18 @@ def test_unknown_copy_invalidates_previous_source(make_repo, replacement):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /serve', None)]
+
+
+def test_compose_working_directory_alone_selects_runtime_entry(make_repo, monkeypatch):
+    root = make_repo({
+        'Dockerfile': 'FROM python\nCOPY one /one\nCOPY two /two\nWORKDIR /one\nCMD ["python", "start.py"]\n',
+        'one/start.py': 'print(1)\n',
+        'two/start.py': 'print(2)\n',
+        'compose.yaml': 'services:\n  worker:\n    build: .\n    working_dir: /two\n',
+    }, name='acme')
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    found = _nodes(_db(root), 'deployable')
+    assert found['deployable:acme-image'][1]['entry_points'] == ['one/start.py']
+    assert found['deployable:worker'][1]['entry_points'] == ['two/start.py']
