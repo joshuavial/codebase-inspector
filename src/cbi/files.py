@@ -517,6 +517,14 @@ def _parent_id(ws_id, path):
     return group_id(ws_id, d) if d else ws_id
 
 
+def read_prefix(path, size=4096):
+    """Read only classification bytes from filesystem or Git-backed paths."""
+    if isinstance(path, GitPath):
+        return path.read_prefix(size)
+    with path.open("rb") as stream:
+        return stream.read(size)
+
+
 def build_nodes(workspaces, files, states, root=None):
     """Workspace, group and file nodes for the enumerated files present on disk."""
     nodes = []
@@ -561,7 +569,7 @@ def build_nodes(workspaces, files, states, root=None):
             content = None
             if root is not None and not is_link and posixpath.splitext(rel)[1].lower() not in SOURCE_LANGS:
                 try:
-                    content = (root / top).read_bytes()[:4096]
+                    content = read_prefix(root / top)
                 except OSError:
                     pass
             role, lang = classify(rel, test_roots, content)
@@ -720,6 +728,32 @@ class _Batch:
                 self.cache[oid] = data
         return self.cache[oid]
 
+    def get_prefix(self, oid, limit):
+        """Keep a prefix; drain the batch remainder in bounded, uncached chunks."""
+        if limit < 0:
+            raise ValueError("prefix size must be nonnegative")
+        if oid in self.cache:
+            data = self.cache[oid]
+            return data[:limit] if data is not None else None
+        self.proc.stdin.write(f"{oid}\n".encode())
+        self.proc.stdin.flush()
+        header = self.proc.stdout.readline()
+        if not header:
+            raise OSError(f"git cat-file closed while reading {oid}")
+        parts = header.split()
+        if len(parts) < 3 or parts[1] == b"missing":
+            return None
+        size = int(parts[2])
+        prefix = self.proc.stdout.read(min(limit, size))
+        remaining = size - len(prefix)
+        while remaining:
+            chunk = self.proc.stdout.read(min(65536, remaining))
+            if not chunk:
+                raise OSError(f"git cat-file closed while reading {oid}")
+            remaining -= len(chunk)
+        self.proc.stdout.read(1)
+        return prefix
+
     def close(self):
         if self.proc.poll() is None:
             self.proc.stdin.close()
@@ -745,6 +779,11 @@ class GitPath:
         if self.rel == ".." or self.rel.startswith("../"):
             raise FileNotFoundError(self.rel)
         return self.tree.read(self.rel)
+
+    def read_prefix(self, size=4096):
+        if self.rel == ".." or self.rel.startswith("../"):
+            raise FileNotFoundError(self.rel)
+        return self.tree.read_prefix(self.rel, size)
 
     def read_text(self, encoding="utf-8", errors=None):
         return self.read_bytes().decode(encoding, errors or "strict")
@@ -791,6 +830,15 @@ class CommitTree:
         if not found:
             raise FileNotFoundError(rel)
         data = self._batch(found[0]).get(found[1])
+        if data is None:
+            raise FileNotFoundError(rel)
+        return data
+
+    def read_prefix(self, rel, size=4096):
+        found = self.blobs.get(rel.strip("/"))
+        if not found:
+            raise FileNotFoundError(rel)
+        data = self._batch(found[0]).get_prefix(found[1], size)
         if data is None:
             raise FileNotFoundError(rel)
         return data

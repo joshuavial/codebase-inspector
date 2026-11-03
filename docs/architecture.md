@@ -380,3 +380,10 @@ submitting it. There is no API posting or authentication in cbi.
 - Compose resources and a `config.toml`.
 - Snapshot storage per commit for PRD-02.
 - Serving the viewer, if change review or quizzing needs it.
+
+
+Shebang classification reads a 4 KiB prefix from regular filesystem paths and
+historical Git paths. Git batch reads discard the remaining object stream in
+fixed 64 KiB chunks to keep the protocol synchronized; classification does not
+retain full blobs in the batch cache. Parsers and manifest readers can still
+request complete contents when their analysis requires them.
