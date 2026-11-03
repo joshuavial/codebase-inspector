@@ -274,7 +274,7 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
-  // Entries that call each other (a fundsorter top level). ELK threw "fromIndex: 2 > toIndex: 1"
+  // Entries that call each other at the top level. ELK threw "fromIndex: 2 > toIndex: 1"
   // while both ends of an edge were in its first layer.
   const entryIds = ["admin-ui", "api", "client-ui", "crawler", "platform", "public-ui", "workers"];
   const kids = [...entryIds, "funding-engine", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
@@ -758,7 +758,7 @@ async function main() {
   // Use measured SVG header geometry for compact neighbours and full cards.
   // A shared SVG transform preserves this separation at every zoom level.
   vm.runInContext('DIFF = {};', app);
-  for (const name of ["Platform and tooling", "Funding engine", "Qwen pool"]) {
+  for (const name of ["Shared tooling", "Billing core", "Worker pool"]) {
     const concept = { id: "badge-test", name, role: "core", summary: "", env: [] };
     app.__badgeConcept = concept;
     vm.runInContext('byId["badge-test"] = __badgeConcept; CONCEPT_MARK.set("badge-test", "changed");', app);
