@@ -466,3 +466,14 @@ def test_copy_respects_directories_created_by_earlier_workdir(make_repo, created
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', 'start.py')]
+
+
+@pytest.mark.parametrize('copy', ['COPY\tstart.py /serve', 'COPY\t--chmod=755\tstart.py\t/serve'])
+def test_dockerfile_instructions_accept_tab_separators(make_repo, copy):
+    files = {
+        'Dockerfile': f'FROM\tpython\nWORKDIR\t/app\n{copy}\nCMD\t["python", "/serve"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /serve', 'start.py')]

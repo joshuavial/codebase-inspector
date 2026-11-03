@@ -294,8 +294,10 @@ def _docker_state(ws, path, context, target=None):
     state = {"files": {}, "workdir": "/", "commands": {}, "copies": False, "cmd_inherited": False, "dirs": {"/"}}
     text = re.sub(r"\\\n", " ", (ws.text(path) or "") if path in ws.paths else "")
     for line in text.splitlines():
-        instruction, _, value = line.strip().partition(" ")
-        instruction, value = instruction.upper(), value.strip()
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        instruction, value = parts[0].upper(), parts[1].strip() if len(parts) > 1 else ""
         if instruction == "FROM":
             words = _tokens(value)
             words = [w for w in words if not w.startswith("--")]
@@ -323,7 +325,8 @@ def _docker_state(ws, path, context, target=None):
             state["copies"] = True
             flags = {}
             while value.startswith("--"):
-                flag, _, value = value.partition(" ")
+                parts = value.split(None, 1)
+                flag, value = parts[0], parts[1] if len(parts) > 1 else ""
                 key, _, val = flag[2:].partition("=")
                 flags[key] = val
                 value = value.lstrip()
