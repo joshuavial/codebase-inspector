@@ -271,12 +271,10 @@ def link(m, edges, add):
             bindings = m.test_fixture_bindings.setdefault(test, {})
             layers = [*base, *(info["fixtures"][scope[:depth]] for depth in range(1, len(scope) + 1))]
             registry = defaultdict(list)
-            auto = set()
             for layer in layers:
                 for name, fixture in layer.items():
                     registry[name].append(fixture)
-                    if fixture.autouse:
-                        auto.add(name)
+            auto = {name for name, fixtures in registry.items() if fixtures[-1].autouse}
             pending = [(name, ()) for name in (*requests, *sorted(auto)) if name not in direct]
             visited = set()
             while pending:
