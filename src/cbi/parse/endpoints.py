@@ -5,6 +5,8 @@ or handler that is not a symbol is None, and resolution then uses the file.
 Test files yield empty lists: mock fetches are not client calls.
 """
 
+from urllib.parse import urlsplit
+
 from cbi.http import from_pieces, has_literal, is_api_href, join_path, normalise
 
 VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
@@ -18,7 +20,7 @@ HTTP_ATTRS = {"HttpGet": "GET", "HttpPost": "POST", "HttpPut": "PUT", "HttpPatch
 MAP_VERBS = {"MapGet": "GET", "MapPost": "POST", "MapPut": "PUT", "MapPatch": "PATCH",
              "MapDelete": "DELETE", "MapHead": "HEAD", "MapOptions": "OPTIONS"}
 
-EMPTY = {"http_routes": [], "http_routers": [], "http_mounts": [], "http_calls": []}
+EMPTY = {"http_routes": [], "http_routers": [], "http_mounts": [], "http_calls": [], "http_unresolved_calls": []}
 
 
 def _text(node):
@@ -101,15 +103,22 @@ def _bind(found, defs):
             continue
         seen.add(item)
         facts["http_calls"].append(list(item))
+    facts["http_unresolved_calls"] = [[_at(defs, line), method, line]
+                                      for line, method in sorted(set(found.get("unresolved", [])))]
     return facts
 
 
 def _collect(root, lang):
     """Routers, mounts, routes and client calls. Wrappers are known before calls."""
     state = {"routers": [], "mounts": [], "routes": [], "calls": [], "known": set(), "wrappers": {},
-             "test_clients": set()}
+             "test_clients": set(), "literals": {}, "types": {}, "unresolved": [],
+             "forwarded_unresolved": {}, "used_wrappers": set()}
+    _configured_literals(root, lang, state)
     _walk(root, lang, state, None, True)
     _walk(root, lang, state, None, False)
+    for name, calls in state["forwarded_unresolved"].items():
+        if name not in state["used_wrappers"]:
+            state["unresolved"].extend(calls)
     if state["test_clients"]:
         blocked = set(state["test_clients"])
         changed = True
@@ -158,7 +167,22 @@ def _walk(node, lang, state, func, routes_only):
 def _function(node, lang, state, name, params, declarator, routes_only):
     """Walk a function. The first pass records a wrapper; both passes see its body."""
     library = []
-    inner = {"locals": {}, "params": params, "library": library}
+    literals = dict(state.get("literals", {}))
+    for param in params:
+        literals.pop(param, None)
+    if lang == "typescript":
+        formal = node.child_by_field_name("parameters")
+        for param in formal.named_children if formal is not None else ():
+            pattern = param.child_by_field_name("pattern")
+            annotation = param.child_by_field_name("type")
+            values = _finite_type(annotation, state.get("types", {}))
+            if pattern is not None and values:
+                literals[_text(pattern)] = [[value] for value in values]
+    inner = {"locals": {}, "params": params, "library": library, "literals": literals}
+    wrapper = state["wrappers"].get(name)
+    if wrapper and wrapper["path_index"] < len(params):
+        inner["forwarded_path"] = params[wrapper["path_index"]]
+        inner["forwarded_wrapper"] = name
     for child in node.named_children:
         _walk_body(child, lang, state, inner, node, routes_only)
     if routes_only and name and _wrapper_spec(library, params):
@@ -184,6 +208,10 @@ def _walk_body(node, lang, state, frame, func, routes_only):
         _note_local(frame, _text(name) if name is not None and name.type == "identifier" else None, value, lang)
         if routes_only:
             _assign(node, lang, state, "value")
+    if lang == "typescript" and node.type == "assignment_expression":
+        left = node.child_by_field_name("left")
+        if left is not None and left.type == "identifier":
+            _note_local(frame, _text(left), node.child_by_field_name("right"), lang)
     if lang == "python" and node.type == "assignment":
         left = node.child_by_field_name("left")
         if left is not None and left.type == "identifier":
@@ -615,12 +643,24 @@ def _client_call(node, lang, state, func, frame=None):
     obj, name = _callee(node, lang)
     if name in ("include_router", "use"):
         return
-    frame = frame or {"locals": {}, "params": []}
+    frame = frame or {"locals": {}, "params": [], "literals": state.get("literals", {})}
     args = _args(node, lang)
     if _is_route_call(obj, name, args, lang, state):
         return
     found = _library(obj, name, args, lang, frame)
     if found:
+        forwarded = frame.get("forwarded_path")
+        if forwarded:
+            path_node = _library_path_node(obj, name, args)
+            param = _param_ref(path_node, frame["params"])
+            if not param:
+                param, _ = _wrapper_affixes(path_node, frame["params"], lang, frame.get("literals", {}))
+            if param == forwarded:
+                pending = state["forwarded_unresolved"].setdefault(frame["forwarded_wrapper"], [])
+                pending.extend((_line(node), method) for method in found[0])
+                return
+        if not found[1]:
+            state["unresolved"].extend((_line(node), method) for method in found[0])
         _emit_calls(state, node, found[0], found[1])
         return
     if name and name.lower() in VERBS and obj not in state["known"]:
@@ -628,13 +668,14 @@ def _client_call(node, lang, state, func, frame=None):
         if paths and all(item.startswith("/") for item in paths):
             _emit_calls(state, node, [name.upper()], paths)
             return
+    spec = state["wrappers"].get(name) if name and obj not in CLIENTS else None
+    if spec:
+        state["used_wrappers"].add(name)
+        _wrapper_call(state, node, spec, args, lang, frame)
+        return
     if _is_method_path(args, lang, frame):
         methods, paths = _is_method_path(args, lang, frame)
         _emit_calls(state, node, methods, paths)
-        return
-    spec = state["wrappers"].get(name) if name and obj not in CLIENTS else None
-    if spec:
-        _wrapper_call(state, node, spec, args, lang, frame)
 
 
 def _is_route_call(obj, name, args, lang, state):
@@ -750,6 +791,10 @@ def _wrapper_call(state, node, spec, args, lang, frame):
     if index is None or index >= len(positional):
         return
     paths = _eval_paths(positional[index], lang, frame)
+    paths = [join_path(_without_origin(prefix), path, suffix)
+             for prefix, suffix in spec.get("affixes", [("", "")]) for path in paths]
+    if not paths:
+        state["unresolved"].extend((_line(node), method) for method in methods or ["GET"])
     _emit_calls(state, node, methods or ["GET"], paths)
 
 
@@ -799,7 +844,7 @@ def _note_library(node, lang, frame):
         return
     path_node = _library_path_node(obj, name, args)
     method_node, fixed = _library_method(obj, name, args, lang)
-    frame["library"].append((path_node, method_node, fixed))
+    frame["library"].append((path_node, method_node, fixed, lang, dict(frame.get("literals", {}))))
 
 
 def _library_path_node(obj, name, args):
@@ -839,8 +884,11 @@ def _wrapper_spec(library, params):
     path_name = None
     method_name = None
     fixed = None
-    for path_node, method_node, method_fixed in library:
+    affixes = [("", "")]
+    for path_node, method_node, method_fixed, lang, literals in library:
         name = _param_ref(path_node, params)
+        if not name:
+            name, affixes = _wrapper_affixes(path_node, params, lang, literals)
         if not name:
             return None
         if path_name and path_name != name:
@@ -864,7 +912,32 @@ def _wrapper_spec(library, params):
         "path_index": params.index(path_name),
         "method": fixed,
         "method_index": params.index(method_name) if method_name in params else None,
+        "affixes": affixes,
     }
+
+
+def _wrapper_affixes(node, params, lang, literals):
+    # A URL-building endpoint function is not a forwarding wrapper. Only
+    # configuration references and separators may surround the forwarded path.
+    def has_path_literal(expr):
+        if expr is None:
+            return False
+        if expr.type in ("string_fragment", "string_content"):
+            return bool(_text(expr).strip("/?#"))
+        return any(has_path_literal(child) for child in expr.named_children)
+    if has_path_literal(node):
+        return None, []
+    marker = "__cbi_path_parameter__"
+    for param in params:
+        values = dict(literals)
+        values[param] = [[marker]]
+        parts = _value_pieces(node, lang, {"literals": values})
+        if not parts or any(None in row for row in parts):
+            continue
+        strings = ["".join(row) for row in parts]
+        if all(text.count(marker) == 1 for text in strings):
+            return param, [tuple(text.split(marker)) for text in strings]
+    return None, []
 
 
 def _param_ref(node, params):
@@ -903,6 +976,12 @@ def _param_ref(node, params):
 def _note_local(frame, name, value, lang):
     if not name or value is None:
         return
+    values = _value_pieces(value, lang, frame)
+    literals = frame.setdefault("literals", {})
+    literals.pop(name, None)
+    if values:
+        literals[name] = values
+    frame["locals"].pop(name, None)
     paths = _eval_paths(value, lang, frame)
     if paths:
         frame["locals"][name] = paths
@@ -912,23 +991,114 @@ def _note_local(frame, name, value, lang):
         frame["locals"][name] = verbs
 
 
-def _eval_paths(node, lang, frame):
-    node = _unwrap(node)
+MAX_PATH_ALTERNATIVES = 64
+
+
+def _finite_type(node, aliases):
+    """Only a finite union of string literals is a resource/action constraint."""
     if node is None:
         return []
-    pieces = _pieces(node, lang)
-    if pieces is not None:
-        raw = "".join(part for part in pieces if isinstance(part, str))
-        path = from_pieces(pieces)
-        # A bare word (`dict.get("key")`) is not a URL. The source has to contain a slash.
-        return [path] if path and has_literal(path) and "/" in raw else []
+    if node.type == "string":
+        return [_plain(node, "typescript")]
+    if node.type == "type_identifier":
+        return aliases.get(_text(node), [])
+    if node.type in ("type_annotation", "union_type", "literal_type"):
+        groups = [_finite_type(child, aliases) for child in node.named_children]
+        if groups and all(groups):
+            values = list(dict.fromkeys(value for group in groups for value in group))
+            return values if len(values) <= MAX_PATH_ALTERNATIVES else []
+    return []
+
+
+def _configured_literals(root, lang, state):
+    """Read file-scope literal configuration without executing initializers."""
+    def visit(node):
+        if node.type in PY_FUNCS | TS_FUNCS | {"class_declaration", "class_definition"}:
+            return
+        if node.type == "type_alias_declaration":
+            name = node.child_by_field_name("name")
+            values = _finite_type(node.child_by_field_name("value"), state["types"])
+            if name is not None and values:
+                state["types"][_text(name)] = values
+        if node.type in ("variable_declarator", "assignment"):
+            name = node.child_by_field_name("name" if lang == "typescript" else "left")
+            value = node.child_by_field_name("value" if lang == "typescript" else "right")
+            constant = lang != "typescript" or _text(node.parent).lstrip().startswith("const ")
+            if name is not None and name.type == "identifier" and constant:
+                parts = _value_pieces(value, lang, {"literals": state["literals"]})
+                if parts and all(None not in row for row in parts):
+                    state["literals"][_text(name)] = parts
+        for child in node.named_children:
+            visit(child)
+    visit(root)
+
+
+def _combine(left, right):
+    if len(left) * len(right) > MAX_PATH_ALTERNATIVES:
+        return [[None]]
+    return [a + b for a in left for b in right]
+
+
+def _value_pieces(node, lang, frame):
+    """Bounded literal evaluation; unknown expressions remain template holes."""
+    node = _unwrap(node)
+    if node is None:
+        return [[None]]
     if node.type == "identifier":
-        found = frame["locals"].get(_text(node), [])
-        return [item for item in found if isinstance(item, str) and item.startswith("/")]
+        return frame.get("literals", {}).get(_text(node), [[None]])
     arms = _arms(node)
     if arms:
-        return _eval_paths(arms[0], lang, frame) + _eval_paths(arms[1], lang, frame)
-    return []
+        result = _value_pieces(arms[0], lang, frame) + _value_pieces(arms[1], lang, frame)
+        return result if len(result) <= MAX_PATH_ALTERNATIVES else [[None]]
+    if node.type == "binary_expression" and _text(node.child_by_field_name("operator")) == "+":
+        return _combine(_value_pieces(node.child_by_field_name("left"), lang, frame),
+                        _value_pieces(node.child_by_field_name("right"), lang, frame))
+    if node.type == "template_string" or (lang == "python" and node.type == "string"):
+        result = [[]]
+        for child in node.named_children:
+            if child.type in ("string_fragment", "string_content"):
+                result = _combine(result, [[_text(child)]])
+            elif child.type in ("template_substitution", "interpolation"):
+                expr = child.child_by_field_name("expression") or next(iter(child.named_children), None)
+                result = _combine(result, _value_pieces(expr, lang, frame))
+        return result or [[""]]
+    pieces = _pieces(node, lang)
+    return [pieces] if pieces is not None else [[None]]
+
+
+def _without_origin(text):
+    """A literal URL origin does not consume segments in the server route."""
+    try:
+        absolute = urlsplit(text)
+    except ValueError:
+        return text
+    if absolute.scheme not in ("http", "https") or not absolute.netloc:
+        return text
+    path = absolute.path or "/"
+    if absolute.query:
+        path += "?" + absolute.query
+    if absolute.fragment:
+        path += "#" + absolute.fragment
+    return path
+
+
+def _eval_paths(node, lang, frame):
+    paths = []
+    for pieces in _value_pieces(node, lang, frame):
+        # Coalesce adjacent known fragments so query suffixes and bases retain meaning.
+        merged = []
+        for part in pieces:
+            if isinstance(part, str) and merged and isinstance(merged[-1], str):
+                merged[-1] += part
+            else:
+                merged.append(part)
+        if merged and isinstance(merged[0], str):
+            merged[0] = _without_origin(merged[0])
+        raw = "".join(part for part in merged if isinstance(part, str))
+        path = from_pieces(merged)
+        if path and has_literal(path) and "/" in raw and path not in paths:
+            paths.append(path)
+    return paths
 
 
 def _eval_verbs(node, lang, frame):

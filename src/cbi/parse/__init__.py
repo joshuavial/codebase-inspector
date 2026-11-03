@@ -145,6 +145,7 @@ def symbol_nodes(file_node_id, workspace_id, path, lang, source, is_test):
             if handler and route not in existing:
                 facts["http_routes"].append([handler, method, next_path, None, local])
     facts["http_calls"] = [[at(row[0]), *row[1:]] for row in facts.get("http_calls") or []]
+    facts["http_unresolved_calls"] = [[at(row[0]), *row[1:]] for row in facts.get("http_unresolved_calls") or []]
     facts.setdefault("http_routers", [])
     facts.setdefault("http_mounts", [])
     return nodes, facts, has_error

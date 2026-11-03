@@ -54,7 +54,7 @@ def _empty():
         "imports": [], "exports": {}, "reexports": [], "locals": [],
         "calls": [], "call_locations": [], "reads": [], "envs": [], "paths": [], "uses": [],
         "fields": [], "constructs": [],
-        "http_routes": [], "http_calls": [], "http_routers": [], "http_mounts": [],
+        "http_routes": [], "http_calls": [], "http_unresolved_calls": [], "http_routers": [], "http_mounts": [],
     }
 
 
@@ -102,6 +102,8 @@ def _merge(facts, defs, sub_facts, sub_defs, offset):
     for call in sub_facts.get("http_calls") or []:
         caller, *rest = call
         facts["http_calls"].append([_shift(caller, base), *rest])
+    for caller, method, line in sub_facts.get("http_unresolved_calls") or []:
+        facts["http_unresolved_calls"].append([_shift(caller, base), method, line + offset])
     facts["http_routers"].extend(sub_facts.get("http_routers") or [])
     facts["http_mounts"].extend(sub_facts.get("http_mounts") or [])
 

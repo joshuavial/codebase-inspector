@@ -317,6 +317,7 @@ def link(model):
     mounts = []
     raw_routes = []
     raw_calls = []
+    unresolved_calls = set()
     for fid, facts in model.facts.items():
         if fid not in model.files or _test_helper(model.files[fid]):
             continue
@@ -336,6 +337,10 @@ def link(model):
             if hid is None and handler_name:
                 hid = _lookup(model, fid, handler_name)
             raw_routes.append((fid, hid or fid, str(method).upper(), path, router_name))
+        for caller, method, line in facts.get("http_unresolved_calls") or []:
+            cid = caller if caller in model.nodes else fid
+            detail = f"{method} <dynamic URL> at {model.files[fid][1]}:{line}: no static path [resolution=dynamic_client]"
+            unresolved_calls.add((cid, "unmatched_http_call", detail))
         for row in facts.get("http_calls") or []:
             caller, method, path = _pad(row, 3)[:3]
             if not method or not path:
@@ -386,7 +391,7 @@ def link(model):
 
     matched = set()
     edges = []
-    diagnostics = []
+    diagnostics = sorted(unresolved_calls)
     for (caller, method, path), weight in sorted(grouped.items()):
         best = None
         best_rank = None
