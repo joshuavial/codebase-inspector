@@ -426,6 +426,44 @@ def _docker_builds(ws):
     return builds
 
 
+def _shell_invocation(tokens):
+    """Separate shell options from a script path or the command argument selected by -c."""
+    args, command, stdin = tokens[1:], False, False
+    while args:
+        option = args[0]
+        if option == "--":
+            args = args[1:]
+            break
+        if option == "-":
+            return None  # read standard input, not a script named by the next argument
+        if not option.startswith(("-", "+")):
+            break
+        args = args[1:]
+        if option in ("--noprofile", "--norc", "--posix", "--login"):
+            continue
+        if option in ("--rcfile", "--init-file"):
+            if not args:
+                return None
+            args = args[1:]
+            continue
+        flags = option[1:]
+        if not flags or any(flag not in "abCefhiklmnoprstuvxBDEHOPTc" for flag in flags):
+            return None
+        if "c" in flags:
+            if option.startswith("+"):
+                return None
+            command = True
+        if "s" in flags and option.startswith("-"):
+            stdin = True
+        if "o" in flags or "O" in flags:
+            if flags[-1] not in "oO" or not args:
+                return None
+            args = args[1:]
+    if not args or stdin and not command:
+        return None
+    return ("command", args[:1]) if command else ("file", args)
+
+
 def _runtime_argv(command):
     """Keep argv boundaries and unwrap only literal exec, shell -c and project runners."""
     tokens = _tokens(command)
@@ -433,10 +471,16 @@ def _runtime_argv(command):
         if not tokens:
             return []
         executable = posixpath.basename(tokens[0])
-        if executable in ("sh", "bash", "ash") and len(tokens) > 1 and tokens[1].startswith("-"):
-            if len(tokens) != 3 or tokens[1] != "-c":
+        if executable in ("sh", "bash", "ash"):
+            invocation = _shell_invocation(tokens)
+            if invocation is None:
                 return []
-            tokens = _tokens(tokens[2])
+            mode, args = invocation
+            if mode == "command":
+                tokens = _tokens(args[0])
+            else:
+                tokens = [tokens[0], *args]
+                return [] if any(re.search(r"[;&|`\n]", token) for token in tokens) else tokens
         elif tokens[0] == "exec":
             tokens = tokens[1:]
         elif executable in ("uv", "poetry") and tokens[1:2] == ["run"]:
@@ -455,7 +499,7 @@ def _script_argument(tokens):
     args = tokens[1:]
     if posixpath.basename(tokens[0]) == "bun" and args[:1] == ["run"]:
         args = args[1:]
-    while args and args[0].startswith("-"):
+    while args and args[0].startswith("-") and posixpath.basename(tokens[0]) not in ("sh", "bash", "ash"):
         if args[0] in ("-m", "-c", "-e", "--eval", "-p", "--print"):
             return None
         args = args[1:]
@@ -509,10 +553,7 @@ def _project_scripts(ws):
 
 def _idle_command(tokens):
     """Known intentional keepalive commands, with literal shell/exec wrappers only."""
-    if len(tokens) == 3 and posixpath.basename(tokens[0]) in ("sh", "bash", "ash") and tokens[1] == "-c":
-        tokens = _tokens(tokens[2])
-    if tokens[:1] == ["exec"]:
-        tokens = tokens[1:]
+    tokens = _runtime_argv(tokens)
     if not tokens:
         return False
     command = [posixpath.basename(tokens[0]), *tokens[1:]]

@@ -432,7 +432,7 @@ def test_compose_working_directory_alone_selects_runtime_entry(make_repo, monkey
     '["uvicorn", "api${SUFFIX}:app"]',
     'python -m api${SUFFIX}',
     '["sh", "-c", "echo uvicorn api:app"]',
-    '["sh", "-x", "-c", "python -m api"]',
+    '["sh", "--unknown", "-c", "python -m api"]',
 ])
 def test_non_executable_or_dynamic_modules_stay_unresolved(make_repo, command):
     files = {
@@ -536,3 +536,22 @@ def test_copy_glob_matching_directory_invalidates_merged_children(make_repo):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', None)]
+
+
+@pytest.mark.parametrize('command,entry', [
+    ('["sh", "-e", "/boot.sh"]', 'boot.sh'),
+    ('["sh", "-eu", "/boot.sh"]', 'boot.sh'),
+    ('["sh", "-ec", "python -m api"]', 'api.py'),
+    ('["sh", "-x", "-c", "python -m api"]', 'api.py'),
+    ('["bash", "-o", "pipefail", "-ec", "python -m api"]', 'api.py'),
+    ('["sh", "--", "/boot.sh"]', 'boot.sh'),
+])
+def test_shell_options_keep_script_and_command_entries(make_repo, command, entry):
+    files = {
+        'Dockerfile': f'FROM python\nWORKDIR /app\nCOPY api.py .\nCOPY boot.sh /boot.sh\nCMD {command}\n',
+        'api.py': 'def app():\n    pass\n',
+        'boot.sh': '#!/bin/sh\necho ready\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == entry
