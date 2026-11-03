@@ -318,8 +318,12 @@ def test_diagnostics(repo):
     conn = sqlite3.connect(repo / ".cbi" / "model.db")
     rows = conn.execute("SELECT kind, node_id, detail FROM diagnostics ORDER BY kind").fetchall()
     assert [(k, short(n), d) for k, n, d in rows] == [
-        ("ambiguous_call", "app/src/app/main.py", "1 calls with more than one candidate"),  # core.util.pick
-        ("ambiguous_call", "core/src/core/util.py", "1 calls with more than one candidate"),
+        ("ambiguous_call", "app/src/app/main.py",
+         "app/src/app/main.py:10:5: call core.util.pick has more than one candidate: "
+         "local:repo:core/src/core/util.py#pick~cf9996ea, local:repo:core/src/core/util.py#pick~fca63395"),
+        ("ambiguous_call", "core/src/core/util.py",
+         "core/src/core/util.py:5:12: call pick has more than one candidate: "
+         "local:repo:core/src/core/util.py#pick~cf9996ea, local:repo:core/src/core/util.py#pick~fca63395"),
         ("unmatched_test", "core/tests/test_orphan.py",
          "no call, import, file read or file name reaches tracked code; imports only json"),
     ]

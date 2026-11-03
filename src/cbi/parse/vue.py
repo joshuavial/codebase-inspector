@@ -52,7 +52,7 @@ def _shift(index, base):
 def _empty():
     return {
         "imports": [], "exports": {}, "reexports": [], "locals": [],
-        "calls": [], "reads": [], "envs": [], "paths": [], "uses": [],
+        "calls": [], "call_locations": [], "reads": [], "envs": [], "paths": [], "uses": [],
         "fields": [], "constructs": [],
         "http_routes": [], "http_calls": [], "http_routers": [], "http_mounts": [],
     }
@@ -73,6 +73,8 @@ def _merge(facts, defs, sub_facts, sub_defs, offset):
     for call in sub_facts.get("calls") or []:
         src, cls, *rest = call
         facts["calls"].append([_shift(src, base), _shift(cls, base), *rest])
+    facts["call_locations"].extend([[line + offset, column]
+                                    for line, column in sub_facts.get("call_locations") or []])
     for read in sub_facts.get("reads") or []:
         src, *rest = read
         facts["reads"].append([_shift(src, base), *rest])
@@ -159,6 +161,7 @@ def _renders(tree, facts, component):
             local = bindings.get(tag) if tag else None
             if local:
                 facts["calls"].append([component, None, "name", local, None, "jsx"])
+                facts["call_locations"].append([node.start_point.row + 1, node.start_point.column + 1])
         for child in node.named_children:
             walk(child)
 

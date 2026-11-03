@@ -1119,7 +1119,7 @@ def resolve(conn, root):
             edge[2] = attrs
         edge[1] += 1
 
-    ambiguous, test_imports, external, unread = Counter(), defaultdict(set), defaultdict(list), defaultdict(list)
+    ambiguous, test_imports, external, unread = [], defaultdict(set), defaultdict(list), defaultdict(list)
     unresolved = Counter()
     for fid, facts in m.facts.items():
         counted = {}
@@ -1150,14 +1150,20 @@ def resolve(conn, root):
             _csharp_imports(m, fid, facts, add, external, test_imports)
 
         is_test = m.files[fid][2] == "test"
-        for call in facts["calls"]:
+        for call_index, call in enumerate(facts["calls"]):
             src, cls, shape, name, member, *extra = call
             via = extra[0] if extra else None
             candidates, confidence = m.bind(fid, cls, shape, name, member)
             if via == "reference":
                 candidates = [candidate for candidate in candidates if m.nodes[candidate][2] in REFERENCE_KINDS]
             if len(candidates) > 1:
-                ambiguous[fid] += 1
+                locations = facts.get("call_locations") or []
+                location = locations[call_index] if call_index < len(locations) else None
+                path = m.files[fid][1]
+                where = f"{path}:{location[0]}:{location[1]}" if location else f"{path} (location unavailable; rescan)"
+                receiver = f"{name}.{member}" if shape == "member" else f"this.{name}" if shape == "this" else name
+                detail = f"{where}: call {receiver} has more than one candidate: {', '.join(sorted(set(candidates)))}"
+                ambiguous.append((fid, "ambiguous_call", detail))
             elif candidates:
                 src = src or fid
                 attrs = {"via": via} if via in ("jsx", "reference") else None
@@ -1244,7 +1250,7 @@ def resolve(conn, root):
     )
     conn.executemany(
         "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, ?, ?)",
-        [(fid, "ambiguous_call", f"{n} calls with more than one candidate") for fid, n in sorted(ambiguous.items())]
+        sorted(ambiguous)
         + unmatched
         + [(fid, "unresolved_injection", f"{n} injected calls with no candidate") for fid, n in sorted(unresolved.items())]
         + http_diags,

@@ -132,7 +132,7 @@
 ["edge", "tests", "treesitter", "local:repo:App.Tests/WidgetTests.cs#App.Tests.WidgetTests.Run_writes", "local:repo:App/SystemClock.cs#App.SystemClock", 1.0, 1]
 ["edge", "tests", "treesitter", "local:repo:App.Tests/WidgetTests.cs#App.Tests.WidgetTests.Run_writes", "local:repo:App/Widget.More.cs#App.Services.Widget", 1.0, 1]
 ["edge", "tests", "treesitter", "local:repo:App.Tests/WidgetTests.cs#App.Tests.WidgetTests.Run_writes", "local:repo:App/Widget.cs#App.Services.Widget.Run", 1.0, 1]
-["diagnostic", "ambiguous_call", "local:repo:App/Widget.cs", "1 calls with more than one candidate"]
+["diagnostic", "ambiguous_call", "local:repo:App/Widget.cs", "App/Widget.cs:20:9: call this.Pick has more than one candidate: local:repo:App/Widget.cs#App.Services.Widget.Pick~130ed005, local:repo:App/Widget.cs#App.Services.Widget.Pick~d475da46"]
 ["diagnostic", "parse_error", "local:repo:Bad.cs", "tree-sitter reported syntax errors"]
 ["diagnostic", "unmatched_test", "local:repo:App.Tests/Helper.cs", "no call, import, file read or file name reaches tracked code; imports nothing"]
 ["diagnostic", "unmatched_test", "local:repo:App/Sneaky.cs", "no call, import, file read or file name reaches tracked code; imports nothing"]

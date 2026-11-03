@@ -90,6 +90,6 @@
 ["edge", "tests", "treesitter", "local:repo:core/tests/test_geometry.py#test_helper", "local:repo:core/tests/data/circle.json", 1.0, 1]
 ["edge", "tests", "treesitter", "local:repo:core/tests/test_scripts.py", "local:repo:core/scripts/tool.py", 1.0, 1]
 ["edge", "tests", "treesitter", "local:repo:core/tests/test_scripts.py#test_run_script", "local:repo:core/scripts/run.sh", 1.0, 1]
-["diagnostic", "ambiguous_call", "local:repo:app/src/app/main.py", "1 calls with more than one candidate"]
-["diagnostic", "ambiguous_call", "local:repo:core/src/core/util.py", "1 calls with more than one candidate"]
+["diagnostic", "ambiguous_call", "local:repo:app/src/app/main.py", "app/src/app/main.py:10:5: call core.util.pick has more than one candidate: local:repo:core/src/core/util.py#pick~cf9996ea, local:repo:core/src/core/util.py#pick~fca63395"]
+["diagnostic", "ambiguous_call", "local:repo:core/src/core/util.py", "core/src/core/util.py:5:12: call pick has more than one candidate: local:repo:core/src/core/util.py#pick~cf9996ea, local:repo:core/src/core/util.py#pick~fca63395"]
 ["diagnostic", "unmatched_test", "local:repo:core/tests/test_orphan.py", "no call, import, file read or file name reaches tracked code; imports only json"]

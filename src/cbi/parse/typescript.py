@@ -522,9 +522,11 @@ class _Collector:
         """
         bindings = self.locals | {local for imp in self.imports for local in imp["names"]}
         calls, reads, envs, paths, visits = [], [], [], [], []
+        self.call_locations = []
         stack = [(root, None, None, None)]
         while stack:
             n, d, c, scope = stack.pop()
+            before = len(calls)
             index = self.anchors.get((n.start_byte, n.end_byte, n.type))
             if index is not None:
                 d = index
@@ -592,6 +594,8 @@ class _Collector:
                     source, name = found
                     if source == "meta" or not _process_hidden(self, scope):
                         envs.append([d, name, _string_default(n)])
+            self.call_locations.extend([n.start_point.row + 1, n.start_point.column + 1]
+                                       for _ in range(len(calls) - before))
             for child in reversed(n.named_children):
                 stack.append((child, d, c, scope))
         return calls, reads, envs, paths, visits
@@ -1485,12 +1489,15 @@ def parse(source, lang, is_test):
     collector.routes(tree.root_node)
     calls, reads, envs, paths, visits = collector.sites(tree.root_node)
     calls.extend(collector.route_calls)
+    collector.call_locations.extend([[collector.defs[call[0]]["start_line"], 1]
+                                     for call in collector.route_calls])
     facts = {
         "imports": [i for i in collector.imports if i["spec"] is not None],
         "exports": collector.exports,
         "reexports": [r for r in collector.reexports if r["spec"] is not None],
         "locals": sorted(collector.locals),
         "calls": calls,
+        "call_locations": collector.call_locations,
         "reads": reads,
         "envs": envs,
         "paths": paths,
