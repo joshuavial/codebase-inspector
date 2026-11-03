@@ -256,7 +256,7 @@ def cmd_init(root, out):
     ignore = out / "ignore"
     ignore_existed = ignore.exists()
     if not ignore_existed:
-        ignore.write_text(files.default_ignore(root))
+        ignore.write_text(files.default_ignore(root), encoding="utf-8")
     attr_note, created_attr = _attributes(root, out)
     ignore_changed = _scan_ignore(ignore, created_attr)
     if not ignore_existed:
@@ -269,9 +269,9 @@ def cmd_init(root, out):
     if toml_path.exists():
         lines.append(f"Kept {_show(root, toml_path)}")
     else:
-        toml_path.write_text(TEMPLATE)
+        toml_path.write_text(TEMPLATE, encoding="utf-8")
         lines.append(f"Wrote {_show(root, toml_path)}")
-    (out / ".gitignore").write_text(DERIVED_GITIGNORE)
+    (out / ".gitignore").write_text(DERIVED_GITIGNORE, encoding="utf-8")
     lines.append(f"Wrote {_show(root, out / '.gitignore')}")
     rows, problem = _model_rows(out / "model.db")
     path, count, changed = _store(out, rows)
@@ -325,7 +325,7 @@ def ensure_judgement_visible(root, out):
         index = ignored["line"] - 1
         if 0 <= index < len(lines) and lines[index].rstrip("\r\n") in (".cbi", ".cbi/"):
             del lines[index]
-            source.write_text("".join(lines))
+            source.write_text("".join(lines), encoding="utf-8")
             removed = {**ignored, "source": source}
             ignored = judgement_ignore(root)
     return removed, ignored
@@ -586,7 +586,7 @@ def _atomic(path, text):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
     return True
 
@@ -611,7 +611,7 @@ def _attributes(root, out):
             kept.append(line)
     if not replaced:
         kept.append(ATTR_LINE.rstrip("\n"))
-    path.write_text("\n".join(kept) + "\n")
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
     return ("Wrote .gitattributes", not existed)
 
 
@@ -647,7 +647,7 @@ def _scan_ignore(path, created_attr):
         text += "\n"
     text += "# Team mode. The committed judgement is not part of the map.\n"
     text += "".join(f"{line}\n" for line in extra)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     return True
 
 

@@ -868,7 +868,7 @@ def refresh(conn, out=None, root=None):
     absent = out is not None and not (out / "screens.json").exists()
     if cached and data is None and absent and not problems(conn, cached, root):
         written = json.dumps(cached, indent=2) + "\n"
-        (out / "screens.json").write_text(written)
+        (out / "screens.json").write_text(written, encoding="utf-8")
         apply(conn, written, root)
         data = cached
     state = "done" if data is not None and not problems(conn, data, root) else "open"
@@ -898,7 +898,7 @@ def accept(conn, task, answer, out, root=None):
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
-        (out / "screens.json").write_text(text)
+        (out / "screens.json").write_text(text, encoding="utf-8")
         old, new = apply(conn, text, root)
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
                      (task["input_hash"], json.dumps(body)))

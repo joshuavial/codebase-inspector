@@ -426,3 +426,7 @@ produce a CLI error asking the user to save the input as UTF-8 and retry.
 Source and documentation excerpts retain their existing replacement policy:
 undecodable bytes become U+FFFD so a brief or static analysis can continue.
 Both working-tree and historical Git readers use these same encodings.
+All generated text, including atomic answer exports, restored judgement files,
+viewer JavaScript, history and review Markdown, is written explicitly as UTF-8.
+This keeps reads and writes compatible on hosts whose default is cp1252.
+Binary outputs and exact snapshot copies preserve their original bytes.

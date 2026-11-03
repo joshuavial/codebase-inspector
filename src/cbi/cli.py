@@ -453,14 +453,14 @@ def cmd_init(args):
     # Team mode rewrote this file. Putting `*` back would hide the committed judgement.
     if (out / "team.toml").is_file():
         if not (out / ".gitignore").exists():
-            (out / ".gitignore").write_text(team.DERIVED_GITIGNORE)
+            (out / ".gitignore").write_text(team.DERIVED_GITIGNORE, encoding="utf-8")
     else:
-        (out / ".gitignore").write_text("*\n")
+        (out / ".gitignore").write_text("*\n", encoding="utf-8")
     ignore = out / "ignore"
     if ignore.exists():
         print(f"{out} already initialised; kept {ignore}")
     else:
-        ignore.write_text(files.default_ignore(root))
+        ignore.write_text(files.default_ignore(root), encoding="utf-8")
         print(f"Created {out} and wrote {ignore}. Edit it to skip more paths, then run `cbi scan`.")
     files.report_excluded_source(root, ignore.read_text(encoding="utf-8"))
     return 0

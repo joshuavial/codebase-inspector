@@ -246,7 +246,7 @@ def _concept_token(text):
 
 def _write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _narrative(conn, entry):
@@ -270,7 +270,7 @@ def _project_model(root, out, sha, current_text, current_conn):
     concept_path = home / "concepts.json"
     changed = not concept_path.exists() or concept_path.read_text(encoding="utf-8") != text
     if changed:
-        concept_path.write_text(text)
+        concept_path.write_text(text, encoding="utf-8")
         resolved, _again, _counts, _open = scan_ref(root, out, sha, force=True)
         reused = False
     return resolved, reused, provisional
@@ -449,7 +449,7 @@ def render(entries, fmt="text"):
 
 def write_changelog(out, entries):
     path = Path(out) / "CHANGELOG-ARCHITECTURE.md"
-    path.write_text(render(entries, "markdown"))
+    path.write_text(render(entries, "markdown"), encoding="utf-8")
     return path
 
 

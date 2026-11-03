@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cbi import ingest, manifests, store, tasks
+from cbi import ingest, manifests, store, tasks, team
 from cbi.cli import main
 
 
@@ -24,12 +24,12 @@ def windows_default(make_repo, monkeypatch):
     real_path_open, real_open = Path.open, builtins.open
 
     def path_open(path, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
-        if "r" in mode and "b" not in mode and encoding in (None, "locale") and path.is_relative_to(root):
+        if "b" not in mode and encoding in (None, "locale") and path.is_relative_to(root):
             encoding = "cp1252"
         return real_path_open(path, mode, buffering, encoding, errors, newline)
 
     def file_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, **kwargs):
-        if isinstance(file, (str, Path)) and "r" in mode and "b" not in mode and encoding in (None, "locale") and Path(file).is_relative_to(root):
+        if isinstance(file, (str, Path)) and "b" not in mode and encoding in (None, "locale") and Path(file).is_relative_to(root):
             encoding = "cp1252"
         return real_open(file, mode, buffering, encoding, errors, newline, **kwargs)
 
@@ -72,3 +72,25 @@ def test_invalid_utf8_artifact_has_actionable_error(windows_default, capsys):
     (root / ".cbi" / "ignore").write_bytes(b"# invalid \xff\n")
     assert main(["scan"]) == 1
     assert "Save the file with UTF-8 encoding" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("summary", ["A café service.", "A Māori service."])
+def test_team_answers_round_trip_with_windows_text_defaults(windows_default, summary):
+    out = windows_default / ".cbi"
+    out.mkdir()
+    key = ("summarise-workspace", "reviewed-input")
+    row = team._canon(*key, tasks.PROTOCOL_VERSION, {"summary": summary})
+    path, count, changed = team._store(out, {key: row})
+    assert count == 1 and changed
+    assert summary.encode("utf-8") in path.read_bytes()
+    assert team._parse(path.read_text(encoding="utf-8"))[key] == row
+    assert team._store(out, {key: row}) == (path, 1, False)
+    (out / "team.toml").write_text(team.TEMPLATE, encoding="utf-8")
+    conn = store.open_db(out / "model.db")
+    try:
+        tasks.attach_cache(conn)
+        assert team.import_answers(conn, out) == 1
+        [answer] = conn.execute("SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (key[1],)).fetchone()
+        assert json.loads(answer) == {"summary": summary}
+    finally:
+        conn.close()

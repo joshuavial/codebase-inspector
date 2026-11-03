@@ -216,7 +216,7 @@ def _fill_missing_concepts(root, out, shas, scan_ref):
     for sha, home, text in zip(shas, homes, texts):
         if text is not None:
             continue
-        (home / "concepts.json").write_text(fallback)
+        (home / "concepts.json").write_text(fallback, encoding="utf-8")
         scan_ref(root, out, sha)
 
 
