@@ -736,6 +736,12 @@ def status(conn, args):
         if kind == "cycle":
             from cbi.graph import cycle_summary
             diagnostics[kind].update(count_unit="memberships", levels=cycle_summary(conn))
+        if kind == "unmatched_http_call":
+            boundaries = {}
+            for (detail,) in conn.execute("SELECT detail FROM diagnostics WHERE kind = ?", (kind,)):
+                boundary = detail.rsplit("[resolution=", 1)[-1].rstrip("]") if "[resolution=" in detail else "static_unresolved"
+                boundaries[boundary] = boundaries.get(boundary, 0) + 1
+            diagnostics[kind]["resolution_boundaries"] = dict(sorted(boundaries.items()))
     result = {
         "scanned_at": store.get_meta(conn, "scanned_at"),
         "nodes": store.counts_by_display_kind(conn),
@@ -761,6 +767,8 @@ def status(conn, args):
             from cbi.graph import CYCLE_LABELS
             for level, counts in d["levels"].items():
                 print(f"    {CYCLE_LABELS[level]}: {counts['scc_count']} ({counts['membership_count']} memberships)")
+        for boundary, count in d.get("resolution_boundaries", {}).items():
+            print(f"    {boundary}: {count}")
         for e in d["examples"]:
             print(f"    {e['path'] or e['node_id']}" + (f": {e['detail'].splitlines()[0]}" if e["detail"] else ""))
     return 0

@@ -313,10 +313,10 @@ def test_scan_links_clients_to_routes(make_repo, monkeypatch, capsys):
 
     details = [row[0] for row in conn.execute(
         "SELECT detail FROM diagnostics WHERE kind = 'unmatched_http_call' ORDER BY detail")]
-    assert "GET /no/such: no route" in details
-    assert "GET /v1/admin/items/{item_id}: no client call" in details
-    assert "POST /v1/admin/items: no client call" in details
-    assert "POST /api/leases/{id}/reviews: no client call" in details
+    assert any(d.startswith("GET /no/such: no route") for d in details)
+    assert any(d.startswith("GET /v1/admin/items/{item_id}: no statically resolved consumer;") for d in details)
+    assert any(d.startswith("POST /v1/admin/items: no statically resolved consumer;") for d in details)
+    assert any(d.startswith("POST /api/leases/{id}/reviews: no statically resolved consumer;") for d in details)
     assert not any("should-not-match" in detail for detail in details)
 
     assert main(["show", "listMine"]) == 0
