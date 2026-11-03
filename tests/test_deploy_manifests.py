@@ -332,3 +332,37 @@ def test_compose_override_replaces_default_command(make_repo):
 
     entries = manifests._service_entries(ws, {'command': None}, 'Dockerfile', '')
     assert {path for _, path in entries} == {'old.py'}
+
+
+@pytest.mark.parametrize('script,extra', [
+    ('vite --host 0.0.0.0', {'site/vite.config.ts': 'export default {}'}),
+    ('vite --host 0.0.0.0', {}),
+    ('npm run web', {'site/vite.config.ts': 'export default {}'}),
+    ('node src/main.ts', {}),
+])
+def test_image_npm_scripts(make_repo, monkeypatch, script, extra):
+    root = make_repo({
+        'site/package.json': json.dumps({'scripts': {'dev': script, 'web': 'vite'}}),
+        'site/index.html': '<script type="module" src="/src/main.ts"></script>',
+        'site/src/main.ts': 'console.log(1);',
+        'site/Dockerfile': 'FROM node\nWORKDIR /app\nCOPY . .\nCMD ["npm", "run", "dev"]\n',
+        **extra,
+    }, name='acme')
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    conn = _db(root)
+    assert _nodes(conn, 'deployable')['deployable:site-image'][1]['entry_points'] == ['site/src/main.ts']
+    assert not conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unresolved_entry'").fetchall()
+
+
+def test_image_npm_script_cycle_stays_unresolved(make_repo):
+    files = {
+        'Dockerfile': 'FROM node\nWORKDIR /app\nCOPY . .\nCMD ["npm", "run", "dev"]\n',
+        'package.json': '{"scripts":{"dev":"npm run other","other":"npm run dev"}}',
+        'sibling/package.json': '{"scripts":{"dev":"node main.js"}}',
+        'sibling/main.js': 'console.log(1);',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('npm run dev', None)]

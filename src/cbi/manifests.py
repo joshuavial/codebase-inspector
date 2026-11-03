@@ -389,7 +389,7 @@ def _project_scripts(ws):
 
 def dockerfile(ws):
     """Container image entries resolved through literal stage-local COPY/ADD paths and argv."""
-    deployables, scripts, builds = [], _project_scripts(ws), _docker_builds(ws)
+    deployables, builds = [], _docker_builds(ws)
     for path in sorted(p for p in ws.paths if DOCKERFILE.search(p) and not p.endswith((".tmpl", ".dockerignore"))):
         here, base = posixpath.dirname(path), posixpath.basename(path)
         name = posixpath.basename(here) or ws.name
@@ -400,8 +400,8 @@ def dockerfile(ws):
             state = _docker_state(ws, path, context, target)
             tokens = state["commands"].get("ENTRYPOINT", []) + state["commands"].get("CMD", [])
             raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
-            resolved = _compose_image_entries(ws, path) if not tokens else []
-            entries += resolved or [(raw, _docker_entry(ws, context, tokens, scripts, state))]
+            resolved = _command_entries(ws, context, tokens, state) if tokens else _compose_image_entries(ws, path)
+            entries += resolved or [(raw, None)]
         deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
                             "ref": f"file:{ws.top(path)}"})
     return deployables, []
@@ -411,6 +411,39 @@ COMPOSE = re.compile(r"(^|/)(docker-compose[^/]*|compose[^/]*)\.ya?ml$")
 # A compose `command` that names a Python module: `python -m pkg.mod` or `uvicorn pkg.mod:app`.
 _PY_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
 _ASGI_APP = re.compile(r"\b(?:uvicorn|gunicorn|hypercorn)\s+([A-Za-z_][\w.]*)")
+
+
+def _npm_entries(ws, here, tokens, state, seen):
+    """Follow package scripts at the runtime package, with a cycle guard and tracked web roots."""
+    if not tokens or posixpath.basename(tokens[0]) != "npm":
+        return []
+    package = state["files"].get(_image_path(state["workdir"], "package.json")) if state else None
+    package = package or _join(here, "package.json")
+    data = ws.json(package) if package in ws.paths else None
+    if not isinstance(data, dict):
+        return []
+    script = tokens[2] if len(tokens) > 2 and tokens[1] in ("run", "run-script") else tokens[1] if len(tokens) > 1 else ""
+    key = (package, script)
+    command = (data.get("scripts") or {}).get(script)
+    if key in seen or not isinstance(command, str):
+        return []
+    here = posixpath.dirname(package)
+    found = _command_entries(ws, here, command, state, (*seen, key))
+    for raw in SCRIPT_ENTRY.findall(command):
+        path = ws.to_source(_join(here, raw))
+        if path:
+            found.append((raw, path))
+    if re.search(r"(?:^|[;&|]\s*)vite(?:\s|$)", command):
+        configs = [d for d in vite(ws)[0] if posixpath.dirname(d["manifest"]) == here]
+        if configs:
+            found += [entry for d in configs for entry in d["entries"] if entry[1]]
+        else:
+            html = _join(here, "index.html")
+            if html in ws.paths:
+                parser = _ModuleScripts()
+                parser.feed(ws.text(html) or "")
+                found += [(src, ws.to_source(_join(here, src.lstrip("/")))) for src in parser.srcs]
+    return [(raw, path) for raw, path in found if path]
 
 
 def _command_entries(ws, here, command, state=None, seen=()):
@@ -430,6 +463,9 @@ def _command_entries(ws, here, command, state=None, seen=()):
     # sh -c keeps its command as one exec argument; split that argument for path resolution.
     if len(tokens) > 2 and posixpath.basename(tokens[0]) in ("sh", "bash", "ash") and tokens[1] == "-c":
         tokens = _tokens(tokens[2])
+    if tokens[:1] == ["exec"]:
+        tokens = tokens[1:]
+    found += _npm_entries(ws, here, tokens, state, seen)
     entry = _docker_entry(ws, here, tokens, _project_scripts(ws), state)
     if entry:
         found.append((text, entry))
