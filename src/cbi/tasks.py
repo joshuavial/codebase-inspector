@@ -1408,11 +1408,19 @@ def submit(conn, task_id, text, root=None, out=None):
     directory; accepting confirm-structure writes structure.json there and reruns detection.
     A busy database rolls the transaction back and retries it.
     """
-    # A worker may use a fresh alternate cache against an existing model.
-    # Seed every accepted team answer before any submit can refresh parent tasks
-    # or export the cache back into answers.jsonl.
     from cbi import team
-    store.retry_write(conn, lambda: team.import_answers(conn, out))
+
+    def write():
+        # Keep this branch's imported answers protected until refresh and export
+        # finish. Nested task writers join this transaction rather than ending it.
+        team.import_answers(conn, out)
+        return _submit(conn, task_id, text, root, out)
+
+    return store.retry_write(conn, write, immediate=True)
+
+
+def _submit(conn, task_id, text, root, out):
+    """Dispatch within submit's model/cache writer transaction."""
     task, answer = _validated(conn, task_id, text)
     if task["kind"] == "confirm-structure":
         return _submit_structure(conn, task, answer, root, out)

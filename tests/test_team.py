@@ -517,3 +517,118 @@ def test_submit_seeds_fresh_cache_before_refreshing_parents(make_repo, monkeypat
     with sqlite3.connect(path) as conn:
         for (task_id,) in accepted:
             assert conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone() == ("done",)
+
+
+def test_interleaved_branch_submits_keep_their_own_shared_answers(make_repo, monkeypatch, capsys, tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    first = make_repo(MAP)
+    monkeypatch.chdir(first)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    commit(first, "team fixture", judgement_paths(first))
+    git(first, "checkout", "-q", "-b", "branch-a")
+    second = tmp_path / "other"
+    git(first, "clone", "--quiet", str(first), str(second))
+    git(second, "checkout", "-q", "-b", "branch-b")
+    shared_key = next(row["key"] for row in rows(first / ".cbi/answers.jsonl")
+                      if row["kind"] == "summarise-files" and row["answer"] == "About a.ts.")
+    submissions = {}
+    for root, label in ((first, "A"), (second, "B")):
+        answers = rows(root / ".cbi/answers.jsonl")
+        for row in answers:
+            if row["kind"] == "summarise-files" and row["key"] == shared_key:
+                row["answer"] = f"Branch {label} core summary."
+        (root / ".cbi/answers.jsonl").write_text("".join(json.dumps(row) + "\n" for row in answers))
+        (root / "b.ts").write_text(MAP["b.ts"] + f"// branch {label}\n")
+        monkeypatch.chdir(root)
+        assert main(["init"]) == 0 and main(["scan"]) == 0
+        task = run_json(capsys, "tasks", "--kind", "summarise-files")[0]
+        brief = run_json(capsys, "task", task["id"])
+        body = {"input_hash": brief["input_hash"], "files": [
+            {"path": f["path"], "summary": f"Branch {label} caller summary."} for f in brief["files"]]}
+        submissions[label] = (root, task["id"], json.dumps(body))
+
+    b_ready = threading.Event()
+    a_validating = threading.Event()
+    b_finished_or_contended = threading.Event()
+    local = threading.local()
+    validate = tasks._validated
+    is_busy = store.is_busy
+
+    def interleaved_validation(conn, task_id, text):
+        if local.branch == "A":
+            a_validating.set()
+            assert b_finished_or_contended.wait(30)
+        return validate(conn, task_id, text)
+
+    def observe_contention(err):
+        busy = is_busy(err)
+        if busy and local.branch == "B":
+            b_finished_or_contended.set()
+        return busy
+
+    monkeypatch.setattr(tasks, "_validated", interleaved_validation)
+    monkeypatch.setattr(store, "is_busy", observe_contention)
+
+    def worker(label):
+        local.branch = label
+        root, task_id, text = submissions[label]
+        conn = store.open_db(root / ".cbi/model.db")
+        try:
+            tasks.attach_cache(conn)
+            if label == "B":
+                conn.execute("PRAGMA busy_timeout = 1000")
+                b_ready.set()
+                assert a_validating.wait(30)
+            else:
+                assert b_ready.wait(30)
+            return tasks.submit(conn, task_id, text, root, root / ".cbi")
+        finally:
+            conn.close()
+            if label == "B":
+                b_finished_or_contended.set()
+
+    # A pauses after importing. B either completes (the old unprotected gap)
+    # or encounters A's cache lock, allowing A to finish before B retries.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        b = pool.submit(worker, "B")
+        a = pool.submit(worker, "A")
+        assert "accepted" in a.result(timeout=45)
+        assert "accepted" in b.result(timeout=45)
+    for root, label in ((first, "A"), (second, "B")):
+        exported = next(row["answer"] for row in rows(root / ".cbi/answers.jsonl")
+                        if row["kind"] == "summarise-files" and row["key"] == shared_key)
+        assert exported == f"Branch {label} core summary."
+
+
+def test_rejected_submit_rolls_back_its_team_import(make_repo, monkeypatch):
+    import pytest
+    from cbi.files import blob_id
+
+    source = "def core():\n    return 1\n"
+    root = make_repo({"core.py": source})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    assert main(["team", "init"]) == 0
+    key = blob_id(source.encode())
+    row = {"kind": "summarise-files", "key": key, "protocol": tasks.PROTOCOL_VERSION,
+           "answer": "Branch-specific answer."}
+    out = root / ".cbi"
+    (out / "answers.jsonl").write_text(json.dumps(row) + "\n")
+    conn = store.open_db(out / "model.db")
+    try:
+        tasks.attach_cache(conn)
+        conn.execute("INSERT INTO cache.file_summaries VALUES (?, ?, ?)",
+                     (key, tasks.PROTOCOL_VERSION, "Existing cache answer."))
+        conn.commit()
+        task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'summarise-files'").fetchone()[0]
+        with pytest.raises(tasks.AnswerError):
+            tasks.submit(conn, task_id, "{}", root, out)
+        assert conn.execute("SELECT summary FROM cache.file_summaries WHERE content_hash = ?",
+                            (key,)).fetchone() == ("Existing cache answer.",)
+        assert rows(out / "answers.jsonl") == [row]
+    finally:
+        conn.close()

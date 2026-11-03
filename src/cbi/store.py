@@ -212,16 +212,21 @@ def is_busy(err):
     return "locked" in text or "busy" in text
 
 
-def retry_write(conn, fn, attempts=8):
-    """Run fn inside one write transaction. On SQLITE_BUSY, roll back and run it again.
+def retry_write(conn, fn, attempts=8, *, immediate=False):
+    """Run a write unit, retrying its whole transaction on SQLITE_BUSY.
 
-    The connection's busy timeout already waits, and still raises when a deferred
-    transaction has to be restarted after another writer committed. fn must only write.
+    Nested callers participate in the owner's transaction without committing or
+    retrying a fragment. immediate reserves attached databases in SQLite's normal
+    order (model, then cache), as scan does, before reading task/cache state.
     """
+    if conn.in_transaction:
+        return fn()
     delay = 0.02
     for attempt in range(attempts):
         try:
             with conn:
+                if immediate:
+                    conn.execute("BEGIN IMMEDIATE")
                 return fn()
         except sqlite3.OperationalError as err:
             if not is_busy(err) or attempt + 1 == attempts:
