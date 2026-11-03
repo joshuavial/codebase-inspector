@@ -408,9 +408,6 @@ def json_part(body, nbytes=0):
         nbytes = size
 
 
-def _part_size(body):
-    return max(len(tasks.sized(render_text(body)).encode()), len(json_part(body).encode()))
-
 
 def _divide(value):
     """Divide a payload at a list boundary, retaining ancestor identity on both sides.
@@ -451,19 +448,34 @@ def _divide(value):
 def _bounded_concept_chunks(chunks):
     """Enforce the budget after area grouping, for text AND JSON serialization."""
     payload_keys = ("files", "pairs", "concepts", "env", "removed", "areas", "deployables", "packages")
-    def fit(chunk):
-        body = chunk["brief"]
-        # Reserve all digits used by numbering; real labels are assigned afterwards.
-        body["part"] = {"index": 999999999, "count": 999999999, "name": chunk["name"]}
-        if _part_size(body) <= budget():
-            return [chunk]
-        payload = {key: body[key] for key in payload_keys if key in body}
-        divided = _divide(payload)
-        if divided is None:
+    while True:
+        # Splitting changes both the count and later indices. Re-number every
+        # pass, including parts that fitted before crossing a digit boundary.
+        numbered = _number(chunks)
+        next_chunks = []
+        split = False
+        oversized = False
+        for chunk, part in zip(chunks, numbered):
+            if max(part["bytes"], part["json_bytes"]) <= budget():
+                next_chunks.append(chunk)
+                continue
+            oversized = True
+            body = chunk["brief"]
+            payload = {key: body[key] for key in payload_keys if key in body}
+            divided = _divide(payload)
+            if divided is None:
+                # Finish splitting and numbering before rejecting an indivisible
+                # item, using its actual final envelope rather than a reserve.
+                next_chunks.append(chunk)
+                continue
+            split = True
+            next_chunks.extend({"name": chunk["name"], "brief": {**body, **fragment}}
+                               for fragment in divided)
+        if not oversized:
+            return chunks
+        if not split:
             raise ValueError("brief_budget is too small for the task envelope or an indivisible item")
-        return [piece for fragment in divided
-                for piece in fit({"name": chunk["name"], "brief": {**body, **fragment}})]
-    return [piece for chunk in chunks for piece in fit(chunk)]
+        chunks = next_chunks
 
 
 def _number(chunks):

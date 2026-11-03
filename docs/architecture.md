@@ -432,7 +432,10 @@ excluded by the generated artifact rules.
 
 Concept task parts are checked after grouping against both the text output and
 pretty-printed JSON envelope, including the schema, part numbering, byte-count
-field and trailing newline. The parts index retains `bytes` for text and reports
+field and trailing newline. Splitting and actual part numbering repeat until
+every part fits; a change in count or index width rechecks earlier parts. No
+extra digits are reserved when rejecting indivisible items at the boundary.
+The parts index retains `bytes` for text and reports
 `json_bytes` for JSON. Oversized current maps split recursively at concept child
 and file-list boundaries, retaining ancestor metadata so fragments can be joined
 by concept ID. Area file outlines and cross-area lists use the same final check.

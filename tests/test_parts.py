@@ -361,3 +361,30 @@ def test_nested_current_map_parts_fit_both_serializations(make_repo, monkeypatch
                 visit(json.loads(output).get("concepts"))
     assert seen_paths == set(paths)
     assert seen_leaves == {f"leaf{i}" for i in range(20)}
+
+
+def test_indivisible_part_fits_exactly_with_actual_numbering(make_repo, monkeypatch, capsys, tmp_path):
+    root = scan(make_repo, monkeypatch, {"a.py": "value = 1\n", "b.py": "value = 2\n"}, name="boundary")
+    confirm(capsys, tmp_path)
+    conn = store.open_db(root / ".cbi/model.db")
+    with conn:
+        conn.execute("UPDATE nodes SET summary = ? WHERE kind = 'file'", ("s" * 600,))
+    [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
+    brief = tasks.brief(conn, task["id"], root)
+    # Force the area grouping down to one indivisible file per chunk to measure
+    # their real serialized envelopes, including the cross-area third part.
+    monkeypatch.setenv("CBI_BRIEF_BUDGET", "1")
+    chunks = parts._concept_chunks(conn, brief)
+    numbered = parts._number(chunks)
+    conn.close()
+    assert len(numbered) == 3
+    exact = max(max(item["bytes"], item["json_bytes"]) for item in numbered)
+    monkeypatch.setenv("CBI_BRIEF_BUDGET", str(exact))
+    spec = run_json(capsys, "task", task["id"], "--parts")
+    assert len(spec["parts"]) == 3
+    assert max(max(item["bytes"], item["json_bytes"]) for item in spec["parts"]) == exact
+    for entry in spec["parts"]:
+        for flags, key in (([], "bytes"), (["--json"], "json_bytes")):
+            code, output, err = run(capsys, "task", task["id"], "--part", str(entry["index"]), *flags)
+            assert code == 0, err
+            assert len(output.encode()) == entry[key] <= exact
