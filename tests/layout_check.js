@@ -216,47 +216,67 @@ async function main() {
   relationships.push({ from: tables[0].id, to: tables[0].id,
     column: tables[0].columns[1].id, targetColumn: tables[0].columns[0].id });
   for (const rel of relationships) tables.find((table) => table.id === rel.from).foreignKeys.push(rel);
-  const reached = new Set();
-  const covered = new Set();
-  for (let page = 0; page < 30; page++) {
+  const reached = new Set(), covered = new Set();
+  const hub = app.databaseSlice(tables, relationships, tables[0].id);
+  assert.strictEqual(hub.pages, 10, "a hub with 59 neighbours must use six per page");
+  for (let page = 0; page < hub.pages; page++) {
     const slice = app.databaseSlice(tables, relationships, tables[0].id, page);
-    assert.ok(slice.tables.length <= 3, "a hub must have a bounded neighbourhood");
+    assert.strictEqual(slice.tables.length, page === 9 ? 6 : 7);
     slice.tables.forEach((table) => reached.add(table.id));
     slice.relationships.forEach((rel) => covered.add(rel));
-    const detail = app.databaseDetailGraph(slice);
-    assert.strictEqual(detail.edges.length, slice.relationships.length, "parallel column keys must survive");
-    const out = await elk.layout(JSON.parse(JSON.stringify(detail.graph)));
+    const detail = app.databaseDetailGraph(slice), out = app.databaseFocusLayout(detail);
+    assert.strictEqual(detail.edges.length, slice.relationships.filter((rel) => rel.from !== rel.to).length);
+    const positions = Object.fromEntries(out.children.map((node) => [node.id, node]));
+    const meta = Object.fromEntries(detail.nodes.map((node) => [node.id, node]));
+    const focus = positions[tables[0].id];
+    assert.ok(detail.nodes[0].lines.some((line) => line === "Self: field_1 → id"));
     for (const size of [{ w: 932, h: 688 }, { w: 1252, h: 888 }]) {
       const scale = Math.min(1.4, size.w / out.width, size.h / out.height);
-      assert.ok(11 * scale >= 10, "focus column text must remain readable at fit");
+      assert.ok(12 * scale >= 11, "focus columns must remain readable at fit");
     }
-    const positions = Object.fromEntries(out.children.map((node) => [node.id, node]));
-    for (let i = 0; i < detail.edges.length; i++) {
-      const edge = out.edges.find((edge) => edge.id === detail.edges[i].id);
-      const rel = slice.relationships[i], source = positions[rel.from], target = positions[rel.to];
-      const sourcePort = source.ports.find((port) => port.id === rel.column + ":EAST");
-      const targetPort = target.ports.find((port) => port.id === rel.targetColumn + ":WEST");
-      const section = edge.sections[0];
-      assert.strictEqual(section.startPoint.x, source.x + source.width);
-      assert.strictEqual(section.startPoint.y, source.y + sourcePort.y);
-      assert.strictEqual(section.endPoint.x, target.x);
-      assert.strictEqual(section.endPoint.y, target.y + targetPort.y);
+    for (const edge of detail.edges) {
+      assert.notStrictEqual(edge.a, edge.b, "self references must not route outside the card");
+      const section = out.edges.find((row) => row.id === edge.id).sections[0];
+      const source = positions[edge.a], target = positions[edge.b], forward = source.x < target.x;
+      assert.strictEqual(section.startPoint.x, source.x + (forward ? source.width : 0));
+      assert.strictEqual(section.startPoint.y, source.y + 42 + meta[edge.a].columns.findIndex((row) => row.id === edge.column) * 16);
+      assert.strictEqual(section.endPoint.x, target.x + (forward ? 0 : target.width));
+      assert.strictEqual(section.endPoint.y, target.y + 42 + meta[edge.b].columns.findIndex((row) => row.id === edge.targetColumn) * 16);
     }
-    for (const node of detail.nodes) {
-      assert.ok(node.lines.length <= 10, "long tables must disclose overflow in the drawer");
-      if (node.id === tables[0].id) assert.match(node.lines.at(-1), /columns/);
+    for (const node of detail.nodes.slice(1)) {
+      assert.ok(positions[node.id].x + node.w < focus.x, "incoming neighbours must be on the left");
+      assert.strictEqual(node.columns.length, 3, "neighbours must contain only keys and linked columns");
+      assert.strictEqual(node.lines.length, node.columns.length, "neighbours must not contain filler previews");
     }
   }
   assert.strictEqual(reached.size, 60, "every hub neighbour must be reachable");
   assert.strictEqual(covered.size, relationships.filter((rel) => rel.from === tables[0].id || rel.to === tables[0].id).length);
   assert.strictEqual(app.databaseSlice(tables, relationships, tables[91].id).tables.length, 1);
-  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, Infinity).page, 29);
+  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, Infinity).page, 9);
   assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, -4).page, 0);
-  const overviewNodes = tables.map((table) => ({ id: table.id, name: table.name, w: 190, h: 38 }));
-  const overviewGroups = app.databaseGroups(overviewNodes, relationships.map((rel) => ({ a: rel.from, b: rel.to })));
-  const overview = app.databaseGrid(overviewGroups, [], { w: 1252, h: 888 });
-  assert.strictEqual(overview.edges.length, 0, "the overview must not draw a hairball");
-  assert.ok(overviewGroups.length >= 2);
+  const mixedDatabase = relationships.concat([{ from: tables[50].id, column: tables[50].columns[3].id,
+    to: tables[0].id, targetColumn: tables[0].columns[0].id }, { from: tables[0].id, column: tables[0].columns[2].id,
+    to: tables[90].id, targetColumn: tables[90].columns[0].id },
+    { from: tables[90].id, column: tables[90].columns[1].id, to: tables[0].id, targetColumn: tables[0].columns[0].id },
+    { from: tables[0].id, column: tables[0].columns[3].id, to: tables[91].id, targetColumn: tables[91].columns[0].id }]);
+  const mixedSlice = app.databaseSlice(tables, mixedDatabase, tables[0].id);
+  assert.strictEqual(mixedSlice.neighbours[0].id, tables[50].id, "more links must rank first");
+  assert.strictEqual(mixedSlice.neighbours[1].name, "sample_table_1", "equal link counts must sort by name");
+  // An outgoing-only table appears on a later page because neighbours with two links rank first.
+  const lastSlice = app.databaseSlice(tables, mixedDatabase, tables[0].id, 10);
+  const mixedDetail = app.databaseDetailGraph(lastSlice), mixedOut = app.databaseFocusLayout(mixedDetail);
+  const focusCenter = mixedOut.children[0];
+  const outgoing = mixedOut.children.find((node) => node.id === tables[91].id);
+  assert.ok(outgoing.x > focusCenter.x + focusCenter.width, "outgoing neighbours must be on the right");
+  const clusters = app.databaseOverview(tables, relationships);
+  assert.strictEqual(clusters.reduce((sum, node) => sum + node.members.length, 0), 92);
+  const overview = app.databaseGrid(clusters, { w: 932, h: 688 });
+  assert.strictEqual(overview.edges.length, 0);
+  assert.ok(clusters.length >= 2);
+  assert.match(clusters[0].lines[0], /foreign keys/);
+  assert.ok(clusters[0].lines[1].includes(tables[0].name), "overview must identify the top hub");
+  const overviewScale = Math.min(1.4, 932 / overview.width, 688 / overview.height);
+  assert.ok(12 * overviewScale >= 11, "overview cluster text must be legible at fit");
 
   const graph = await elk.layout({
     id: "root",

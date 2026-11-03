@@ -1078,6 +1078,13 @@ function databaseGo(table, page = 0) {
   h.set("tab", "database");
   if (table) h.set("table", table);
   if (page) h.set("dbpage", page);
+  if (table && view.databaseGroup) h.set("dbgroup", view.databaseGroup);
+  writeHash(h.toString());
+}
+
+function databaseGroupGo(group) {
+  const h = new URLSearchParams({ tab: "database" });
+  if (group) h.set("dbgroup", group);
   writeHash(h.toString());
 }
 
@@ -1133,6 +1140,7 @@ function route() {
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
     overlay: h.get("t"),
     tab, table: databaseById[h.get("table")] ? h.get("table") : null,
+    databaseGroup: h.get("dbgroup") || null,
     databasePage: Math.max(0, Math.floor(Number(h.get("dbpage")) || 0)),
     endpoint: (ENDPOINTS.endpoints || []).some((row) => row.id === h.get("endpoint")) ? h.get("endpoint") : null,
     endpointQuery: h.get("eq") || "", endpointMethod: h.get("method") || "",
@@ -1154,7 +1162,7 @@ function route() {
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
   const scopeChanged = !first && (prev.scope || "") !== (view.scope || "");
-  restore = refit || scopeChanged ? null : !first && prev.tab === view.tab && prev.table === view.table && prev.databasePage === view.databasePage && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  restore = refit || scopeChanged ? null : !first && prev.tab === view.tab && prev.table === view.table && prev.databaseGroup === view.databaseGroup && prev.databasePage === view.databasePage && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   refit = false;
   crumbs();
   const f = view.focus && byId[view.focus];
@@ -1173,7 +1181,7 @@ function route() {
 }
 
 function up() {
-  if (view.tab === "database" && view.table) return databaseGo(null);
+  if (view.tab === "database" && (view.table || view.databaseGroup)) return databaseGroupGo(view.table ? view.databaseGroup : null);
   if (view.tab === "endpoints" && view.endpoint) return endpointGo(null);
   if (view.focus) go(parentOf[view.focus]);
   else if (view.sel) go(null);
@@ -2171,160 +2179,152 @@ function databaseGroups(nodes, edges) {
   return groups;
 }
 
-function databaseGrid(groups, edges, avail) {
-  const gap = 18, frameX = 20, frameTop = 40, frameBottom = 20;
-  const laid = groups.map((group) => {
-    const children = group.children || [group];
-    const averageWidth = children.reduce((sum, node) => sum + node.w, 0) / children.length;
-    const columns = Math.max(1, Math.ceil(Math.sqrt(children.length * (avail.w / avail.h) * 38 / averageWidth)));
-    const widths = Array(columns).fill(0);
-    for (let index = 0; index < children.length; index++) widths[index % columns] = Math.max(widths[index % columns], children[index].w);
-    const starts = widths.map((_width, index) => frameX + widths.slice(0, index).reduce((sum, width) => sum + width + gap, 0));
-    const rows = Math.ceil(children.length / columns);
-    const heights = Array.from({ length: rows }, (_, row) => Math.max(...children.slice(row * columns, (row + 1) * columns).map((node) => node.h)));
-    const tops = heights.map((_, row) => frameTop + heights.slice(0, row).reduce((sum, height) => sum + height + gap, 0));
-    const placed = children.map((node, index) => ({ ...node, x: starts[index % columns],
-      y: tops[Math.floor(index / columns)], width: node.w, height: node.h }));
-    const width = frameX * 2 + widths.reduce((sum, value) => sum + value, 0) + gap * (columns - 1);
-    const height = frameTop + heights.reduce((sum, height) => sum + height, 0) + Math.max(0, rows - 1) * gap + frameBottom;
-    if (!group.children) return { ...placed[0], width: group.w, height: group.h, children: null, meta: group };
-    return { id: group.id, width, height, children: placed, meta: group };
-  }).sort((left, right) => right.width * right.height - left.width * left.height);
-  const totalArea = laid.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
-  const targets = [Math.max(...laid.map((item) => item.width)), Math.sqrt(totalArea * avail.w / avail.h),
-    laid.reduce((sum, item) => sum + item.width + gap, -gap) / 2];
+// Choose the grid with the largest fitted text, using actual card sizes.
+function databaseGrid(nodes, avail) {
   let best = null;
-  for (const target of targets) {
-    let x = 12, y = 12, rowHeight = 0, width = 0;
-    const children = [];
-    for (const item of laid) {
-      if (x > 12 && x + item.width > target) { x = 12; y += rowHeight + gap; rowHeight = 0; }
-      children.push({ ...item, x, y });
-      x += item.width + gap;
-      rowHeight = Math.max(rowHeight, item.height);
-      width = Math.max(width, x - gap + 12);
-    }
-    const height = y + rowHeight + 12;
+  for (let columns = 1; columns <= nodes.length; columns++) {
+    const widths = Array(columns).fill(0), heights = [];
+    nodes.forEach((node, i) => {
+      widths[i % columns] = Math.max(widths[i % columns], node.w);
+      const row = Math.floor(i / columns);
+      heights[row] = Math.max(heights[row] || 0, node.h);
+    });
+    const starts = (sizes) => sizes.map((_, i) => 12 + sizes.slice(0, i).reduce((sum, size) => sum + size + 20, 0));
+    const xs = starts(widths), ys = starts(heights);
+    const width = xs.at(-1) + widths.at(-1) + 12, height = ys.at(-1) + heights.at(-1) + 12;
     const scale = Math.min(avail.w / width, avail.h / height);
-    if (!best || scale > best.scale) best = { children, width, height, scale };
+    if (!best || scale > best.scale) best = { id: "root", width, height, scale, edges: [],
+      children: nodes.map((node, i) => ({ id: node.id, x: xs[i % columns], y: ys[Math.floor(i / columns)], width: node.w, height: node.h })) };
   }
-  const at = {};
-  for (const group of best.children) {
-    if (group.children) for (const node of group.children) at[node.id] = {
-      x: group.x + node.x, y: group.y + node.y, width: node.width, height: node.height };
-    else at[group.id] = group;
-  }
-  const routed = edges.map((edge) => {
-    const a = at[edge.a], b = at[edge.b];
-    if (!a || !b) return { id: edge.id, sections: [], labels: [] };
-    const ac = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
-    const bc = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-    const horizontal = Math.abs(bc.x - ac.x) >= Math.abs(bc.y - ac.y);
-    let start, end, bends;
-    if (horizontal) {
-      const sign = bc.x >= ac.x ? 1 : -1, mid = (ac.x + bc.x) / 2;
-      start = { x: ac.x + sign * a.width / 2, y: ac.y };
-      end = { x: bc.x - sign * b.width / 2, y: bc.y };
-      bends = [{ x: mid, y: ac.y }, { x: mid, y: bc.y }];
-    } else {
-      const sign = bc.y >= ac.y ? 1 : -1, mid = (ac.y + bc.y) / 2;
-      start = { x: ac.x, y: ac.y + sign * a.height / 2 };
-      end = { x: bc.x, y: bc.y - sign * b.height / 2 };
-      bends = [{ x: ac.x, y: mid }, { x: bc.x, y: mid }];
-    }
-    return { id: edge.id, sections: [{ startPoint: start, endPoint: end, bendPoints: bends }], labels: [] };
-  });
-  return { id: "root", width: best.width, height: best.height, children: best.children,
-    edges: routed, mode: "grid" };
+  return best;
+}
+
+function databaseOverview(tables, relationships) {
+  const edges = relationships.map((rel) => ({ a: rel.from, b: rel.to }));
+  return databaseGroups(tables, edges).map((group) => {
+    const members = group.children || [group], ids = new Set(members.map((table) => table.id));
+    const links = relationships.filter((rel) => ids.has(rel.from) && ids.has(rel.to));
+    const degree = (table) => links.filter((rel) => rel.from === table.id || rel.to === table.id).length;
+    const hubs = members.slice().sort((a, b) => degree(b) - degree(a) || a.name.localeCompare(b.name));
+    const lines = [`${links.length} foreign keys · open group`,
+      ...hubs.slice(0, 3).map((table) => `${degree(table) ? "Hub" : "Table"}: ${table.name} (${degree(table)})`)];
+    const name = group.label || group.name;
+    return { id: group.id, cls: "node db-cluster", name, lines, members,
+      w: Math.max(260, textW(name, 600, 14) + 32, ...lines.map((line) => textW(line, 400, 12, true) + 32)),
+      h: 58 + lines.length * 16 };
+  }).sort((a, b) => b.members.length - a.members.length || a.name.localeCompare(b.name));
 }
 
 // A bounded neighbourhood keeps hubs readable. Every neighbour remains reachable through pages.
+const DATABASE_PAGE_SIZE = 6;
 function databaseSlice(tables, relationships, selected, page = 0) {
   const table = tables.find((row) => row.id === selected);
-  if (!table) return { tables, relationships, neighbours: [], page: 0, pages: 0 };
-  const neighbours = tables.filter((row) => row.id !== selected && relationships.some((rel) =>
-    rel.from === selected && rel.to === row.id || rel.to === selected && rel.from === row.id));
-  const pages = Math.ceil(neighbours.length / 2);
+  if (!table) return { tables, relationships, neighbours: [], page: 0, pages: 0, selected };
+  const links = relationships.filter((rel) => rel.from === selected || rel.to === selected);
+  const count = (id) => links.filter((rel) => rel.from === id || rel.to === id).length;
+  const neighbours = tables.filter((row) => row.id !== selected && count(row.id))
+    .sort((a, b) => count(b.id) - count(a.id) || a.name.localeCompare(b.name));
+  const pages = Math.ceil(neighbours.length / DATABASE_PAGE_SIZE);
   page = Math.min(Math.max(0, Math.floor(page) || 0), Math.max(0, pages - 1));
-  const shown = new Set([selected, ...neighbours.slice(page * 2, page * 2 + 2).map((row) => row.id)]);
-  return { tables: tables.filter((row) => shown.has(row.id)), neighbours, page, pages,
-    relationships: relationships.filter((rel) => shown.has(rel.from) && shown.has(rel.to)
-      && (rel.from === selected || rel.to === selected)) };
+  const shown = new Set([selected, ...neighbours.slice(page * DATABASE_PAGE_SIZE, (page + 1) * DATABASE_PAGE_SIZE).map((row) => row.id)]);
+  return { tables: [table, ...neighbours.filter((row) => shown.has(row.id))], neighbours, page, pages, selected,
+    relationships: links.filter((rel) => shown.has(rel.from) && shown.has(rel.to)) };
 }
 
 function databaseDetailGraph(slice) {
   const nodes = slice.tables.map((table) => {
+    const focus = table.id === slice.selected;
     const required = new Set(slice.relationships.flatMap((rel) =>
       [rel.from === table.id ? rel.column : null, rel.to === table.id ? rel.targetColumn : null]));
-    // Keep all endpoints and primary keys; other columns are available in the drawer.
     const columns = table.columns.filter((column) => required.has(column.id) || column.primaryKey);
     const extra = table.columns.filter((column) => !columns.includes(column));
-    columns.push(...extra.slice(0, Math.max(0, 8 - columns.length)));
-    const lines = columns.map((column) => databaseColumnLine(table, column));
-    if (columns.length < table.columns.length) lines.push(`+${table.columns.length - columns.length} columns · select table for all`);
-    const w = Math.max(210, textW(table.name, 600, 14) + 32,
-      ...lines.map((line) => textW(line, 400, 11, true) + 32));
-    return { id: table.id, cls: "node db-table", name: table.name, lines, columns,
-      w, h: 58 + lines.length * 16 };
+    if (focus) columns.push(...extra.slice(0, Math.max(0, 6 - columns.length)));
+    // Neighbours show only keys and linked columns. Full types and columns stay in the drawer.
+    const lines = columns.map((column) => databaseColumnLine(table, { ...column, type: "" }));
+    if (focus) {
+      for (const rel of slice.relationships.filter((rel) => rel.from === table.id && rel.to === table.id)) {
+        const name = (id) => table.columns.find((column) => column.id === id)?.name || id;
+        lines.push(`Self: ${name(rel.column)} → ${name(rel.targetColumn)}`);
+      }
+      if (columns.length < table.columns.length) lines.push(`+${table.columns.length - columns.length} columns in details`);
+    }
+    const incoming = slice.relationships.filter((rel) => rel.from === table.id && rel.to === slice.selected).length;
+    const outgoing = slice.relationships.filter((rel) => rel.to === table.id && rel.from === slice.selected).length;
+    const w = Math.max(180, textW(table.name, 600, 14) + 32,
+      ...lines.map((line) => textW(line, 400, 12, true) + 32));
+    return { id: table.id, cls: "node db-table" + (focus ? " db-focus" : " db-neighbour"), name: table.name,
+      lines, columns, side: focus ? "focus" : incoming >= outgoing ? "incoming" : "outgoing",
+      w, h: (focus ? 58 : 42) + lines.length * 16 };
   });
-  const children = nodes.map((node) => ({ id: node.id, width: node.w, height: node.h,
-    layoutOptions: { "elk.portConstraints": "FIXED_POS" },
-    ports: node.columns.flatMap((column, index) => ["WEST", "EAST"].map((side) => ({
-      id: column.id + ":" + side, x: side === "WEST" ? 0 : node.w, y: 42 + index * 16,
-      width: 0, height: 0, layoutOptions: { "elk.port.side": side },
-    }))),
+  const edges = slice.relationships.filter((rel) => rel.from !== rel.to).map((rel, index) => ({
+    id: "db" + index, a: rel.from, b: rel.to, column: rel.column, targetColumn: rel.targetColumn,
+    cls: "foreign-key", text: "",
   }));
-  const edges = slice.relationships.map((rel, index) => ({ id: "db" + index,
-    a: rel.from, b: rel.to, cls: "foreign-key", text: "",
-    sourcePort: rel.column + ":EAST", targetPort: rel.targetColumn + ":WEST" }));
-  return { nodes, edges, graph: { id: "root", children,
-    layoutOptions: elkOptions({ dir: "RIGHT", layer: 64, gap: 32 }),
-    edges: edges.map((edge) => ({ id: edge.id, sources: [edge.sourcePort], targets: [edge.targetPort] })),
-  } };
+  return { nodes, edges };
 }
 
-async function drawDatabase() {
+// A star has known lanes: place neighbours by relevance and route only through the gutters.
+function databaseFocusLayout(detail) {
+  const focus = detail.nodes.find((node) => node.side === "focus");
+  const left = detail.nodes.filter((node) => node.side === "incoming"), right = detail.nodes.filter((node) => node.side === "outgoing");
+  const heightOf = (nodes) => nodes.reduce((sum, node) => sum + node.h + 14, -14);
+  const leftW = Math.max(0, ...left.map((node) => node.w)), rightW = Math.max(0, ...right.map((node) => node.w));
+  const height = Math.max(focus.h, heightOf(left), heightOf(right)) + 24;
+  const focusX = 12 + (left.length ? leftW + 64 : 0), rightX = focusX + focus.w + 64;
+  const children = [{ id: focus.id, x: focusX, y: (height - focus.h) / 2, width: focus.w, height: focus.h }];
+  for (const [lane, x] of [[left, 12], [right, rightX]]) {
+    let y = (height - heightOf(lane)) / 2;
+    for (const node of lane) {
+      children.push({ id: node.id, x: x + (lane === left ? leftW - node.w : 0), y, width: node.w, height: node.h });
+      y += node.h + 14;
+    }
+  }
+  const at = Object.fromEntries(children.map((node) => [node.id, node]));
+  const meta = Object.fromEntries(detail.nodes.map((node) => [node.id, node]));
+  const laneEdges = { incoming: [], outgoing: [] };
+  for (const edge of detail.edges) laneEdges[meta[edge.a === focus.id ? edge.b : edge.a].side].push(edge);
+  const edges = [];
+  for (const [side, links] of Object.entries(laneEdges)) links.forEach((edge, index) => {
+    const a = at[edge.a], b = at[edge.b], forward = a.x < b.x;
+    const rowY = (id, column) => at[id].y + 42 + meta[id].columns.findIndex((row) => row.id === column) * 16;
+    const start = { x: a.x + (forward ? a.width : 0), y: rowY(edge.a, edge.column) };
+    const end = { x: b.x + (forward ? 0 : b.width), y: rowY(edge.b, edge.targetColumn) };
+    const gutter = side === "incoming" ? focusX - 64 : focusX + focus.w;
+    const x = gutter + 16 + 32 * (index + 1) / (links.length + 1);
+    edges.push({ id: edge.id, sections: [{ startPoint: start, endPoint: end,
+      bendPoints: [{ x, y: start.y }, { x, y: end.y }] }], labels: [] });
+  });
+  return { id: "root", children, edges, width: (right.length ? rightX + rightW : focusX + focus.w) + 12, height };
+}
+
+function drawDatabase() {
   const tables = DATABASE.tables || [];
   view.sel = view.table;
   if (!tables.length) {
     empty("No database schema detected. Add SQL migrations or supported ORM models, then scan again.");
     return databaseDrawer();
   }
-  if (view.table) {
-    const gen = ++layoutGen;
-    const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
-    const detail = databaseDetailGraph(slice);
-    try {
-      const out = await layoutGraph(detail.graph);
-      if (gen !== layoutGen) return;
-      externalGroups = {};
-      document.getElementById("diagram").dataset.layout = "database focus";
-      render(out, detail.nodes, detail.edges, databaseGo, null);
-    } catch (err) {
-      if (gen === layoutGen) empty("Layout failed: " + err.message);
-    }
-    return;
-  }
-  const compact = tables.length > 60;
-  const nodes = tables.map((table) => {
-    const lines = compact ? [] : table.columns.map((column) => databaseColumnLine(table, column));
-    const width = Math.max(190, textW(table.name, 600, 14) + 32,
-      ...lines.map((line) => textW(line, 400, 11, true) + 32));
-    return { id: table.id, cls: "node db-table", name: table.name, lines,
-      w: width, h: compact ? 38 : 58 + lines.length * 16 };
-  });
-  const edges = (DATABASE.relationships || []).map((rel, index) => ({
-    id: "db" + index, a: rel.from, b: rel.to, text: "", cls: "foreign-key",
-  }));
-  // The overview is an index. Routes belong to the focused column-level diagram.
-  const groups = databaseGroups(nodes, edges);
-  const out = databaseGrid(groups, [], availSize());
   ++layoutGen;
   externalGroups = {};
   const diagram = document.getElementById("diagram");
-  diagram.dataset.layout = "database overview";
-  diagram.dataset.databaseGroups = String(groups.filter((node) => node.children).length);
-  render(out, groups, [], databaseGo, null);
+  if (view.table) {
+    const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
+    const detail = databaseDetailGraph(slice);
+    diagram.dataset.layout = "database focus";
+    render(databaseFocusLayout(detail), detail.nodes, detail.edges, databaseGo, null);
+    return;
+  }
+  const groups = databaseOverview(tables, DATABASE.relationships || []);
+  const group = groups.find((row) => row.id === view.databaseGroup);
+  const clustered = tables.length > 16;
+  const shown = group ? group.members : tables;
+  const nodes = clustered && !group ? groups : shown.map((table) => ({
+    id: table.id, cls: "node db-table", name: table.name, lines: [],
+    w: Math.max(150, textW(table.name, 600, 14) + 32), h: 38,
+  }));
+  diagram.dataset.layout = group ? "database group" : "database overview";
+  diagram.dataset.databaseGroups = String(groups.length);
+  render(databaseGrid(nodes, availSize()), nodes, [], clustered && !group ? databaseGroupGo : databaseGo, null);
 }
 
 function drawEndpoints() {
@@ -2412,13 +2412,16 @@ function databaseDrawer() {
     d.append(el("h2", "", "Database"),
       el("p", "", "Select a table to view its columns, connected neighbours and code access."));
     if (DATABASE.tables.length) d.append(el("p", "hint", `${DATABASE.tables.length} detected table${DATABASE.tables.length === 1 ? "" : "s"}.`));
+    const group = databaseOverview(DATABASE.tables, DATABASE.relationships || []).find((row) => row.id === view.databaseGroup);
+    if (group) d.append(link("← Database overview", () => databaseGroupGo(null)), el("h3", "", group.name));
+    else if (DATABASE.tables.length > 16) d.append(el("p", "hint", "Open a cluster to browse its tables, or find a table below."));
     const input = el("input");
     input.type = "search";
     input.placeholder = "Find a table";
     input.setAttribute("aria-label", "Find a database table");
     const list = el("div", "db-table-list");
     const paint = () => {
-      const rows = DATABASE.tables.filter((row) => row.name.toLowerCase().includes(input.value.toLowerCase()));
+      const rows = (group ? group.members : DATABASE.tables).filter((row) => row.name.toLowerCase().includes(input.value.toLowerCase()));
       list.replaceChildren(...rows.map((row) => link(row.name, () => databaseGo(row.id))));
       if (!rows.length) list.append(el("p", "hint", "No tables match."));
     };
@@ -2427,12 +2430,12 @@ function databaseDrawer() {
     paint();
     return;
   }
-  d.append(link("← Database overview", () => databaseGo(null)), el("h2", "", table.name));
+  d.append(link(view.databaseGroup ? "← Table group" : "← Database overview", () => databaseGroupGo(view.databaseGroup)), el("h2", "", table.name));
   const slice = databaseSlice(DATABASE.tables, DATABASE.relationships || [], table.id, view.databasePage);
-  d.append(el("p", "hint", "Diagram shows this table and up to two neighbours. Select a neighbour to explore it. All columns are listed here."));
+  d.append(el("p", "hint", "Up to six neighbours, ranked by links then name. Incoming references on the left; outgoing on the right. All columns are listed here."));
   if (slice.pages > 1) {
     const pager = el("div", "db-pages");
-    pager.append(el("span", "", `Neighbours ${slice.page * 2 + 1}–${Math.min(slice.page * 2 + 2, slice.neighbours.length)} of ${slice.neighbours.length}`));
+    pager.append(el("span", "", `Neighbours ${slice.page * DATABASE_PAGE_SIZE + 1}–${Math.min((slice.page + 1) * DATABASE_PAGE_SIZE, slice.neighbours.length)} of ${slice.neighbours.length}`));
     if (slice.page) pager.append(link("Previous", () => databaseGo(table.id, slice.page - 1)));
     if (slice.page + 1 < slice.pages) pager.append(link("Next", () => databaseGo(table.id, slice.page + 1)));
     d.append(pager);
@@ -3978,7 +3981,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
   if (sel) hot(edgeEls, sel, true);
   svg.onclick = () => {
     if (!moved && view.sel) {
-      if (view.tab === "database") databaseGo(null);
+      if (view.tab === "database") databaseGroupGo(view.databaseGroup);
       else go(view.focus, null, { v: view.mode });
     }
   };
