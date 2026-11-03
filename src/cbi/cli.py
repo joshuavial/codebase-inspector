@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -473,6 +474,12 @@ def _scan_fingerprint(workspaces, ignore_text, out, structure_text, concepts_tex
     )
 
 
+
+def _ref_judgement(out):
+    return store.ref_judgement(_read(out / "structure.json"), _read(out / "team.toml"),
+                               _read(out / "answers.jsonl"))
+
+
 def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parsed=None):
     """Run the scan pipeline over an already enumerated tree. root supplies file bytes.
     parsed is the shared parse store a ref scan reads and fills."""
@@ -483,10 +490,14 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
     conn = store.open_db(out / "model.db")
     try:
         tasks.attach_cache(conn)
-        old = store.file_states(conn)
-        same_files = {p: s[2] for p, s in states.items()} == {p: s[2] for p, s in old.items()}
-        shortcut = same_files and store.get_meta(conn, "fingerprint") == fp
         with conn:
+            # Reserve the writer before reading the snapshot used by this scan.
+            # A deferred read transaction cannot wait when another writer commits.
+            conn.execute("BEGIN IMMEDIATE")
+            old = store.file_states(conn)
+            same_files = {p: s[2] for p, s in states.items()} == {p: s[2] for p, s in old.items()}
+            shortcut = (same_files and store.get_meta(conn, "fingerprint") == fp
+                        and (not commit or store.get_meta(conn, "ref_judgement") == _ref_judgement(out)))
             store.replace_file_states(conn, {p: s[:4] for p, s in states.items()})
             store.set_meta(conn, "scanned_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             store.set_meta(conn, "parser_version", str(files.PARSER_VERSION))
@@ -516,6 +527,8 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
                     workspaces, ignore_text, out, _read(out / "structure.json"),
                     _read(out / "concepts.json"), _read(out / "screens.json"))
                 store.set_meta(conn, "fingerprint", fp)
+            if commit:
+                store.set_meta(conn, "ref_judgement", _ref_judgement(out))
         return shortcut, store.counts_by_display_kind(conn), tasks.task_counts(conn)
     finally:
         conn.close()
@@ -545,9 +558,21 @@ def scan_ref(root, out, ref, *, force=False):
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
     db = home / "model.db"
+    # Ref judgement comes from that commit, never from the current worktree.
+    # Keep locally answered ref tasks when no committed projection exists.
+    for name in ("structure.json", "concepts.json", "screens.json", "team.toml", "answers.jsonl"):
+        result = subprocess.run(
+            ["git", "cat-file", "blob", f"{sha}:.cbi/{name}"], cwd=root, capture_output=True)
+        if result.returncode == 0:
+            home.mkdir(parents=True, exist_ok=True)
+            path = home / name
+            if not path.exists() or path.read_bytes() != result.stdout:
+                path.write_bytes(result.stdout)
     if not force and store.ref_reusable(
             db, files.ignore_token(ignore_text), files.PARSER_VERSION,
-            _read(home / "concepts.json"), _read(home / "screens.json")):
+            _read(home / "concepts.json"), _read(home / "screens.json"),
+            structure_text=_read(home / "structure.json"), team_text=_read(home / "team.toml"),
+            answers_text=_read(home / "answers.jsonl")):
         conn = store.read_only(db)
         try:
             return sha, True, store.counts_by_display_kind(conn), tasks.task_counts(conn)
@@ -671,11 +696,17 @@ def _read_model(args):
         if sha:
             raise NoModel(f"no model for {sha}. Run `cbi scan --ref {args.ref}` first.")
         raise NoModel(f"no model at {path}. Run `cbi init` and `cbi scan` first.")
+    conn = None
     try:
         conn = store.read_only(path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
     except sqlite3.Error as err:
-        raise NoModel(f"{path} is not a cbi model ({err})") from err
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if conn is not None:
+            conn.close()
+        raise NoModel(
+            f"Cannot read model at {path}: {err}. Check read permissions and SQLite WAL sidecar "
+            "access, or copy the model to a writable directory and query it with `--out DIR`. "
+            "Run `cbi scan` to rebuild an invalid model.") from err
     if version != store.SCHEMA_VERSION:
         conn.close()
         raise NoModel(
@@ -781,7 +812,7 @@ def cmd_deps(args):
 
 
 def cmd_tasks(args):
-    conn = _model(args)
+    conn = _read_model(args)
     try:
         if args.offset < 0:
             print("--offset must be 0 or greater", file=sys.stderr)
@@ -837,7 +868,7 @@ def _emit_brief(b, text, as_json):
 
 def cmd_task(args):
     root, home, _path, sha = _locate(args)
-    conn = _model(args)
+    conn = _read_model(args)
     source = _source(root, sha)
     token = parts.bind(home)
     try:
@@ -1268,6 +1299,12 @@ def main(argv=None):
     _configure_windows_output()
     try:
         return _main(argv)
+    except sqlite3.OperationalError as err:
+        if not store.is_busy(err):
+            raise
+        print("CBI database is busy with another writer. Wait for the other cbi command "
+              "to finish, then retry.", file=sys.stderr)
+        return 1
     except OSError as err:
         if not _is_broken_pipe(err):
             raise

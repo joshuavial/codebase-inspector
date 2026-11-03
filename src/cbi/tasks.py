@@ -12,6 +12,8 @@ import json
 import os
 import posixpath
 import re
+import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -226,8 +228,9 @@ def attach_cache(conn, *, readonly=False):
 
     A writable attach creates the file and its tables, so one transaction covers both
     databases. A read-only attach opens an existing file with ``mode=ro`` and does not
-    create it, its directory, or a journal. When that file is missing or cannot be
-    opened, the cache is skipped and the model connection stays usable.
+    create the cache or its directory. A protected cache without WAL sidecars is
+    read as a frozen snapshot; a mutable cache uses normal SQLite locking. When
+    the file is missing or cannot be opened, it is skipped and the model stays usable.
     """
     path = cache_path()
     if readonly:
@@ -247,13 +250,17 @@ def attach_cache(conn, *, readonly=False):
 
 
 def _attach_cache_readonly(conn, path):
-    if not path.is_file():
-        return
-    uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     try:
+        if not path.is_file():
+            return
+        uri = store.read_uri(path, frozen_fallback=True)
+        uri = store.validate_read_uri(path, uri, frozen_fallback=True)
         conn.execute("ATTACH DATABASE ? AS cache", (uri,))
         conn.execute("SELECT 1 FROM cache.sqlite_master LIMIT 1").fetchone()
-    except sqlite3.Error:
+        store.note_frozen_read(path, uri)
+    except (OSError, sqlite3.Error) as err:
+        print(f"Cannot read answer cache at {path}: {err}. Continuing with the local model. "
+              "Check cache read permissions or set CBI_CACHE_DIR to an accessible cache directory.", file=sys.stderr)
         try:
             conn.execute("DETACH DATABASE cache")
         except sqlite3.Error:
@@ -1404,6 +1411,19 @@ def submit(conn, task_id, text, root=None, out=None):
     directory; accepting confirm-structure writes structure.json there and reruns detection.
     A busy database rolls the transaction back and retries it.
     """
+    from cbi import team
+
+    def write():
+        # Keep this branch's imported answers protected until refresh and export
+        # finish. Nested task writers join this transaction rather than ending it.
+        team.import_answers(conn, out)
+        return _submit(conn, task_id, text, root, out)
+
+    return store.retry_write(conn, write, immediate=True)
+
+
+def _submit(conn, task_id, text, root, out):
+    """Dispatch within submit's model/cache writer transaction."""
     task, answer = _validated(conn, task_id, text)
     if task["kind"] == "confirm-structure":
         return _submit_structure(conn, task, answer, root, out)
