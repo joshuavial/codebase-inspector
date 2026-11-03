@@ -557,17 +557,30 @@ function changeSummary(parent, conceptId = null) {
   const changes = DIFF.changes || {};
   const summaries = changes.summaries || {};
   const concepts = summaries.concepts || {};
-  if (conceptId && !concepts[conceptId] && !(changes.groups || []).some((g) => g.id === conceptId)) return;
-  if (!conceptId && !summaries.overall && !(changes.groups || []).length) return;
+  if (conceptId && !concepts[conceptId] && !diffConceptItems().some((item) => item.id === conceptId) && !(changes.groups || []).some((g) => g.id === conceptId)) return;
+  if (!conceptId && !summaries.overall && !diffOverviewItems().length && !(changes.groups || []).length) return;
   const answer = conceptId ? concepts[conceptId] : summaries.overall;
   const section = el("section", "change-summary");
   if (answer && answer.state === "answered" && answer.narrative) {
     section.append(el("h3", "", "Agent summary"), el("p", "", answer.narrative));
     if (answer.citations && answer.citations.length) {
-      section.append(el("p", "hint", `Sources: ${answer.citations.join(", ")}`));
+      const sources = el("details", "summary-sources");
+      sources.append(el("summary", "", `Sources (${answer.citations.length})`));
+      for (const citation of answer.citations) {
+        const symbol = symById[citation];
+        const item = conceptId && diffConceptItems().find((row) => row.id === conceptId);
+        const file = diffConceptItems().flatMap((row) => (row.own_modules || row.modules || []).flatMap((mod) => mod.files || [])).find((row) => row.path === citation || row.id === citation);
+        const owner = file && diffConceptItems().find((row) => row.id === file.owner_id);
+        if (symbol || (file && (owner || item))) sources.append(link(citation, () => inspectChangeEvidence(symbol ? citation : file.id, owner || item || {id: symbol.leaf.id}, file && file.state)));
+        else sources.append(el("p", "path", citation));
+      }
+      section.append(sources);
     }
   } else {
-    section.append(el("p", "hint", "Summary pending: run cbi tasks"));
+    const status = answer && answer.state && answer.state !== "pending" ? ` (${answer.state})` : "";
+    section.append(el("p", "hint", `Summary pending: run cbi tasks${status}`));
+    const item = conceptId && diffConceptItems().find((row) => row.id === conceptId);
+    if (item) section.append(el("p", "mechanical-summary", `${changeState(item)} · ${changeCounts(item)}. Intent, user impact and risk await an answered summary.`));
   }
   parent.append(section);
 }
@@ -653,6 +666,51 @@ function changeEvidence(parent, item) {
   parent.append(evidence);
 }
 
+function changeReviewSignals(parent, item) {
+  const section = el("section", "review-signals");
+  section.append(el("h3", "", "Review signals"));
+  const attention = item.attention || {};
+  const observed = (item.relationships || []).filter((row) => row.state !== "unchanged");
+  if (observed.length) {
+    section.append(el("h4", "", "Observed relationship changes"));
+    for (const row of observed) {
+      const p = el("p", "");
+      p.append(`${changeState(row)}: `, link(row.from_name || row.from, () => jump(row.from, null, { force: true })),
+        ` → ${row.label || "uses"} → `, link(row.to_name || row.to, () => jump(row.to, null, { force: true })),
+        row.mechanism ? ` · ${row.mechanism}` : "");
+      if (row.at) p.append(el("small", "path", `Evidence: ${row.at}`));
+      section.append(p);
+    }
+  }
+  const modules = item.modules || [];
+  const gaps = modules.flatMap((module) => (module.files || []).flatMap((file) => (file.symbols || []).filter((symbol) => symbol.untested)));
+  for (const symbol of gaps) section.append(link(`${symbol.name}: no static test link`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+  if (attention.removed_tests) section.append(el("p", "", `${attention.removed_tests} test links removed; inspect test evidence.`));
+  if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) section.append(el("p", "", item.unowned ? "Ownership unresolved: these changes have no concept owner." : "Ownership uncertain: provisional assignment needs review."));
+  for (const move of item.moves || []) {
+    const p = el("p", "");
+    p.append("Ownership move: ", link(move.from_name || "Unowned", () => setDiffScope(move.from)), " → ", link(move.to_name || "Unowned", () => setDiffScope(move.to)));
+    section.append(p);
+  }
+  for (const integration of attention.integrations || []) section.append(el("p", "", `Integration evidence: ${integration}`));
+  const context = (item.relationships || []).filter((row) => row.state === "unchanged");
+  if (context.length) {
+    const details = changeDisclosure("Possible downstream context (inferred)");
+    details.append(el("p", "hint", "These direct neighbours may be affected. The relationship alone does not establish behavioural impact."));
+    for (const row of context) {
+      const p = el("p", "");
+      p.append(link(row.from_name || row.from, () => jump(row.from, null, { force: true })), ` → ${row.label || "uses"} → `,
+        link(row.to_name || row.to, () => jump(row.to, null, { force: true })));
+      details.append(p);
+    }
+    section.append(details);
+  }
+  if (!observed.length && !gaps.length && !(attention.integrations || []).length && !(item.moves || []).length && !attention.removed_tests && !attention.provisional && !item.unowned)
+    section.append(el("p", "hint", "No additional review signals in the structural evidence."));
+  section.append(el("p", "hint", "Risk is unknown from structural evidence. Missing static test links do not establish test coverage."));
+  parent.append(section);
+}
+
 function changesPanel() {
   const panel = document.getElementById("changes");
   panel.hidden = !diffActive();
@@ -690,7 +748,13 @@ function changesPanel() {
     const section = el("section", "selected-change");
     section.append(el("h2", "", selected.name));
     changeSummary(section, selected.id);
+    changeReviewSignals(section, selected);
     changeEvidence(section, selected);
+    if (selected.summary) {
+      const about = changeDisclosure("About this concept");
+      about.append(el("p", "", selected.summary));
+      section.append(about);
+    }
     panel.append(section);
   }
   const active = panel.querySelector('[aria-current="true"]');
@@ -4370,15 +4434,19 @@ function drawer() {
   const g = view.sel && ghostById[view.sel];
   const c = byId[view.sel] || byId[view.focus];
   if (!c) {
-    d.append(el("h2", "", M.workspace), el("p", "", M.summary));
-    changeSummary(d);
+    d.append(el("h2", "", M.workspace));
+    if (!diffActive()) d.append(el("p", "", M.summary));
     d.append(el("p", "hint", "Click a box to open it. Scroll to pan, pinch to zoom. Esc goes up. Backspace goes back."));
     integrationList(d, integrationPoints(null), false);
     envList(d, null, false);
     return;
   }
-  d.append(el("h2", "", c.name), el("p", "", c.summary));
-  changeSummary(d, c.id);
+  d.append(el("h2", "", c.name));
+  if (diffActive()) {
+    const about = changeDisclosure("About this concept");
+    about.append(el("p", "", c.summary));
+    d.append(about);
+  } else d.append(el("p", "", c.summary));
   if (!view.sel && c.id === view.focus) {
     const u = usage(c);
     usageList(d, "Used by", u.by, true);

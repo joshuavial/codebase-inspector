@@ -42,3 +42,18 @@ assert.strictEqual(app.selectedChangeConcept().id,'tasks', 'symbol inspection re
 assert.strictEqual(app.diffConceptItems().length,2);
 assert.strictEqual(typeof app.diffAreaTabs,'undefined');
 console.log('changes index checks passed');
+vm.runInContext(`
+  DIFF.changes.summaries={overall:{state:'answered',narrative:'The task interface changed. Delivery was introduced.',citations:['src/tasks.py']},
+    concepts:{tasks:{state:'answered',narrative:'Task execution accepts an explicit limit. Effects on users and safety are unknown.',citations:['src/tasks.py']}}};
+  DIFF.overview.items[0].children[0].relationships=[
+    {from:'tasks',from_name:'Task runner',to:'delivery',to_name:'Delivery',label:'sends',state:'added',mechanism:'HTTP',at:'src/tasks.py#run'},
+    {from:'entry',from_name:'Entry point',to:'tasks',to_name:'Task runner',label:'calls',state:'unchanged'}];
+  byId.delivery={id:'delivery'};byId.entry={id:'entry'};
+  changesPanel();
+`,app);
+assert.match(text(panel), /Task execution accepts an explicit limit/);
+assert.match(text(panel), /Observed relationship changes.*Added:.*Task runner.*sends.*Delivery/s);
+assert.match(text(panel), /Possible downstream context \(inferred\)/);
+assert.match(text(panel), /Risk is unknown from structural evidence/);
+assert.ok(text(panel).indexOf('Task execution accepts') < text(panel).indexOf('Evidence'), 'narrative precedes evidence');
+console.log('review signals checks passed');
