@@ -203,8 +203,9 @@ def link(m, edges, add):
     # test edges may belong to a support file, which cannot identify which
     # registered fixture (or helper) performed the read.
     from cbi.testing_paths import GlobValue, contexts, resolve_target
-    from cbi.testing_sql import _targets as sql_targets
+    from cbi.testing_sql import AmbiguousGlob, ambiguity_diagnostic, _targets as sql_targets
     supplemental = defaultdict(dict)
+    supplemental_diags = defaultdict(set)
     for context in contexts(m, file_ids=fixture_files):
         dst, _mechanism, value = resolve_target(context)
         src = owner(m, context.fid, context.call)
@@ -213,7 +214,15 @@ def link(m, edges, add):
         if isinstance(context.call.func, ast.Attribute) and context.call.func.attr in {"glob", "rglob"}:
             value = context.value(context.call)
         if isinstance(value, GlobValue):
-            for dst in sql_targets(context, value):
+            try:
+                selected = sql_targets(context, value)
+            except AmbiguousGlob as error:
+                # The ordinary SQL pass already reports test/support files;
+                # registered plugins outside test directories need this path.
+                if m.files[context.fid][2] != "test":
+                    supplemental_diags[src].add(ambiguity_diagnostic(context, error))
+                continue
+            for dst in selected:
                 supplemental[src][dst] = max(supplemental[src].get(dst, 0), 0.8)
 
     def support(fid):
@@ -221,6 +230,7 @@ def link(m, edges, add):
 
     def targets(fixture):
         found = {}
+        diagnostics = set()
         pending = [(fixture.nid, 1.0)]
         seen = set()
         while pending:
@@ -230,6 +240,7 @@ def link(m, edges, add):
             seen.add(src)
             fid = m.nodes[src][3] if src in m.nodes else src
             for evidence in (src, fid):
+                diagnostics.update(supplemental_diags.get(evidence, ()))
                 for dst, conf in supplemental.get(evidence, {}).items():
                     if not support(dst):
                         found[dst] = max(found.get(dst, 0), min(confidence, conf))
@@ -246,9 +257,10 @@ def link(m, edges, add):
             for dst in imports.get(fid, ()):
                 if not support(dst) and m.files[dst][2] == "code":
                     found[dst] = max(found.get(dst, 0), min(confidence, 0.5))
-        return found
+        return found, diagnostics
 
     target_cache = {}
+    fixture_diags = set()
     m.test_fixture_bindings = {}
     for fid, info in metadata.items():
         if not info["tests"]:
@@ -289,5 +301,8 @@ def link(m, edges, add):
                 pending.extend((dependency, (*chain, fixture.nid)) for dependency in fixture.dependencies)
                 if fixture.nid not in target_cache:
                     target_cache[fixture.nid] = targets(fixture)
-                for dst, confidence in target_cache[fixture.nid].items():
+                found, diagnostics = target_cache[fixture.nid]
+                fixture_diags.update(diagnostics)
+                for dst, confidence in found.items():
                     add(test, dst, "tests", "treesitter", confidence, {"via": "fixture", "fixture": fixture.nid})
+    return sorted(fixture_diags)

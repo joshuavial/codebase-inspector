@@ -8,6 +8,17 @@ from functools import lru_cache
 from cbi.testing_paths import GlobValue, PathValue, contexts, read_value
 
 
+class AmbiguousGlob(ValueError):
+    """A relative glob has several plausible tracked working directories."""
+
+
+def ambiguity_diagnostic(context, error):
+    path = context.model.files[context.fid][1]
+    call = context.call
+    return (context.fid, "unsupported_test_mechanism",
+            f"{path}:{call.lineno}:{call.col_offset + 1}: file_glob: {error}")
+
+
 def _matches(path, pattern, recursive=False):
     parts = tuple(path.split("/"))
     wanted = tuple((["**"] if recursive else []) + pattern.split("/"))
@@ -39,7 +50,8 @@ def _targets(context, glob):
             if not directory:
                 break
             directory = posixpath.dirname(directory)
-    for directory in directories:
+    matches = {}
+    for directory in dict.fromkeys(directories):
         prefix = directory.rstrip("/") + "/" if directory not in ("", ".") else ""
         selected = []
         for path, fid in model.by_path[wid].items():
@@ -48,8 +60,11 @@ def _targets(context, glob):
                 if _matches(relative, glob.pattern, glob.recursive):
                     selected.append(fid)
         if selected:
-            return sorted(selected)
-    return []
+            matches[directory] = sorted(selected)
+    if len(matches) > 1:
+        raise AmbiguousGlob("relative directory matches multiple possible working directories: "
+                            + ", ".join(sorted(matches)))
+    return next(iter(matches.values()), [])
 
 
 def link(model, edges, add):
@@ -67,7 +82,12 @@ def link(model, edges, add):
                                      f"{path}:{call.lineno}:{call.col_offset + 1}: file_glob: dynamic pattern or directory prevents tracked SQL binding"))
         if not isinstance(value, GlobValue):
             continue
-        for dst in _targets(context, value):
+        try:
+            targets = _targets(context, value)
+        except AmbiguousGlob as error:
+            diagnostics.add(ambiguity_diagnostic(context, error))
+            continue
+        for dst in targets:
             src = context.owner()
             existing = edges.get((src, dst, "tests", "treesitter"))
             if not existing or existing[0] < 0.8:

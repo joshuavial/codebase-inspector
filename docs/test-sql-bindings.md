@@ -13,3 +13,11 @@ resolver neither reads database contents nor walks the filesystem. It only
 matches SQL paths already in the current workspace model, never files selected
 by a guessed schema or test name. An unresolved pattern produces a
 `unsupported_test_mechanism` diagnostic instead of a speculative test link.
+
+A relative directory is resolved only when one possible working directory
+selects tracked SQL files. If several ancestor directories match, the resolver
+reports the candidate directories as an unsupported resolution boundary and
+adds no SQL binding. A path anchored to `__file__` selects its exact directory.
+The same rule applies inside registered fixtures and their helpers, including
+plugins outside test directories; an ambiguous fixture glob remains unresolved
+and contributes its diagnostic when a test requests that fixture.
