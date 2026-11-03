@@ -216,3 +216,131 @@ def test_fresh_init_then_diff_exposes_default_task_inbox(make_repo, monkeypatch,
     code, output, err = run(capsys, "diff", base, head, "--format", "json")
     assert code == 0, err
     assert json.loads(output)["summaries"]["overall"]["state"] == "answered"
+
+
+def _branch(cid, children):
+    return {"id": cid, "name": cid.title(), "summary": cid.title(), "role": "core", "children": children}
+
+
+def _structural_pair(make_repo, monkeypatch, capsys, tmp_path, before, after):
+    # Only judgement changes: every source file and its body stays byte-for-byte identical.
+    root = make_repo({"a.ts": "export function a() { return 1; }\n",
+                      "b.ts": "export function b() { return 2; }\n",
+                      "c.ts": "export function c() { return 3; }\n"}, name="structural")
+    monkeypatch.chdir(root)
+    scan_into(capsys, tmp_path / "structural-base", _concepts(before, [], []))
+    scan_into(capsys, tmp_path / "structural-head", _concepts(after, [], []))
+    return (store.open_db(tmp_path / "structural-base" / "model.db"),
+            store.open_db(tmp_path / "structural-head" / "model.db"))
+
+
+def _brief_changes(brief):
+    return [change for group in brief["changes"]["groups"] for change in group["changes"]]
+
+
+@pytest.mark.parametrize("operation", ["split", "merged"])
+def test_unchanged_source_split_merge_tasks_cover_every_participant(
+        make_repo, monkeypatch, capsys, tmp_path, operation):
+    whole = [_concept("whole", "Whole", ["a.ts", "b.ts", "c.ts"])]
+    parts = [_concept("first", "First", ["a.ts"]),
+             _concept("second", "Second", ["b.ts", "c.ts"])]
+    before, after = (whole, parts) if operation == "split" else (parts, whole)
+    base, head = _structural_pair(make_repo, monkeypatch, capsys, tmp_path, before, after)
+    try:
+        result = diff.compare(base, head)
+        expected_kind = "concept-" + operation
+        assert any(change["kind"] == expected_kind for group in result["groups"] for change in group["changes"])
+        assert not any(module["files"] for item in result["overview"]["items"] for module in item["modules"])
+        change_summaries.enrich(base, head, result)
+        assert {"whole", "first", "second"} <= set(result["summaries"]["concepts"])
+        for cid in ("whole", "first", "second"):
+            brief = tasks.brief(head, result["summaries"]["concepts"][cid]["task_id"])
+            changes = _brief_changes(brief)
+            assert any(change["kind"] == expected_kind for change in changes), cid
+            assert brief["citations"], cid
+    finally:
+        base.close()
+        head.close()
+
+
+@pytest.mark.parametrize("operation", ["renamed", "added", "removed"])
+def test_nested_structural_change_rolls_up_to_all_ancestors_without_source_churn(
+        make_repo, monkeypatch, capsys, tmp_path, operation):
+    if operation == "renamed":
+        before_leaves = [_concept("target", "Old label", ["a.ts", "b.ts", "c.ts"])]
+        after_leaves = [_concept("target", "New label", ["a.ts", "b.ts", "c.ts"])]
+    else:
+        single = [_concept("stable", "Stable", ["a.ts", "b.ts", "c.ts"])]
+        expanded = [_concept("stable", "Stable", ["a.ts", "b.ts"]),
+                    _concept("target", "Target", ["c.ts"])]
+        before_leaves, after_leaves = (single, expanded) if operation == "added" else (expanded, single)
+    before = [_branch("outer", [_branch("middle", before_leaves)])]
+    after = [_branch("outer", [_branch("middle", after_leaves)])]
+    base, head = _structural_pair(make_repo, monkeypatch, capsys, tmp_path, before, after)
+    try:
+        result = diff.compare(base, head)
+        kind = "concept-" + operation
+        assert any(change["kind"] == kind for group in result["groups"] for change in group["changes"])
+        change_summaries.enrich(base, head, result)
+        for cid in ("target", "middle", "outer"):
+            assert cid in result["summaries"]["concepts"]
+            brief = tasks.brief(head, result["summaries"]["concepts"][cid]["task_id"])
+            assert any(change["kind"] == kind for change in _brief_changes(brief)), cid
+    finally:
+        base.close()
+        head.close()
+
+
+def test_rename_and_reparent_preserves_both_ancestor_chains(
+        make_repo, monkeypatch, capsys, tmp_path):
+    before = [_branch("outer", [
+        _branch("earlier", [_concept("left", "Left", ["a.ts"]),
+                            _concept("target", "Old label", ["c.ts"])]),
+        _branch("later", [_concept("right", "Right", ["b.ts"])]),
+    ])]
+    after = [_branch("outer", [
+        _branch("earlier", [_concept("left", "Left", ["a.ts"])]),
+        _branch("later", [_concept("right", "Right", ["b.ts"]),
+                          _concept("target", "New label", ["c.ts"])]),
+    ])]
+    base, head = _structural_pair(make_repo, monkeypatch, capsys, tmp_path, before, after)
+    try:
+        result = diff.compare(base, head)
+        change_summaries.enrich(base, head, result)
+        for cid in ("target", "earlier", "later", "outer"):
+            assert cid in result["summaries"]["concepts"]
+            brief = tasks.brief(head, result["summaries"]["concepts"][cid]["task_id"])
+            assert any(change["kind"] == "concept-renamed" for change in _brief_changes(brief)), cid
+    finally:
+        base.close()
+        head.close()
+
+
+def test_ancestor_evidence_does_not_combine_paths_from_different_models(
+        make_repo, monkeypatch, capsys, tmp_path):
+    before = [_branch("outer", [
+        _branch("earlier", [_branch("moving", [_concept("keeper", "Keeper", ["a.ts"]),
+                                               _concept("target", "Old label", ["c.ts"])])]),
+        _branch("destination", [_concept("stable", "Stable", ["b.ts"])]),
+    ])]
+    after = [_branch("outer", [
+        _branch("later", [_branch("moving", [_concept("keeper", "Keeper", ["a.ts"])])]),
+        _branch("destination", [_concept("stable", "Stable", ["b.ts"]),
+                                 _concept("target", "New label", ["c.ts"])]),
+    ])]
+    base, head = _structural_pair(make_repo, monkeypatch, capsys, tmp_path, before, after)
+    try:
+        result = diff.compare(base, head)
+        change_summaries.enrich(base, head, result)
+        # Target was below moving only on the base; moving is below later only
+        # on the head. Neither model puts target below later.
+        entry = result["summaries"]["concepts"]["later"]
+        brief = tasks.brief(head, entry["task_id"])
+        assert not any(change["kind"] == "concept-renamed" for change in _brief_changes(brief))
+        for cid in ("moving", "earlier", "destination", "outer"):
+            entry = result["summaries"]["concepts"][cid]
+            brief = tasks.brief(head, entry["task_id"])
+            assert any(change["kind"] == "concept-renamed" for change in _brief_changes(brief))
+    finally:
+        base.close()
+        head.close()

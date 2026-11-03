@@ -7,7 +7,7 @@ from pathlib import Path
 from cbi import change_overview, concepts, store
 
 KIND = "summarise-architecture-change"
-VERSION = 1
+VERSION = 2
 INSTRUCTIONS = (
     "Use only the supplied diff facts, ranked overview and direct relationship context. "
     "Write one plain-language paragraph explaining what changed, why it matters, who or what "
@@ -91,19 +91,22 @@ def enrich(base, head, result):
     base_hash, head_hash = model_hash(base), model_hash(head)
     groups = {g["id"]: g for g in result.get("groups", [])}
     items = {g["id"]: g for g in result.get("overview", {}).get("items", [])}
-    parents, nodes, owners = {}, {}, {}
+    parent_models, nodes, owners = [], {}, {}
     for model in (base, head):
         nodes.update({row[0]: {"kind": row[1], "path": row[2], "name": row[3]}
                       for row in model.execute("SELECT id,kind,path,name FROM nodes")})
-        parents.update(dict(model.execute("SELECT id,parent_id FROM nodes WHERE kind='concept'")))
+        parent_models.append(dict(model.execute("SELECT id,parent_id FROM nodes WHERE kind='concept'")))
         for owner, fid in model.execute("SELECT src,dst FROM edges WHERE kind='owns'"):
             owners.setdefault(fid, set()).add(owner)
 
     def ancestors(cid):
         seen = set()
-        while cid in parents and cid not in seen:
-            seen.add(cid)
-            cid = parents.get(cid)
+        for parents in parent_models:
+            current, visited = cid, set()
+            while current in parents and current not in visited:
+                visited.add(current)
+                seen.add(current)
+                current = parents[current]
         return seen
 
     def file_concepts(file):
@@ -115,7 +118,22 @@ def enrich(base, head, result):
 
     changed_files = [f for item in items.values() for module in item.get("modules", [])
                      for f in module.get("files", [])]
+    # A structural edit can change ownership/hierarchy with identical source bytes.
+    # Discover every participant, and preserve ancestors from both sides of a move.
+    change_scopes = {}
     ids = set(groups) | set(items)
+    for group in groups.values():
+        for change in group["changes"]:
+            participants = {group["id"]}
+            for side in ("before", "after"):
+                participants.update(nid for nid in citations(change.get(side))
+                                    if nodes.get(nid, {}).get("kind") == "concept")
+            scopes = set(participants)
+            for participant in participants:
+                scopes.update(ancestors(participant))
+            key = json.dumps(change, sort_keys=True)
+            change_scopes.setdefault(key, set()).update(scopes)
+            ids.update(scopes)
     for file in changed_files:
         ids.update(file_concepts(file))
     ids = sorted(ids)
@@ -151,7 +169,13 @@ def enrich(base, head, result):
         summaries = {"overall": None, "concepts": {}}
         with conn:
             for cid in [None, *ids]:
-                facts = {"groups": list(groups.values()) if cid is None else [groups[cid]] if cid in groups else [],
+                scoped_groups = []
+                for group in groups.values():
+                    changes = [change for change in group["changes"] if cid is None or cid in
+                               change_scopes[json.dumps(change, sort_keys=True)]]
+                    if changes:
+                        scoped_groups.append({**group, "changes": changes})
+                facts = {"groups": scoped_groups,
                          "overview": result.get("overview", {}) if cid is None else ranked_context(cid)}
                 allowed = sorted(citations(facts) & references)
                 if not allowed:
@@ -183,6 +207,7 @@ def enrich(base, head, result):
                     (task_id, KIND, workspace["id"] if workspace else None, digest, state, json.dumps(inputs)),
                 )
                 entry = {"state": "answered" if accepted else "pending", "task_id": task_id,
+                         "input_hash": digest, "evidence_citations": allowed,
                          "narrative": answer["narrative"] if accepted else None,
                          "citations": answer["citations"] if accepted else []}
                 if cid is None:
@@ -194,6 +219,44 @@ def enrich(base, head, result):
         if owned:
             conn.close()
     return result
+
+
+def refresh(conn, result):
+    """Reload answers without recomputing the structural diff or opening old models.
+
+    The persisted hash identifies the immutable model pair/scope. Its evidence list
+    preserves the same grounding boundary even if rebuilding removed the task rows.
+    Older payloads can recover that metadata from their original task inbox;
+    when neither scoped evidence nor the task survives, they remain pending.
+    """
+    from cbi import tasks
+
+    summaries = result.get("summaries") or {}
+    entries = [summaries.get("overall"), *summaries.get("concepts", {}).values()]
+    changed = False
+    has_cache = any(row[1] == "cache" for row in conn.execute("PRAGMA database_list"))
+    for entry in entries:
+        if not entry:
+            continue
+        before = dict(entry)
+        digest = entry.get("input_hash")
+        allowed = entry.get("evidence_citations")
+        if not digest or allowed is None:
+            row = conn.execute("SELECT input_hash, inputs FROM tasks WHERE id = ?",
+                               (entry.get("task_id"),)).fetchone()
+            if row:
+                digest = row[0]
+                allowed = json.loads(row[1]).get("citations", [])
+        if digest and allowed is not None:
+            entry.update(input_hash=digest, evidence_citations=allowed)
+        answer = tasks._cached_answer(conn, digest) if has_cache and digest else None
+        accepted = (isinstance(answer, dict) and answer.get("narrative") and answer.get("citations")
+                    and allowed is not None and set(answer["citations"]).issubset(allowed))
+        entry.update(state="answered" if accepted else "pending",
+                     narrative=answer["narrative"] if accepted else None,
+                     citations=answer["citations"] if accepted else [])
+        changed |= entry != before
+    return changed
 
 
 def render(result, concept=None, markdown=False):

@@ -1064,6 +1064,14 @@ def _cmd_build_history(args):
     except (OSError, json.JSONDecodeError) as err:
         print(f"cannot read history index: {err}", file=sys.stderr)
         return 1
+    # Cached structural facts stay immutable; answers can arrive between viewer builds.
+    from cbi import change_summaries
+    answer_conn = _read_model(args)
+    try:
+        for entry in entries:
+            change_summaries.refresh(answer_conn, entry["changes"])
+    finally:
+        answer_conn.close()
     payload = []
     for entry in entries:
         base_conn = head_conn = base_src = head_src = None

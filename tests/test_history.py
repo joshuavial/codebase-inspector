@@ -5,7 +5,7 @@ import json
 import sqlite3
 import subprocess
 
-from cbi import history, store
+from cbi import change_summaries, history, store, tasks
 from cbi.cli import main
 
 
@@ -188,3 +188,137 @@ def test_narrative_uses_summarise_change_and_appears_in_outputs(make_repo, monke
     capsys.readouterr()
     assert "This introduces the second architectural function." in (
         root / ".cbi" / "viewer" / "data" / "history.js").read_text()
+
+
+def test_cached_history_refreshes_architecture_answers_without_old_models(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({"a.py": "def a():\n    return 1\n"}, name="summary-history")
+    older = commit(root, "add another function", **{"b.py": "def b():\n    return 2\n"})
+    newest = commit(root, "update another function", **{"b.py": "def b():\n    return 3\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    out = root / ".cbi"
+    (out / "concepts.json").write_text(json.dumps(concept_map(["a.py", "b.py"])))
+    assert main(["scan"]) == 0
+    entries = history.build_history(root, out, "2000-01-01")
+    entry = next(item for item in entries if item["sha"] == older)
+    assert entry["changes"]["summaries"]["overall"]["state"] == "pending"
+    assert main(["build", "--history"]) == 0
+    assert "Summary pending: run cbi tasks" in (out / "viewer/data/history.js").read_text()
+    capsys.readouterr()
+
+    task_id = entry["changes"]["summaries"]["overall"]["task_id"]
+    assert main(["task", task_id, "--json"]) == 0
+    brief = json.loads(capsys.readouterr().out)
+    narrative = "The app gains a second function; its caller impact and motivation are unknown from these facts."
+    answer = tmp_path / "history-answer.json"
+    answer.write_text(json.dumps({"input_hash": brief["input_hash"], "narrative": narrative,
+                                  "citations": ["b.py"]}))
+    assert main(["submit", task_id, str(answer)]) == 0
+    capsys.readouterr()
+
+    # Rescans can discard task rows. The history snapshot itself must retain
+    # enough key/evidence metadata to reload and validate this answer.
+    conn = store.open_db(out / "model.db")
+    try:
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    old_model = out / "refs" / older / "model.db"
+    assert not old_model.exists(), "history should have discarded this old point model"
+    real_point = history.point_model
+
+    def newest_point_only(repo, home, sha, *args):
+        assert sha == newest, "answer refresh must not rebuild an old point"
+        return real_point(repo, home, sha, *args)
+
+    def no_structural_diff(*_args, **_kwargs):
+        raise AssertionError("answer refresh must reuse the structural diff")
+
+    with monkeypatch.context() as stable:
+        stable.setattr(history, "point_model", newest_point_only)
+        stable.setattr(history.diff, "compare_refs", no_structural_diff)
+        refreshed = history.build_history(root, out, "2000-01-01")
+    assert not old_model.exists()
+    assert narrative in history.render(refreshed, "markdown")
+    saved = json.loads((out / "history" / f"{older}.json").read_text())
+    assert saved["changes"]["summaries"]["overall"]["state"] == "answered"
+    assert saved["changes"]["summaries"]["overall"]["citations"] == ["b.py"]
+
+    # Submit another answer after refreshing the history index. A standalone
+    # viewer build must reload it too, without requiring another history command.
+    concept_task = saved["changes"]["summaries"]["concepts"]["app"]["task_id"]
+    assert main(["task", concept_task, "--json"]) == 0
+    brief = json.loads(capsys.readouterr().out)
+    concept_narrative = "A second application function is added; risk and user impact need further review."
+    answer.write_text(json.dumps({"input_hash": brief["input_hash"], "narrative": concept_narrative,
+                                  "citations": ["b.py"]}))
+    assert main(["submit", concept_task, str(answer)]) == 0
+    capsys.readouterr()
+
+    # Viewer generation still rebuilds the point pictures by design, but its text
+    # and comparison payload must use the refreshed answer from the cached entry.
+    assert main(["build", "--history"]) == 0
+    script = (out / "viewer/data/history.js").read_text()
+    payload = json.loads(script[len('cbiLoad("history", '):-3])
+    shown = next(item for item in payload["entries"] if item["sha"] == older)
+    assert narrative in shown["text"]
+    assert shown["diff"]["changes"]["summaries"]["overall"]["narrative"] == narrative
+    assert concept_narrative in shown["text"]
+    assert shown["diff"]["changes"]["summaries"]["concepts"]["app"]["narrative"] == concept_narrative
+
+
+def test_history_snapshot_refresh_rejects_ungrounded_cached_answers(tmp_path):
+    conn = store.open_db(tmp_path / "model.db")
+    tasks.attach_cache(conn)
+    digest = "history-snapshot-answer"
+    entry = {"task_id": "missing-task", "input_hash": digest, "evidence_citations": ["a.py"],
+             "state": "pending", "narrative": None, "citations": []}
+    result = {"summaries": {"overall": entry, "concepts": {}}}
+    try:
+        conn.execute("INSERT INTO cache.summary_answers VALUES (?, ?)",
+                     (digest, json.dumps({"narrative": "The app changes.", "citations": ["a.py"]})))
+        conn.commit()
+        assert change_summaries.refresh(conn, result)
+        assert entry["state"] == "answered"
+        assert not change_summaries.refresh(conn, result), "unchanged cache state should not rewrite history"
+        conn.execute("UPDATE cache.summary_answers SET answer = ? WHERE input_hash = ?",
+                     (json.dumps({"narrative": "An unsupported claim.", "citations": ["outside.py"]}), digest))
+        conn.commit()
+        assert change_summaries.refresh(conn, result)
+        assert entry["state"] == "pending"
+        assert entry["narrative"] is None
+        assert entry["citations"] == []
+    finally:
+        conn.close()
+
+
+def test_legacy_summary_without_scoped_evidence_stays_pending(tmp_path):
+    conn = store.open_db(tmp_path / "model.db")
+    tasks.attach_cache(conn)
+    digest = "0123456789abcdef" + "a" * 48
+    entry = {"task_id": "sac-" + digest[:16], "state": "answered",
+             "narrative": "A stale summary.", "citations": ["first.py"]}
+    result = {
+        "groups": [
+            {"id": "first", "changes": [{"code": [{"path": "first.py"}]}]},
+            {"id": "second", "changes": [{"code": [{"path": "second.py"}]}]},
+        ],
+        "summaries": {"overall": None, "concepts": {"first": entry}},
+    }
+    try:
+        # A unique cache prefix identifies an answer, but cannot recover the leaf's
+        # original evidence boundary after both its task row and metadata are gone.
+        conn.execute("INSERT INTO cache.summary_answers VALUES (?, ?)",
+                     (digest, json.dumps({"narrative": "The sibling changed.", "citations": ["second.py"]})))
+        conn.commit()
+        assert change_summaries.refresh(conn, result)
+        assert entry["state"] == "pending"
+        assert entry["narrative"] is None
+        assert entry["citations"] == []
+        assert "input_hash" not in entry
+        assert "evidence_citations" not in entry
+        assert not change_summaries.refresh(conn, result)
+    finally:
+        conn.close()
