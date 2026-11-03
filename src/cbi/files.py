@@ -18,6 +18,8 @@ from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, re
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
 PARSER_VERSION = 25
+# Rebuild file roles after policy changes without invalidating parsed symbols.
+CLASSIFICATION_VERSION = 1
 
 CODE_LANGS = {
     ".py": "python",
@@ -361,8 +363,6 @@ SHELL_LANGS = {".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell
 STYLE_LANGS = {".css": "css", ".scss": "scss", ".sass": "sass", ".less": "less"}
 MARKUP_LANGS = {".html": "html", ".htm": "html", ".svelte": "svelte", ".astro": "astro"}
 SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, **STYLE_LANGS, **MARKUP_LANGS, ".sql": "sql"}
-NAMED_SOURCE_FILES = {"cmakelists.txt", "makefile", "gnumakefile", "dockerfile", "containerfile", "justfile"}
-NAMED_SOURCE_PREFIXES = ("makefile.", "gnumakefile.", "dockerfile.", "containerfile.", "justfile.")
 
 
 def shebang_language(content):
@@ -385,10 +385,22 @@ def shebang_language(content):
 
 def source_like(path, content=None):
     """Tracked source policy, independent of available symbol parsers."""
-    name = posixpath.basename(path).casefold()
-    return (name in NAMED_SOURCE_FILES or name.startswith(NAMED_SOURCE_PREFIXES)
+    return (named_source_language(path) is not None
             or posixpath.splitext(path)[1].lower() in SOURCE_LANGS
             or shebang_language(content) is not None)
+
+
+def named_source_language(path):
+    """Language labels for build sources, whether or not a parser is available."""
+    name = posixpath.basename(path).casefold()
+    if name == "cmakelists.txt":
+        return "cmake"
+    for stem, language in (("makefile", "make"), ("gnumakefile", "make"),
+                           ("dockerfile", "dockerfile"), ("containerfile", "dockerfile"),
+                           ("justfile", "just")):
+        if name == stem or name.startswith(stem + "."):
+            return language
+    return None
 
 
 def classify(path, test_roots=(), content=None):
@@ -402,9 +414,10 @@ def classify(path, test_roots=(), content=None):
     """
     name = posixpath.basename(path)
     ext = posixpath.splitext(name)[1].lower()
-    if ext in DOC_EXTS:
+    named_lang = named_source_language(path)
+    if ext in DOC_EXTS and not named_lang:
         return "doc", "markdown"
-    lang = SOURCE_LANGS.get(ext) or shebang_language(content)
+    lang = named_lang or SOURCE_LANGS.get(ext) or shebang_language(content)
     if not lang:
         return "other", None
     if (TEST_NAME.match(name) or name == "conftest.py" or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
@@ -632,6 +645,7 @@ def fingerprint(workspaces, ignore_text, structure_text, concepts_text=None, scr
         "concepts": ignore_token(concepts_text),
         "screens": ignore_token(screens_text),
         "parser_version": PARSER_VERSION,
+        "classification_version": CLASSIFICATION_VERSION,
         "workspaces": [
             [ws["id"], ws["root"], ws["name"], ws["attrs"]["pinned_commit"],
              ws["attrs"]["checked_out_commit"], ws["attrs"]["initialised"]]
