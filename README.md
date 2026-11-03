@@ -85,6 +85,19 @@ cbi check              # CI gate: fail if committed map drifts from source
 
 ---
 
+## Team mode and CI
+
+Run `cbi team init` to opt the repository into committed judgement. Add the printed job steps to your CI workflow:
+
+```yaml
+  - uses: actions/checkout@v4
+  - uses: astral-sh/setup-uv@v5
+  - run: uv tool install .
+  - run: cbi check
+```
+
+The gate reads the working tree and committed answers without calling a model. Commit `.cbi/answers.jsonl`, `concepts.json`, `structure.json`, `screens.json`, `ignore`, `team.toml` and the generated `.gitignore` as appropriate for the repository.
+
 ## Explain an architectural change
 
 Run `cbi diff BASE HEAD` or `cbi review BASE..HEAD` to open judgement tasks for each changed concept and the whole diff. The tool supplies facts; an agent supplies the explanations.
