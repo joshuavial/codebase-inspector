@@ -441,6 +441,9 @@ def _docker_state(ws, path, context, target=None):
             if dest_dir:
                 _remember_image_directory(state, dest)
             for source in sources:
+                if "$" in source:
+                    _forget_image_destination(state, dest)
+                    continue
                 if "://" in source:
                     try:
                         basename = posixpath.basename(unquote(urlsplit(source).path)) or None
@@ -448,9 +451,9 @@ def _docker_state(ws, path, context, target=None):
                         basename = None
                     _forget_image_destination(state, dest, directory=dest_dir, basename=basename)
                     continue
-                if "$" in source or has_magic(source):
+                if has_magic(source):
                     basename = None
-                    if "$" not in source and instruction == "COPY" and not external and not source.endswith("/"):
+                    if instruction == "COPY" and not external and not source.endswith("/"):
                         pattern = _image_path("/" if origin else "/" + context, source.lstrip("/"))
                         directories = set(origin["dirs"]) if origin else {"/"}
                         for file in available:

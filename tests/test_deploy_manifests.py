@@ -616,3 +616,15 @@ def test_exec_entrypoint_keeps_literal_command_argument_operators(make_repo):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'start.py'
+
+
+@pytest.mark.parametrize('filename', ['${FILE}', '$FILE'])
+def test_dynamic_remote_filename_invalidates_destination_provenance(make_repo, filename):
+    files = {
+        'Dockerfile': 'FROM python\nARG FILE=start.py\nCOPY start.py /app/\n'
+                      f'ADD https://example.org/{filename} /app/\nCMD ["python", "/app/start.py"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', None)]
