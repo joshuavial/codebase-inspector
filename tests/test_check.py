@@ -264,3 +264,24 @@ def test_check_validates_original_concepts_after_scan(make_repo, monkeypatch, ca
     assert check.run(root, out, None, "text", rewriting_scan) == 1
     assert (out / "concepts.json").read_text() == original
     assert "concepts.json does not match the model" in capsys.readouterr().out
+
+
+def test_check_rejects_a_missing_cached_concepts_document(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import store
+
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="missing-map")
+    out = root / ".cbi"
+    before_answers = (out / "answers.jsonl").read_bytes()
+    (out / "concepts.json").unlink()
+
+    code, output, error = run(capsys, "check")
+
+    assert code == 1, output + error
+    assert ".cbi/concepts.json: concepts.json is missing but the model contains its projection" in output
+    assert not (out / "concepts.json").exists()
+    assert (out / "answers.jsonl").read_bytes() == before_answers
+    conn = store.open_db(out / "model.db")
+    try:
+        assert conn.execute("SELECT count(*) FROM nodes WHERE kind = 'concept'").fetchone()[0] == 2
+    finally:
+        conn.close()

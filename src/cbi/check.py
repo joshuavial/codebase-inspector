@@ -242,9 +242,20 @@ def _json_findings(conn, root, out):
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
-        if not path.is_file() or not path.read_text().strip():
+        text = path.read_text() if path.is_file() else None
+        if text is None or not text.strip():
+            if name == "concepts.json" and (
+                (store.get_meta(conn, "concepts_json") or "").strip()
+                or not concepts.projection_matches(conn, None)
+            ):
+                state = "missing" if text is None else "empty"
+                found.append(_finding(
+                    "json", _show(root, path),
+                    f"concepts.json is {state} but the model contains its projection",
+                    name,
+                ))
             continue
-        for message in checker(conn, path.read_text()):
+        for message in checker(conn, text):
             found.append(_finding("json", _show(root, path), message, name))
     return found
 
