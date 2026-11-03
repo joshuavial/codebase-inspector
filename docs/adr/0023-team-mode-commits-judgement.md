@@ -41,3 +41,10 @@ row in a union merge. Retired keys are removed from the attached cache and are
 never eligible for automatic restoration, even if source later returns to its
 old content. A new explicit submit may accept that input again. Historical
 file and group summaries remain reusable by content as before.
+
+
+Automatic concept restoration checks the team retirement marker before reading
+the shared cache. Deleting a retired cache row during import alone is not
+sufficient: another model can subsequently publish that old input hash again.
+The marker remains authoritative even when the row reappears. An explicit new
+submission may still accept a reviewed answer for that input.

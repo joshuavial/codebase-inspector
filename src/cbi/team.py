@@ -150,6 +150,16 @@ def committed_answer(out, kind, key, protocol):
     return row["answer"] if row and not row.get("superseded_by") and row["protocol"] == protocol else None
 
 
+def answer_superseded(out, kind, key):
+    """Whether this model's team history forbids automatically restoring a key."""
+    directory = team_dir(out)
+    path = directory / ANSWERS_NAME if directory is not None else None
+    if path is None or not path.is_file():
+        return False
+    row = _parse(path.read_text()).get((kind, key))
+    return bool(row and row.get("superseded_by"))
+
+
 def committed_answers_changed(conn, out):
     """Whether team answers differ from the answers in this model's last scan."""
     directory = team_dir(out)

@@ -508,3 +508,48 @@ def test_supersession_survives_union_merge_order():
     for records in ([live, retired], [retired, live]):
         parsed = team._parse("\n".join(json.dumps(row) for row in records))
         assert parsed[("define-concepts", "old")]["superseded_by"] == "new"
+
+
+def test_retired_concept_hash_is_not_restored_from_repopulated_cache(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import concepts
+
+    root = make_repo(MAP, name="retired-cache")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    out = root / ".cbi"
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    old = concepts_answer(baseline)
+    assert submit(capsys, tmp_path, task_id, old)[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// revised\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    brief = run_json(capsys, "task", task_id)
+    replacement = concepts_answer(brief)
+    replacement["summary"] = "The replacement map."
+    assert submit(capsys, tmp_path, task_id, replacement)[0] == 0
+    (root / "b.ts").write_text(original)
+    (out / "concepts.json").unlink()
+    assert main(["scan"]) == 0
+    assert not (out / "concepts.json").exists()
+
+    # A historical cache user can publish this old input again after the import.
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                     (baseline["input_hash"], json.dumps(concepts._body(old))))
+        concepts.refresh(conn, out, root)
+    conn.close()
+    assert not (out / "concepts.json").exists()
+    reviewed = concepts_answer(run_json(capsys, "task", task_id))
+    reviewed["summary"] = "The explicitly reviewed map."
+    assert submit(capsys, tmp_path, task_id, reviewed)[0] == 0
+    assert json.loads((out / "concepts.json").read_text())["summary"] == reviewed["summary"]

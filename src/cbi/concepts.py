@@ -665,7 +665,7 @@ def refresh(conn, out=None, root=None, previous=None):
     files = [f for f in tracked if f["role"] in ("code", "test")]
     pairs = _pairs(conn, files)
     digest = _input_hash(files, pairs)
-    cached = _cached(conn, digest)
+    cached = None if team.answer_superseded(out, "define-concepts", digest) else _cached(conn, digest)
     committed = team.committed_answer(out, "define-concepts", digest, tasks.PROTOCOL_VERSION)
     previous_data = _document(previous)
     if team.committed_answers_changed(conn, out) and isinstance(committed, dict) \
