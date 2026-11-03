@@ -49,18 +49,20 @@ When AI coding agents enter a large codebase, they burn thousands of tokens in r
 
 ### One-line Run (uvx)
 ```bash
-uvx cbi prime
+uvx --from git+https://github.com/joshuavial/codebase-inspector cbi prime
 ```
 
 ### Install CLI
 ```bash
-uv tool install codebase-inspector
-```
-
-*(From source or git)*
-```bash
 uv tool install git+https://github.com/joshuavial/codebase-inspector
 ```
+
+From a local checkout:
+```bash
+uv tool install .
+```
+
+Then run `cbi prime`, followed by `cbi init` and `cbi scan` when prompted.
 
 ---
 
@@ -76,7 +78,7 @@ cbi show <node-id>     # Detailed symbol info, callers, and children
 cbi tests-for <symbol> # Find all tests exercising this symbol
 cbi cycles             # Detect circular import dependencies
 cbi hotspots           # Rank files and folders by coupling (fan-in/fan-out)
-cbi review <base..head># Generate architectural PR review & Mermaid graph
+cbi review BASE..HEAD  # Generate architectural PR review & Mermaid graph
 cbi build              # Export interactive static HTML viewer
 cbi check              # CI gate: fail if committed map drifts from source
 ```
@@ -116,7 +118,7 @@ Pre-built desktop packages for macOS, Windows, and Linux are available on the [R
 
 CBI makes a strict guarantee: **The tool itself never calls an LLM.**
 
-Static facts (ASTs, symbols, imports, call graphs, routes, SQL schemas, test links) are computed 100% deterministically. High-level semantic summaries (concepts, file summaries, change narratives) are populated by your coding agent through the `cbi tasks` / `cbi submit` protocol and committed to `.cbi/team/`.
+Static facts (ASTs, symbols, imports, call graphs, routes, SQL schemas, test links) are computed 100% deterministically. High-level semantic summaries (concepts, file summaries, change narratives) are populated by your coding agent through the `cbi tasks` / `cbi submit` protocol and committed under `.cbi/` in team mode (`answers.jsonl`, `concepts.json`, `structure.json` and `screens.json`).
 
 Read the full specification: [`docs/determinism-and-enrichment.md`](docs/determinism-and-enrichment.md).
 
