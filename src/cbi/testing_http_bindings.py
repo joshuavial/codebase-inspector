@@ -118,7 +118,13 @@ def link(m, edges, add):
     for fid, tree in modules.items():
         for node in ast.walk(tree):
             if isinstance(node, FUNCTIONS):
-                functions[owner(m, fid, node)] = (fid, node)
+                nid = owner(m, fid, node)
+                start = min([node.lineno, *(decorator.lineno for decorator in node.decorator_list)])
+                span = m.node_spans.get(nid)
+                # A nested, unmodeled definition belongs to its enclosing
+                # symbol's span; it must not replace that symbol's body.
+                if span and span[0] == start:
+                    functions[nid] = (fid, node)
     fixture_contexts = getattr(m, "test_fixture_bindings", {})
     diagnostics = set()
 

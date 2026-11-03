@@ -18,7 +18,9 @@ mock-only applications do not imply a test link to a production route.
 Registered pytest fixtures reuse the fixture resolver's selected bindings,
 including named fixtures and ancestor `conftest.py` registrations. A fixture that
 returns or yields a statically identified client supplies that client's app
-context to its requesting test. Ordinary helper functions with fixture-like names
+context to its requesting test. Function indexing matches each AST declaration
+(including its first decorator) to the corresponding modeled symbol start. An
+unmodeled nested helper cannot replace its enclosing test or fixture body. Ordinary helper functions with fixture-like names
 do not register a client. Parsing and matching never import or run target code.
 
 Dynamic URLs and application arguments that cannot identify a tracked app receive

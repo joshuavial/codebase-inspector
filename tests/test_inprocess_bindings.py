@@ -170,3 +170,46 @@ def test_actual_global():
     assert ("test_before_local_assignment", "ready") not in links
     assert ("test_conditional_client", "ready") not in links
     assert ("test_conditional_app", "ready") not in links
+
+
+def test_unused_nested_definitions_do_not_replace_test_or_fixture_bodies(make_repo, monkeypatch):
+    root = make_repo({
+        "server.py": '''from fastapi import FastAPI
+app = FastAPI()
+@app.get("/ready")
+def ready(): return {}
+other = FastAPI()
+@other.get("/admin")
+def admin(): return {}
+''',
+        "tests/conftest.py": '''import pytest
+from fastapi.testclient import TestClient
+from server import app, other
+
+@pytest.fixture
+def api_client():
+    def unused_fixture_helper():
+        TestClient(other).get("/admin")
+    return TestClient(app)
+''',
+        "tests/test_requests.py": '''import pytest
+from fastapi.testclient import TestClient
+from server import other
+
+def test_actual_request(api_client):
+    api_client.get("/ready")
+    def unused_test_helper():
+        TestClient(other).get("/admin")
+
+@pytest.mark.usefixtures("api_client")
+def test_fixture_request(api_client):
+    api_client.get("/ready")
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    links = _links(root)
+    assert ("test_actual_request", "ready") in links
+    assert ("test_fixture_request", "ready") in links
+    assert ("test_actual_request", "admin") not in links
+    assert ("test_fixture_request", "admin") not in links
