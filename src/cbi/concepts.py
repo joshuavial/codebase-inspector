@@ -658,7 +658,7 @@ def refresh(conn, out=None, root=None, previous=None):
     text = store.get_meta(conn, "concepts_json")
     if text is None and out is not None:
         path = out / "concepts.json"
-        text = path.read_text() if path.exists() else ""
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         store.set_meta(conn, "concepts_json", text)
     data = _document(text)
     tracked = _tracked_files(conn)
@@ -712,7 +712,7 @@ def accept(conn, task, answer, out, root=None):
         raise tasks.AnswerError("\n".join(errors + warnings))
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
-    current = (out / "concepts.json").read_text() if (out / "concepts.json").exists() else None
+    current = (out / "concepts.json").read_text(encoding="utf-8") if (out / "concepts.json").exists() else None
     if (_cached(conn, task["input_hash"]) == body and current == text and not warnings
             and not team.answer_superseded(out, "define-concepts", task["input_hash"])
             and not team.answer_conflicts(out, "define-concepts")):

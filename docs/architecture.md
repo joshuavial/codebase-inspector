@@ -414,3 +414,15 @@ The generated artifact preservation policy also recognizes named build sources:
 These remain mapped when added after initialization in data-heavy directories,
 for both working-tree and historical scans. Ordinary saved `.txt` output remains
 excluded by the generated artifact rules.
+
+
+## Text encoding (2026-11-03)
+
+Repository manifests, judgement JSON/TOML, history data and coverage/test-result
+artifacts are read explicitly as UTF-8 on every platform, including Windows.
+Structured readers use strict decoding; manifest readers that already ignore
+invalid manifests also ignore decoding failures. Other uncaught decoding failures
+produce a CLI error asking the user to save the input as UTF-8 and retry.
+Source and documentation excerpts retain their existing replacement policy:
+undecodable bytes become U+FFFD so a brief or static analysis can continue.
+Both working-tree and historical Git readers use these same encodings.

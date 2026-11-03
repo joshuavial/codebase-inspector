@@ -123,7 +123,7 @@ def index(conn, root):
             "SELECT id, workspace_id, path, name FROM nodes WHERE kind = 'doc'").fetchall():
         top = targets.top(wid, path)
         try:
-            text = (root / top).read_text(errors="replace")
+            text = (root / top).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         heading = title(text)

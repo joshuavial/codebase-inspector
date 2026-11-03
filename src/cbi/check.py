@@ -63,7 +63,7 @@ def run(root, out, base_ref, fmt, scan):
         scan(root, out)
         restore(out, saved)
         result = _report(root, out, base, fmt)
-        files.report_excluded_source(root, (out / "ignore").read_text())
+        files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
         return result
     finally:
         restore(out, saved)
@@ -242,7 +242,7 @@ def _json_findings(conn, root, out):
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
-        text = path.read_text() if path.is_file() else None
+        text = path.read_text(encoding="utf-8") if path.is_file() else None
         if text is None or not text.strip():
             if name == "concepts.json" and (
                 (store.get_meta(conn, "concepts_json") or "").strip()
@@ -360,7 +360,7 @@ def _stale_findings(conn, root, out):
     if team.team_dir(out) is None:
         return []
     path = _answers_file(out)
-    have = team._parse(path.read_text()) if path.is_file() else {}
+    have = team._parse(path.read_text(encoding="utf-8")) if path.is_file() else {}
     found = []
     shown = _show(root, path)
     for (kind, key), row in sorted(have.items()):
@@ -393,7 +393,7 @@ def _secret_findings(conn, root, out):
     tracked = set(tasks._tracked_paths(conn))
     if path.is_file():
         shown = _show(root, path)
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:

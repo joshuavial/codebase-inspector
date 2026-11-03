@@ -102,7 +102,7 @@ def _read(repo, top):
         return None
     try:
         base = Path(repo) if isinstance(repo, (str, bytes)) else repo
-        return (base / top).read_text(errors="replace")
+        return (base / top).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
 
