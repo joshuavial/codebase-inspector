@@ -230,9 +230,11 @@ DESCRIPTIONS = {
     "init": """\
 Create .cbi/ in the root of the git repo containing the current directory.
 .cbi/ holds a .gitignore of `*`, so no tracked file changes, and `ignore`,
-a gitignore-syntax list of tracked paths to leave out of the model (build
-output, data dirs, minified files, and fixtures or test-data dirs that are
-mostly data). Edit `ignore` freely; rerunning
+a gitignore-syntax list of tracked artifacts to leave out of the model
+(minified bundles, identified virtualenvs, and saved data patterns
+in data-heavy directories). Source in build, eval and fixture directories
+stays mapped. Prints the number of excluded tracked executable files.
+Edit `ignore` freely; rerunning
 init keeps it and changes nothing else. A team repo (`.cbi/team.toml`)
 keeps its derived-only gitignore; init does not replace that with `*`.
 
@@ -457,6 +459,7 @@ def cmd_init(args):
     else:
         ignore.write_text(files.default_ignore(root))
         print(f"Created {out} and wrote {ignore}. Edit it to skip more paths, then run `cbi scan`.")
+    files.report_excluded_source(root, ignore.read_text())
     return 0
 
 
@@ -510,7 +513,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
             if not shortcut:
                 previous_concepts = store.get_meta(conn, "concepts_json")
                 known = {r[0] for r in conn.execute("SELECT id FROM nodes WHERE kind = 'file'")}
-                store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states))
+                store.replace_enumerated_nodes(conn, files.build_nodes(workspaces, tracked, states, root))
                 _parse_changed(conn, root, tracked, states, old, known, parsed)
                 store.drop_orphan_symbols(conn)
                 resolve.resolve(conn, root)
@@ -643,6 +646,7 @@ def cmd_scan(args):
         status = "reused" if reused else "scanned"
     else:
         shortcut, counts, task_counts = scan(root, out)
+        files.report_excluded_source(root, _read(out / "ignore"))
         status = "no changes since the last scan" if shortcut else "scanned"
     elapsed = time.perf_counter() - start
     print(f"{status} in {elapsed:.1f} s")

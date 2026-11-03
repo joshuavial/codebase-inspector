@@ -61,7 +61,10 @@ def run(root, out, base_ref, fmt, scan):
     saved = snapshot(out)
     try:
         scan(root, out)
-        return _report(root, out, base, fmt)
+        restore(out, saved)
+        result = _report(root, out, base, fmt)
+        files.report_excluded_source(root, (out / "ignore").read_text())
+        return result
     finally:
         restore(out, saved)
 
@@ -239,9 +242,20 @@ def _json_findings(conn, root, out):
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
-        if not path.is_file() or not path.read_text().strip():
+        text = path.read_text() if path.is_file() else None
+        if text is None or not text.strip():
+            if name == "concepts.json" and (
+                (store.get_meta(conn, "concepts_json") or "").strip()
+                or not concepts.projection_matches(conn, None)
+            ):
+                state = "missing" if text is None else "empty"
+                found.append(_finding(
+                    "json", _show(root, path),
+                    f"concepts.json is {state} but the model contains its projection",
+                    name,
+                ))
             continue
-        for message in checker(conn, path.read_text()):
+        for message in checker(conn, text):
             found.append(_finding("json", _show(root, path), message, name))
     return found
 
@@ -304,6 +318,8 @@ def _concept_errors(conn, text):
         failed, _warnings = concepts.problems(conn, body)
     except (KeyError, TypeError) as err:
         return [f"failed its checks ({err})"]
+    if not failed and not concepts.projection_matches(conn, text):
+        failed.append("concepts.json does not match the model; run `cbi scan` and review the concept map")
     return failed
 
 
@@ -339,6 +355,12 @@ def _stale_findings(conn, root, out):
     have = team._parse(path.read_text()) if path.is_file() else {}
     found = []
     shown = _show(root, path)
+    for (kind, key), row in sorted(have.items()):
+        if row.get("conflicts"):
+            found.append(_finding(
+                "json", shown, f"conflicting accepted answers for {kind} {key}; submit a reviewed answer",
+                "conflicting answers",
+            ))
     for key, row in sorted(team._collect(conn).items()):
         current = have.get(key)
         if current is None:
@@ -370,10 +392,13 @@ def _secret_findings(conn, root, out):
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            answer = data.get("answer") if isinstance(data, dict) else None
             task_kind = data.get("kind") if isinstance(data, dict) else None
-            ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
-            kind = _answer_secret(answer, ignored)
+            kind = None
+            for answer in _record_answer_payloads(data):
+                ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
+                kind = _answer_secret(answer, ignored)
+                if kind:
+                    break
             if not kind:
                 continue
             key = (data.get("kind"), data.get("key"), kind)
@@ -394,6 +419,17 @@ def _secret_findings(conn, root, out):
             "secret",
         ))
     return found
+
+
+def _record_answer_payloads(record):
+    """All raw answer bodies, including alternatives a causal merge resolves."""
+    if not isinstance(record, dict):
+        return
+    yield record.get("answer")
+    conflicts = record.get("conflicts")
+    if isinstance(conflicts, list):
+        for candidate in conflicts:
+            yield from _record_answer_payloads(candidate)
 
 
 def _answer_secret(answer, ignored=()):

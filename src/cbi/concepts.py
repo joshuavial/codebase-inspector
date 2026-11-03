@@ -198,7 +198,7 @@ def _pairs(conn, files):
 def _input_hash(files, pairs):
     from cbi import tasks
     payload = ["define-concepts", tasks.PROTOCOL_VERSION,
-               [[f["path"], f["content_hash"]] for f in files],
+               [[f["path"], f["content_hash"], f["summary"]] for f in files],
                [[p["from"], p["to"], p["kind"], p["count"]] for p in pairs]]
     return hashlib.sha1(json.dumps(payload).encode()).hexdigest()[:16]
 
@@ -369,6 +369,30 @@ def apply(conn, text):
         edges,
     )
     return old, [n["id"] for n in nodes]
+
+
+def projection_matches(conn, text):
+    """Compare the model with a fresh projection without changing any stored state."""
+    def projected():
+        nodes = [tuple(row) for row in conn.execute(
+            "SELECT id, parent_id, kind, display_kind, name, workspace_id, summary, attrs "
+            "FROM nodes WHERE kind = 'concept' OR "
+            "(kind = 'external' AND json_extract(attrs, '$.source') = 'concepts') ORDER BY id"
+        )]
+        edges = [tuple(row) for row in conn.execute(
+            "SELECT src, dst, kind, confidence, weight, attrs, ordinal FROM edges "
+            "WHERE source = 'agent' AND kind IN ('owns', 'relates') ORDER BY src, dst, kind, ordinal"
+        )]
+        return nodes, edges
+
+    before = projected()
+    conn.execute("SAVEPOINT concept_projection_check")
+    try:
+        apply(conn, text)
+        return before == projected()
+    finally:
+        conn.execute("ROLLBACK TO concept_projection_check")
+        conn.execute("RELEASE concept_projection_check")
 
 
 # --- checks ---------------------------------------------------------------------
@@ -641,8 +665,10 @@ def refresh(conn, out=None, root=None, previous=None):
     files = [f for f in tracked if f["role"] in ("code", "test")]
     pairs = _pairs(conn, files)
     digest = _input_hash(files, pairs)
-    cached = _cached(conn, digest)
     committed = team.committed_answer(out, "define-concepts", digest, tasks.PROTOCOL_VERSION)
+    cached = None
+    if not team.answer_superseded(out, "define-concepts", digest):
+        cached = committed if committed is not None else _cached(conn, digest)
     previous_data = _document(previous)
     if team.committed_answers_changed(conn, out) and isinstance(committed, dict) \
             and previous_data is not None and committed != previous_data \
@@ -663,7 +689,8 @@ def refresh(conn, out=None, root=None, previous=None):
         _save_snapshot(conn, tracked, cached)
         data = cached
     review, removed = _classify(conn, tracked, data)
-    state = "done" if data is not None and not review and not removed else "open"
+    conflicted = bool(team.answer_conflicts(out, "define-concepts"))
+    state = "done" if data is not None and not review and not removed and not conflicted else "open"
     conn.execute(
         "INSERT INTO tasks (id, kind, node_id, input_hash, state, depends_on, inputs) "
         "VALUES (?, 'define-concepts', ?, ?, ?, '[]', ?) "
@@ -686,7 +713,9 @@ def accept(conn, task, answer, out, root=None):
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
     current = (out / "concepts.json").read_text() if (out / "concepts.json").exists() else None
-    if _cached(conn, task["input_hash"]) == body and current == text and not warnings:
+    if (_cached(conn, task["input_hash"]) == body and current == text and not warnings
+            and not team.answer_superseded(out, "define-concepts", task["input_hash"])
+            and not team.answer_conflicts(out, "define-concepts")):
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
@@ -695,6 +724,7 @@ def accept(conn, task, answer, out, root=None):
         _save_snapshot(conn, _tracked_files(conn), body)
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
                      (task["input_hash"], json.dumps(body)))
+        team.supersede(conn, out, "define-concepts", task["input_hash"])
         before = {row[0] for row in conn.execute("SELECT id FROM tasks WHERE state = 'open'")}
         refresh(conn, out, root)
         store.reindex(conn, old + new)
@@ -709,6 +739,7 @@ def accept(conn, task, answer, out, root=None):
 
 def brief_body(conn, task):
     """The define-concepts inputs: structure, the files to assign, pairs, and the current map."""
+    from cbi import team
     workspace = _workspace(conn) or {"id": task["node_id"], "name": "", "summary": None}
     tracked = _tracked_files(conn)
     files = [f for f in tracked if f["role"] in ("code", "test")]
@@ -742,6 +773,10 @@ def brief_body(conn, task):
     for name, attrs in conn.execute("SELECT name, attrs FROM nodes WHERE kind = 'env' ORDER BY name"):
         attrs = json.loads(attrs or "{}")
         env.append({"name": name, "default": attrs.get("default"), "declared_in": attrs.get("declared_in")})
+    conflicts = [row for revision in team._answer_revisions(conn).get("define-concepts", {}).values()
+                 for row in revision.get("conflicts", [])]
+    conflict_brief = ({"conflicting_acceptances": [row["acceptance_id"] for row in conflicts],
+                       "conflict_source": "answers.jsonl"} if conflicts else {})
     return {
         "checks": CHECKS,
         "workspace": workspace,
@@ -753,6 +788,7 @@ def brief_body(conn, task):
         "concepts": data,
         "removed": removed,
         "rescan": data is not None,
+        **conflict_brief,
     }
 
 
@@ -778,6 +814,10 @@ def format_brief(b):
     lines += _part_line(b)
     lines += ["", b["instructions"], "", "## Checks"]
     lines += [f"- {check}" for check in b["checks"]]
+    if b.get("conflicting_acceptances"):
+        lines += ["", "## Concurrent accepted answers",
+                  f"Review {b['conflict_source']} and submit one reviewed answer to resolve:",
+                  *[f"- {identity}" for identity in b["conflicting_acceptances"]]]
     summary = node.get("summary")
     lines += ["", "## Workspace", f"{node.get('name')}: {summary}" if summary else f"{node.get('name')}: (no summary yet)"]
     for heading, key in (("Deployables", "deployables"), ("Packages", "packages")):

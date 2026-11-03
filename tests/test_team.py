@@ -5,7 +5,9 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from cbi import parts, store, tasks, team
+import pytest
+
+from cbi import concepts, parts, store, tasks, team
 from cbi.cli import main
 
 MAP = {
@@ -630,5 +632,269 @@ def test_rejected_submit_rolls_back_its_team_import(make_repo, monkeypatch):
         assert conn.execute("SELECT summary FROM cache.file_summaries WHERE content_hash = ?",
                             (key,)).fetchone() == ("Existing cache answer.",)
         assert rows(out / "answers.jsonl") == [row]
+    finally:
+        conn.close()
+
+
+def test_superseded_concept_answer_cannot_return_after_source_reverts(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo(MAP, name="superseded-map")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    assert submit(capsys, tmp_path, task_id, concepts_answer(baseline))[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// changed\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    brief = run_json(capsys, "task", task_id)
+    answer = concepts_answer(brief)
+    answer["concepts"][0]["name"] = "Revised foundation"
+    assert submit(capsys, tmp_path, task_id, answer)[0] == 0
+    (root / "b.ts").write_text(original)
+    (root / ".cbi" / "concepts.json").unlink()
+    # A fresh cache must respect retirement persisted in the team answer file.
+    monkeypatch.setenv("CBI_CACHE_DIR", str(tmp_path / "fresh-retirement-cache"))
+    assert main(["scan"]) == 0
+    assert not (root / ".cbi" / "concepts.json").exists()
+    assert len(run_json(capsys, "tasks", "--kind", "define-concepts")) == 1
+    assert main(["prime"]) == 0
+    assert not (root / ".cbi" / "concepts.json").exists()
+
+
+def test_supersession_survives_union_merge_order():
+    for generation in (None, 5):
+        live = team._canon("define-concepts", "old", tasks.PROTOCOL_VERSION, {"summary": "Old map."})
+        if generation is not None:
+            live["generation"] = generation
+        retired = {**live, "superseded_by": "new"}
+        for records in ([live, retired], [retired, live]):
+            parsed = team._parse("\n".join(json.dumps(row) for row in records))
+            assert parsed[("define-concepts", "old")]["superseded_by"] == "new"
+
+
+def test_retired_concept_hash_is_not_restored_from_repopulated_cache(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import concepts
+
+    root = make_repo(MAP, name="retired-cache")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    out = root / ".cbi"
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    old = concepts_answer(baseline)
+    assert submit(capsys, tmp_path, task_id, old)[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// revised\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    brief = run_json(capsys, "task", task_id)
+    replacement = concepts_answer(brief)
+    replacement["summary"] = "The replacement map."
+    assert submit(capsys, tmp_path, task_id, replacement)[0] == 0
+    (root / "b.ts").write_text(original)
+    (out / "concepts.json").unlink()
+    assert main(["scan"]) == 0
+    assert not (out / "concepts.json").exists()
+
+    # A historical cache user can publish this old input again after the import.
+    key = ("define-concepts", baseline["input_hash"])
+    retired = team._parse((out / "answers.jsonl").read_text())[key]
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        stale = {**concepts._body(old), "summary": "A stale cached application."}
+        conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                     (baseline["input_hash"], json.dumps(stale)))
+        concepts.refresh(conn, out, root)
+        assert key not in team._collect(conn)
+        team.sync(conn, out)
+    conn.close()
+    assert team._parse((out / "answers.jsonl").read_text())[key] == retired
+    assert not (out / "concepts.json").exists()
+    reviewed = concepts_answer(run_json(capsys, "task", task_id))
+    reviewed["summary"] = "The explicitly reviewed map."
+    assert submit(capsys, tmp_path, task_id, reviewed)[0] == 0
+    assert json.loads((out / "concepts.json").read_text())["summary"] == reviewed["summary"]
+
+
+@pytest.mark.parametrize("matching_projection", [False, True])
+def test_reaccepted_concept_answer_survives_older_merged_tombstone(make_repo, monkeypatch, capsys, tmp_path, matching_projection):
+    root = make_repo(MAP, name="reaccepted-map")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    out = root / ".cbi"
+    conn = sqlite3.connect(out / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    assert submit(capsys, tmp_path, task_id, concepts_answer(baseline))[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// revised\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    replacement = concepts_answer(run_json(capsys, "task", task_id))
+    replacement["summary"] = "The replacement application."
+    assert submit(capsys, tmp_path, task_id, replacement)[0] == 0
+    path = out / "answers.jsonl"
+    old_key = ("define-concepts", baseline["input_hash"])
+    retired = team._parse(path.read_text())[old_key]
+
+    (root / "b.ts").write_text(original)
+    assert main(["scan"]) == 0
+    reviewed = concepts_answer(run_json(capsys, "task", task_id))
+    reviewed["summary"] = "The explicitly reviewed application."
+    assert reviewed["input_hash"] == baseline["input_hash"]
+    if matching_projection:
+        body = concepts._body(reviewed)
+        (out / "concepts.json").write_text(json.dumps(body, indent=2) + "\n")
+        conn = store.open_db(out / "model.db")
+        tasks.attach_cache(conn)
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                         (baseline["input_hash"], json.dumps(body)))
+        conn.close()
+    assert submit(capsys, tmp_path, task_id, reviewed)[0] == 0
+    accepted = team._parse(path.read_text())[old_key]
+    other_rows = {key: row for key, row in team._parse(path.read_text()).items() if key != old_key}
+
+    for duplicate_rows in ([retired, accepted], [accepted, retired]):
+        path.write_text(team._dump(other_rows) + "".join(json.dumps(row) + "\n" for row in duplicate_rows))
+        assert team.committed_answer(out, *old_key, tasks.PROTOCOL_VERSION) == accepted["answer"]
+        assert not team.answer_superseded(out, *old_key)
+        conn = store.open_db(out / "model.db")
+        tasks.attach_cache(conn)
+        with conn:
+            team.import_answers(conn, out)
+            restored = json.loads(conn.execute(
+                "SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (old_key[1],)
+            ).fetchone()[0])
+            assert restored == accepted["answer"]
+            assert team._collect(conn)[old_key]["generation"] == accepted["generation"]
+            team.sync(conn, out)
+        conn.close()
+        assert team._parse(path.read_text())[old_key] == accepted
+    assert accepted["generation"] > retired["generation"]
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        conn.execute("UPDATE cache.summary_answers SET answer = ? WHERE input_hash = ?",
+                     (json.dumps(concepts._body(concepts_answer(baseline))), old_key[1]))
+        assert old_key not in team._collect(conn)
+        team.sync(conn, out)
+    conn.close()
+    assert team._parse(path.read_text())[old_key] == accepted
+    (out / "concepts.json").unlink()
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        concepts.apply(conn, None)
+        concepts.refresh(conn, out, root)
+    conn.close()
+    assert json.loads((out / "concepts.json").read_text()) == accepted["answer"]
+
+
+def _accept_document_key(conn, out, key, summary):
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                     (key, json.dumps({"summary": summary})))
+        team.supersede(conn, out, "define-concepts", key)
+
+
+def _branched_document_answers(make_repo, tmp_path, branch_keys, higher_generation=False):
+    root = make_repo({"core.py": "def run():\n    return 1\n"}, name="concurrent-maps")
+    out = root / ".cbi"
+    out.mkdir()
+    (out / "team.toml").write_text(team.TEMPLATE)
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    _accept_document_key(conn, out, "input-a", "The first map.")
+    _accept_document_key(conn, out, "input-b", "The second map.")
+    baseline = (out / "answers.jsonl").read_text()
+    branches = []
+    for index, key in enumerate(branch_keys):
+        branch = tmp_path / f"branch-{index}"
+        branch.mkdir()
+        (branch / "team.toml").write_text(team.TEMPLATE)
+        (branch / "answers.jsonl").write_text(baseline)
+        side = store.open_db(branch / "model.db")
+        tasks.attach_cache(side)
+        if higher_generation and index == 1:
+            _accept_document_key(side, branch, key, "An intermediate reviewed map.")
+        _accept_document_key(side, branch, key, f"The reviewed map from branch {index}.")
+        branches.append((branch / "answers.jsonl").read_text())
+        side.close()
+    return root, out, conn, branches
+
+
+@pytest.mark.parametrize("higher_generation", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_concurrent_acceptances_are_not_retired_by_unseen_branch_events(make_repo, tmp_path, higher_generation, reverse):
+    _root, out, conn, branches = _branched_document_answers(
+        make_repo, tmp_path, ["input-a", "input-b"], higher_generation)
+    try:
+        for left, right in [branches[::-1] if reverse else branches]:
+            (out / "answers.jsonl").write_text(left + right)
+            assert team.committed_answer(out, "define-concepts", "input-a", tasks.PROTOCOL_VERSION) == {
+                "summary": "The reviewed map from branch 0.",
+            }
+            assert team.committed_answer(out, "define-concepts", "input-b", tasks.PROTOCOL_VERSION) == {
+                "summary": "The reviewed map from branch 1.",
+            }
+            with conn:
+                team.import_answers(conn, out)
+                team.sync(conn, out)
+            assert all(not row.get("superseded_by") for row in team._parse((out / "answers.jsonl").read_text()).values())
+    finally:
+        conn.close()
+
+
+def test_same_key_concurrent_acceptances_are_preserved_and_reported(make_repo, tmp_path):
+    from cbi import check
+
+    root, out, conn, branches = _branched_document_answers(make_repo, tmp_path, ["input-b", "input-b"])
+    key = ("define-concepts", "input-b")
+    try:
+        for left, right in (branches, branches[::-1]):
+            (out / "answers.jsonl").write_text(left + right)
+            row = team._parse((out / "answers.jsonl").read_text())[key]
+            assert {candidate["answer"]["summary"] for candidate in row["conflicts"]} == {
+                "The reviewed map from branch 0.", "The reviewed map from branch 1.",
+            }
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) is None
+            assert team.answer_superseded(out, *key)
+            with conn:
+                team.import_answers(conn, out)
+                assert conn.execute("SELECT 1 FROM cache.summary_answers WHERE input_hash = ?", (key[1],)).fetchone() is None
+                findings = check._stale_findings(conn, root, out)
+                assert any(item["file"] == ".cbi/answers.jsonl" and "conflicting" in item["message"]
+                           and "define-concepts" in item["message"] and "input-b" in item["message"] for item in findings)
+                team.sync(conn, out)
+            assert team._parse((out / "answers.jsonl").read_text())[key]["conflicts"] == row["conflicts"]
+            _accept_document_key(conn, out, key[1], "The explicitly resolved map.")
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
+            # Previously merged alternatives cannot undo their explicit resolution.
+            resolved = (out / "answers.jsonl").read_text()
+            (out / "answers.jsonl").write_text(resolved + left + right)
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
+            team._store(out, {key: team._canon(*key, tasks.PROTOCOL_VERSION, {"summary": "A stale cache copy."})})
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
     finally:
         conn.close()

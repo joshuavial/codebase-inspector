@@ -17,7 +17,7 @@ from pathlib import Path
 from cbi.ids import file_id, group_id, local_id, normalise_remote, repo_name, resolve_relative_url
 
 # Bumped by the parsers when their output changes, so every file is reparsed.
-PARSER_VERSION = 22
+PARSER_VERSION = 24
 
 CODE_LANGS = {
     ".py": "python",
@@ -29,8 +29,8 @@ CODE_LANGS = {
 }
 DOC_EXTS = {".md", ".mdx", ".markdown"}
 DATA_EXTS = {".json", ".txt", ".csv", ".jsonl"}
-DUMP_EXTS = DATA_EXTS | {".sql"}
-NAMED_DATA_DIRS = {"fixtures", "test-data"}
+DUMP_EXTS = DATA_EXTS
+NAMED_DATA_DIRS = {"fixtures", "test-data", "evals", "build"}
 MINIFIABLE_EXTS = {".js", ".mjs", ".cjs", ".css"}
 TEST_NAME = re.compile(
     r"^test_.*\.py$|^.*_test\.py$|^.*[.-](test|spec)\.[cm]?[jt]sx?$|^.*\.cy\.[cm]?[jt]sx?$"
@@ -53,14 +53,14 @@ BASE_IGNORE = """\
 # Tracked files that match are left out of the model. Edit freely:
 # `cbi init` never overwrites this file, and `cbi scan` rescans when it changes.
 
-# Eval snapshots and build output. fixtures/ and test-data/ are added below
-# when most of their files are data, so a directory of source stays in the model.
-evals/
-dist*/
-build/
+# Generated bundles. Directory names alone never exclude tracked source.
 *.min.js
 *.min.css
 """
+
+
+ARTIFACT_START = "# cbi: artifact rules preserve tracked source"
+ARTIFACT_END = "# cbi: end artifact rules"
 
 
 class NotARepo(Exception):
@@ -144,8 +144,15 @@ class Ignore:
 
     def __init__(self, text):
         self.rules = []
+        preserve_source = False
         for line in text.splitlines():
             line = line.rstrip()
+            if line == ARTIFACT_START:
+                preserve_source = True
+                continue
+            if line == ARTIFACT_END:
+                preserve_source = False
+                continue
             if not line or line.startswith("#"):
                 continue
             negate = line.startswith("!")
@@ -156,13 +163,21 @@ class Ignore:
             anchored = "/" in line
             body = _glob_to_regex(line.lstrip("/"))
             regex = re.compile(body if anchored else "(?:.*/)?" + body)
-            self.rules.append((negate, dir_only, regex))
+            self.rules.append((negate, dir_only, regex, preserve_source))
         self._dirs = {}
 
-    def _match(self, path, is_dir):
+    def _match(self, path, is_dir, source=None):
         ignored = False
-        for negate, dir_only, regex in self.rules:
+        is_source = None
+        for negate, dir_only, regex, preserve_source in self.rules:
             if (is_dir or not dir_only) and regex.fullmatch(path):
+                if preserve_source and not negate:
+                    if is_dir:
+                        continue
+                    if is_source is None:
+                        is_source = source_like(path) or bool(source() if callable(source) else source)
+                    if is_source:
+                        continue
                 ignored = not negate
         return ignored
 
@@ -172,14 +187,14 @@ class Ignore:
             self._dirs[path] = (bool(parent) and self._dir_ignored(parent)) or self._match(path, True)
         return self._dirs[path]
 
-    def __call__(self, path, is_dir=False):
+    def __call__(self, path, is_dir=False, source=None):
         """True if the path, or any directory above it, is ignored."""
         if not self.rules:
             return False
         if is_dir:
             return self._dir_ignored(path)
         parent = posixpath.dirname(path)
-        return (bool(parent) and self._dir_ignored(parent)) or self._match(path, False)
+        return (bool(parent) and self._dir_ignored(parent)) or self._match(path, False, source)
 
 
 # --- enumeration ----------------------------------------------------------------
@@ -245,7 +260,7 @@ def enumerate_repo(root, ignore=None):
             if mode == b"160000":
                 if not ignore(top, is_dir=True):
                     submodules.append((path, top, sha.decode()))
-            elif not ignore(top):
+            elif not ignore(top, source=lambda: _tracked_source(root, top)):
                 files.append((top, ws, path))
         gitmodules = None
         for path, top, sha in submodules:
@@ -342,7 +357,41 @@ def _test_tree(path):
     return any(part.lower() in ("test", "tests", "e2e") for part in posixpath.normpath(path).split("/")[:-1])
 
 
-def classify(path, test_roots=()):
+SHELL_LANGS = {".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell", ".fish": "shell"}
+STYLE_LANGS = {".css": "css", ".scss": "scss", ".sass": "sass", ".less": "less"}
+MARKUP_LANGS = {".html": "html", ".htm": "html", ".svelte": "svelte", ".astro": "astro"}
+SOURCE_LANGS = {**CODE_LANGS, **SHELL_LANGS, **STYLE_LANGS, **MARKUP_LANGS, ".sql": "sql"}
+NAMED_SOURCE_FILES = {"cmakelists.txt", "makefile", "gnumakefile", "dockerfile", "containerfile", "justfile"}
+NAMED_SOURCE_PREFIXES = ("makefile.", "gnumakefile.", "dockerfile.", "containerfile.", "justfile.")
+
+
+def shebang_language(content):
+    if not content:
+        return None
+    line = content.splitlines()[0]
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    if not line.startswith("#!"):
+        return None
+    interpreters = re.findall(r"[\w.+-]+", line[2:])
+    if any(word in {"sh", "bash", "dash", "zsh", "ksh", "fish"} for word in interpreters):
+        return "shell"
+    if any(re.fullmatch(r"python[0-9.]*", word) for word in interpreters):
+        return "python"
+    if any(word in {"node", "nodejs"} for word in interpreters):
+        return "javascript"
+    return None
+
+
+def source_like(path, content=None):
+    """Tracked source policy, independent of available symbol parsers."""
+    name = posixpath.basename(path).casefold()
+    return (name in NAMED_SOURCE_FILES or name.startswith(NAMED_SOURCE_PREFIXES)
+            or posixpath.splitext(path)[1].lower() in SOURCE_LANGS
+            or shebang_language(content) is not None)
+
+
+def classify(path, test_roots=(), content=None):
     """Return (role, lang): role is code, test, doc or other.
 
     `test_roots` are directories of `*Tests.csproj` and `*Testing.csproj`. A `.cs`
@@ -355,7 +404,7 @@ def classify(path, test_roots=()):
     ext = posixpath.splitext(name)[1].lower()
     if ext in DOC_EXTS:
         return "doc", "markdown"
-    lang = CODE_LANGS.get(ext)
+    lang = SOURCE_LANGS.get(ext) or shebang_language(content)
     if not lang:
         return "other", None
     if (TEST_NAME.match(name) or name == "conftest.py" or "__tests__" in path.split("/") or _test_tree(path) or _cypress_e2e(path)
@@ -407,16 +456,16 @@ def _looks_minified(full):
 
 
 def _named_data_dirs(paths):
-    """fixtures/ and test-data/ directories whose files are mostly data, not code.
+    """Artifact directories whose files are mostly saved data, not code.
 
     A file counts for every such directory above it. Most means more than half of the
-    files are json, csv, txt, jsonl or sql. A directory of TypeScript or C# is kept.
+    files are json, csv, txt or jsonl. SQL and source files are kept.
     """
     groups = defaultdict(list)
     for path in paths:
         parts = path.split("/")
         for i, name in enumerate(parts[:-1]):
-            if name in NAMED_DATA_DIRS:
+            if name in NAMED_DATA_DIRS or name == "dist" or name.startswith("dist-"):
                 groups["/".join(parts[: i + 1])].append(path)
     found = []
     for directory, files in groups.items():
@@ -432,7 +481,7 @@ def _named_data_dirs(paths):
 
 
 def default_ignore(root):
-    """Text of a fresh .cbi/ignore: fixed patterns plus data dirs and minified files found in the repo."""
+    """Exclude identified artifacts, preserving source even in data-heavy directories."""
     _, files = enumerate_repo(root, Ignore(BASE_IGNORE))
     paths = [top for top, _, _ in files]
     named = _named_data_dirs(paths)
@@ -440,22 +489,50 @@ def default_ignore(root):
         paths, lambda p: posixpath.splitext(p)[1].lower() in DATA_EXTS, DATA_DIR_MIN_FILES,
         lambda c, total: c[True] > DATA_DIR_SHARE * total,
     )
-    in_data = Ignore("\n".join(f"/{_escape(d)}/" for d in data_dirs))
     minified = [
         p for p in paths
-        if posixpath.splitext(p)[1].lower() in MINIFIABLE_EXTS and not in_data(p) and _looks_minified(root / p)
+        if posixpath.splitext(p)[1].lower() in MINIFIABLE_EXTS and _looks_minified(root / p)
     ]
     venvs = [posixpath.dirname(p) for p in paths if posixpath.basename(p) == "pyvenv.cfg" and "/" in p]
     text = BASE_IGNORE
     text += "\n# Committed Python virtualenvs (a directory holding pyvenv.cfg)\n"
     text += "".join(f"/{_escape(d)}/\n" for d in venvs)
-    text += "\n# fixtures/ and test-data/ when most of their files are data (json, csv, txt, sql)\n"
-    text += "".join(f"/{_escape(d)}/\n" for d in named)
-    text += "\n# Directories of mostly data files (json, txt, csv, jsonl)\n"
-    text += "".join(f"/{_escape(d)}/\n" for d in data_dirs)
+    text += "\n# Saved data artifacts, including files added after init\n"
+    text += ARTIFACT_START + "\n"
+    for directory in sorted(set(named + data_dirs)):
+        for ext in sorted(DATA_EXTS):
+            suffix = "".join(f"[{c.lower()}{c.upper()}]" if c.isalpha() else c for c in ext)
+            text += f"/{_escape(directory)}/**/*{suffix}\n"
+    text += ARTIFACT_END + "\n"
     text += "\n# Files with minified-looking lines\n"
     text += "".join(f"/{_escape(p)}\n" for p in minified)
     return text
+
+
+def _tracked_source(root, path):
+    """Inspect regular tracked files only; never follow symlinks or read private env files."""
+    full = root / path
+    try:
+        if is_private_env(path) or not stat.S_ISREG(os.lstat(full).st_mode):
+            return False
+        if source_like(path):
+            return True
+        with full.open("rb") as stream:
+            return source_like(path, stream.read(4096))
+    except OSError:
+        return False
+
+
+def excluded_source_files(root, ignore):
+    """Source omitted by the active ignore rules, including ignored submodule trees."""
+    _, tracked = enumerate_repo(root)
+    return [path for path, _, _ in tracked
+            if ignore(path, source=lambda: _tracked_source(root, path)) and _tracked_source(root, path)]
+
+
+def report_excluded_source(root, ignore_text):
+    excluded = excluded_source_files(root, Ignore(ignore_text or ""))
+    print(f"Excluded tracked executable files: {len(excluded)} (by ignore rules)")
 
 
 # --- nodes ----------------------------------------------------------------------
@@ -466,7 +543,15 @@ def _parent_id(ws_id, path):
     return group_id(ws_id, d) if d else ws_id
 
 
-def build_nodes(workspaces, files, states):
+def read_prefix(path, size=4096):
+    """Read only classification bytes from filesystem or Git-backed paths."""
+    if isinstance(path, GitPath):
+        return path.read_prefix(size)
+    with path.open("rb") as stream:
+        return stream.read(size)
+
+
+def build_nodes(workspaces, files, states, root=None):
     """Workspace, group and file nodes for the enumerated files present on disk."""
     nodes = []
     by_ws = defaultdict(list)
@@ -507,7 +592,13 @@ def build_nodes(workspaces, files, states):
             })
         for top, rel in ws_files:
             _, _, digest, _, is_link = states[top]
-            role, lang = classify(rel, test_roots)
+            content = None
+            if root is not None and not is_link and posixpath.splitext(rel)[1].lower() not in SOURCE_LANGS:
+                try:
+                    content = read_prefix(root / top)
+                except OSError:
+                    pass
+            role, lang = classify(rel, test_roots, content)
             nodes.append({
                 "id": file_id(wid, rel),
                 "parent_id": _parent_id(wid, rel),
@@ -663,6 +754,32 @@ class _Batch:
                 self.cache[oid] = data
         return self.cache[oid]
 
+    def get_prefix(self, oid, limit):
+        """Keep a prefix; drain the batch remainder in bounded, uncached chunks."""
+        if limit < 0:
+            raise ValueError("prefix size must be nonnegative")
+        if oid in self.cache:
+            data = self.cache[oid]
+            return data[:limit] if data is not None else None
+        self.proc.stdin.write(f"{oid}\n".encode())
+        self.proc.stdin.flush()
+        header = self.proc.stdout.readline()
+        if not header:
+            raise OSError(f"git cat-file closed while reading {oid}")
+        parts = header.split()
+        if len(parts) < 3 or parts[1] == b"missing":
+            return None
+        size = int(parts[2])
+        prefix = self.proc.stdout.read(min(limit, size))
+        remaining = size - len(prefix)
+        while remaining:
+            chunk = self.proc.stdout.read(min(65536, remaining))
+            if not chunk:
+                raise OSError(f"git cat-file closed while reading {oid}")
+            remaining -= len(chunk)
+        self.proc.stdout.read(1)
+        return prefix
+
     def close(self):
         if self.proc.poll() is None:
             self.proc.stdin.close()
@@ -688,6 +805,11 @@ class GitPath:
         if self.rel == ".." or self.rel.startswith("../"):
             raise FileNotFoundError(self.rel)
         return self.tree.read(self.rel)
+
+    def read_prefix(self, size=4096):
+        if self.rel == ".." or self.rel.startswith("../"):
+            raise FileNotFoundError(self.rel)
+        return self.tree.read_prefix(self.rel, size)
 
     def read_text(self, encoding="utf-8", errors=None):
         return self.read_bytes().decode(encoding, errors or "strict")
@@ -734,6 +856,15 @@ class CommitTree:
         if not found:
             raise FileNotFoundError(rel)
         data = self._batch(found[0]).get(found[1])
+        if data is None:
+            raise FileNotFoundError(rel)
+        return data
+
+    def read_prefix(self, rel, size=4096):
+        found = self.blobs.get(rel.strip("/"))
+        if not found:
+            raise FileNotFoundError(rel)
+        data = self._batch(found[0]).get_prefix(found[1], size)
         if data is None:
             raise FileNotFoundError(rel)
         return data
@@ -801,7 +932,11 @@ class CommitTree:
                 if not self.ignore(top, is_dir=True):
                     subs.append((path, top, oid))
                 continue
-            if self.ignore(top) or is_private_env(top):
+            if is_private_env(top):
+                continue
+            source = lambda: mode != "120000" and source_like(
+                top, self._batch(git_dir).get_prefix(oid, 4096))
+            if self.ignore(top, source=source):
                 continue
             self.tracked.append((top, ws, path))
             self.blobs[top] = (str(Path(git_dir).resolve()), oid)

@@ -124,7 +124,7 @@ IDs are stable across scans and machines, which PRD-02 needs for diffing.
 
 1. **Enumerate** (`files.py`). `git ls-files` per workspace gives the tracked path list; `git submodule status` gives submodules, pinned commit and drift. Content identity comes from the working tree, not the index: each file is `stat`ed, and only when `mtime_ns` or `size` differ from `file_state` is it read and hashed (sha1 of bytes). This catches unstaged edits. Tracked symlinks are recorded as file nodes and never followed. `.cbi/ignore` (gitignore syntax) filters paths.
 2. **No-change shortcut.** If no file was added, removed or rehashed to a new value, the ignore file and `structure.json` are unchanged, every workspace's checked-out commit is unchanged, and the parser version is unchanged, the scan stops here.
-3. **Classify.** By extension and path: code (Python, TS, TSX, JS), doc (markdown), test (by name pattern and framework), other (file node only). `init` writes `.cbi/ignore` from heuristics: directories named `fixtures`, `evals`, `test-data`, `dist*`, `build`; files with minified-looking lines; directories over 200 files that are more than 90% data (json, txt, csv, jsonl). Doc collapse is presentation only: a directory over 100 files where at most 10% are code and at least half are markdown becomes a `doc collection` node (the outermost such directory wins). The first rule, at least 90% markdown, missed sample-monorepo's `docs/research` at 89.9%, because research artefacts (`.out`, `.log`, `.jsonl`) fill the rest. Everything inside is still enumerated, parsed if code, and searchable; the viewer loads its children on demand.
+3. **Classify.** By extension and path: code (Python, TS, TSX, JS), doc (markdown), test (by name pattern and framework), other (file node only). `init` writes `.cbi/ignore` with artifact-specific exclusions: minified bundles and files with minified-looking lines; committed Python virtualenvs identified by `pyvenv.cfg`; persistent saved-data extension rules (json, txt, csv, jsonl) in data-heavy directories or predominantly data fixture directories. Directory names such as `evals`, `build` and `dist` alone never exclude tracked source. SQL and executable fixture helpers remain mapped even when most siblings are saved data. Existing ignore files are kept on re-init; `init`, working-tree `scan` and `check` print the number of tracked source-like executable files excluded by the active rules, including shebang scripts and files inside ignored initialized submodules. These counts expose user-authored and legacy blanket exclusions without overriding them. Doc collapse is presentation only: a directory over 100 files where at most 10% are code and at least half are markdown becomes a `doc collection` node (the outermost such directory wins). The first rule, at least 90% markdown, missed sample-monorepo's `docs/research` at 89.9%, because research artefacts (`.out`, `.log`, `.jsonl`) fill the rest. Everything inside is still enumerated, parsed if code, and searchable; the viewer loads its children on demand.
 4. **Manifests** (`manifests.py`). Apply `structure.json`, then one rule per manifest type returns deployables, packages and `depends_on` edges. Entry points are mapped back to source:
    - Build output: a path under a tsconfig `outDir` maps to the matching `.ts`/`.tsx` under its `rootDir`. `package.json` `main`, `bin` and script commands that run `node <path>` go through this map.
    - Vite: the `index.html` at the config's `root` (default the config's directory) is read and its `<script type="module" src>` entries become the entry points.
@@ -382,3 +382,27 @@ submitting it. There is no API posting or authentication in cbi.
 - Compose resources and a `config.toml`.
 - Snapshot storage per commit for PRD-02.
 - Serving the viewer, if change review or quizzing needs it.
+
+
+Shebang classification reads a 4 KiB prefix from regular filesystem paths and
+historical Git paths. Git batch reads discard the remaining object stream in
+fixed 64 KiB chunks to keep the protocol synchronized; classification does not
+retain full blobs in the batch cache. Parsers and manifest readers can still
+request complete contents when their analysis requires them.
+
+
+Generated data-artifact rules use persistent extension globs (including mixed
+case extensions), so later dataset
+batches remain excluded without rewriting `.cbi/ignore`. The comment-delimited
+artifact block preserves tracked source identified by extension or a bounded
+shebang prefix, including newly added scripts with data-like suffixes. This
+policy applies to filesystem and Git snapshots. Rules outside that block keep
+ordinary gitignore behavior and can explicitly exclude those scripts.
+
+
+The generated artifact preservation policy also recognizes named build sources:
+`CMakeLists.txt`, `Makefile`, `GNUmakefile`, `Dockerfile`, `Containerfile` and
+`justfile`, including named recipe variants such as `Dockerfile.preview.txt`.
+These remain mapped when added after initialization in data-heavy directories,
+for both working-tree and historical scans. Ordinary saved `.txt` output remains
+excluded by the generated artifact rules.

@@ -25,7 +25,7 @@ FILES = {
                                 "ENTRYPOINT python \\\n  /app/worker/run.py --fast\n",
     "worker/run.py": "print(1)\n",
     "Dockerfile.tmpl": "FROM {{ base }}\n",
-    "fixtures/Dockerfile": "FROM scratch\n",  # ignored: this fixtures dir is mostly data
+    "fixtures/Dockerfile": "FROM scratch\n",  # kept even though adjacent files are saved data
     "fixtures/a.json": "{}\n",
     "fixtures/b.json": "{}\n",
     "compose.yaml": """\
@@ -92,6 +92,7 @@ def test_deployables(repo):
         "deployable:acme-image": ("container image", ["src/tool/cli.py"]),
         "deployable:worker-worker-image": ("container image", ["worker/run.py"]),
         "deployable:lib-image": ("container image", []),
+        "deployable:fixtures-image": ("container image", []),
         "deployable:api": ("service", []),
         "deployable:worker": ("service", []),
         "deployable:edge": ("worker", ["edge/src/index.ts"]),
@@ -102,6 +103,7 @@ def test_unresolved_entries(repo):
     rows = _db(repo).execute("SELECT node_id, detail FROM diagnostics WHERE kind = 'unresolved_entry' "
                              "ORDER BY node_id").fetchall()
     assert rows == [
+        ("local:acme:deployable:fixtures-image", "Dockerfile: no CMD or ENTRYPOINT maps to no tracked source file"),
         ("local:acme:deployable:lib-image", "Dockerfile: nginx -g daemon off; maps to no tracked source file"),
         ("local:acme:deployable:libcmd", "pyproject.toml scripts: lib.missing:main maps to no tracked source file"),
     ]
