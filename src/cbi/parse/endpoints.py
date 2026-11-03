@@ -12,9 +12,12 @@ from cbi.http import from_pieces, has_literal, is_api_href, join_path, normalise
 VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
 CLIENTS = {"fetch", "axios", "ky", "httpx", "requests"}
 PY_FUNCS = {"function_definition", "lambda"}
-TS_FUNCS = {"function_declaration", "generator_function_declaration", "function_expression", "function",
+TS_FUNCS = {"function_declaration", "generator_function_declaration", "function_expression", "function", "generator_function",
             "arrow_function", "method_definition"}
 TS_CTOR = {"call_expression", "new_expression"}
+CLASS_DECLS = {"class_definition", "class_declaration", "abstract_class_declaration"}
+CLASS_NODES = CLASS_DECLS | {"class"}
+NAMED_DECLS = {"function_definition", "function_declaration", "generator_function_declaration"} | CLASS_DECLS
 HTTP_ATTRS = {"HttpGet": "GET", "HttpPost": "POST", "HttpPut": "PUT", "HttpPatch": "PATCH",
               "HttpDelete": "DELETE", "HttpHead": "HEAD", "HttpOptions": "OPTIONS"}
 MAP_VERBS = {"MapGet": "GET", "MapPost": "POST", "MapPut": "PUT", "MapPatch": "PATCH",
@@ -133,43 +136,19 @@ def _collect(root, lang):
 
 
 def _walk(node, lang, state, func, routes_only):
-    if node is None:
-        return
-    if lang == "python" and node.type in PY_FUNCS:
-        _function(node, lang, state, _py_name(node), _py_params(node), None, routes_only)
-        return
-    if lang == "typescript" and node.type in TS_FUNCS and node.type != "arrow_function":
-        _function(node, lang, state, _ts_name(node), _ts_params(node), None, routes_only)
-        return
-    if lang == "typescript" and node.type == "variable_declarator":
-        name = node.child_by_field_name("name")
-        value = node.child_by_field_name("value")
-        if value is not None and value.type in ("arrow_function", "function_expression") and name is not None and name.type == "identifier":
-            _function(value, lang, state, _text(name), _ts_params(value), node, routes_only)
-            return
-        if func is None and not routes_only:
-            _assign(node, lang, state, "value")
-        elif func is None and routes_only:
-            _assign(node, lang, state, "value")
-    if func is None and node.type == "assignment" and lang == "python":
-        _assign(node, lang, state, "right")
-    if not routes_only and lang == "typescript" and node.type == "jsx_attribute":
-        _jsx_href(state, node)
-    if _is_call(node, lang):
-        if routes_only:
-            _route_call(node, lang, state, func)
-        else:
-            _client_call(node, lang, state, func)
-    for child in node.named_children:
-        _walk(child, lang, state, func, routes_only)
+    frame = {"locals": {}, "literals": {}, "uncertain": set(), "params": [], "library": []}
+    _walk_body(node, lang, state, frame, func, routes_only)
 
 
-def _function(node, lang, state, name, params, declarator, routes_only):
+
+def _function(node, lang, state, name, params, declarator, routes_only, enclosing=None):
     """Walk a function. The first pass records a wrapper; both passes see its body."""
     library = []
     literals = dict(state.get("literals", {}))
+    uncertain = set(state.get("uncertain", ()))
     for param in params:
         literals.pop(param, None)
+        uncertain.discard(param)
     if lang == "typescript":
         formal = node.child_by_field_name("parameters")
         for param in formal.named_children if formal is not None else ():
@@ -178,7 +157,20 @@ def _function(node, lang, state, name, params, declarator, routes_only):
             values = _finite_type(annotation, state.get("types", {}))
             if pattern is not None and values:
                 literals[_text(pattern)] = [[value] for value in values]
-    inner = {"locals": {}, "params": params, "library": library, "literals": literals}
+    captured = set((enclosing or {}).get("scope_names", ()))
+    inner = {"locals": {}, "params": params, "library": library, "literals": literals, "uncertain": uncertain,
+             "scope_names": captured | set(params)}
+    # A shadowed closure binding cannot fall back to a same-named module constant.
+    _invalidate(inner, captured - set(params))
+    if node.type in ("function_expression", "function", "generator_function"):
+        own_name = node.child_by_field_name("name")
+        if own_name is not None and _text(own_name) not in params:
+            inner["scope_names"].add(_text(own_name))
+            _invalidate(inner, {_text(own_name)})
+    body = node.child_by_field_name("body")
+    local_names = _written_names(body, lang) if lang == "python" else _var_names(body)
+    inner["scope_names"].update(local_names)
+    _invalidate(inner, local_names)
     wrapper = state["wrappers"].get(name)
     if wrapper and wrapper["path_index"] < len(params):
         inner["forwarded_path"] = params[wrapper["path_index"]]
@@ -189,35 +181,200 @@ def _function(node, lang, state, name, params, declarator, routes_only):
         state["wrappers"][name] = _wrapper_spec(library, params)
 
 
+CONTROL_NODES = {"if_statement", "elif_clause", "conditional_expression", "ternary_expression",
+                 "for_statement", "for_in_statement", "while_statement", "do_statement", "try_statement"}
+CONDITIONAL_NODES = {"if_statement", "elif_clause", "conditional_expression", "ternary_expression"}
+
+
+def _targets(node):
+    if node is None:
+        return set()
+    if node.type in ("identifier", "shorthand_property_identifier_pattern"):
+        return {_text(node)}
+    if node.type in ("attribute", "member_expression", "subscript", "subscript_expression"):
+        return set()
+    return set().union(*(_targets(child) for child in node.named_children))
+
+
+def _declared_names(node):
+    name = node.child_by_field_name("name") if node.type in NAMED_DECLS else None
+    return {_text(name)} if name is not None else set()
+
+
+def _block_names(node):
+    """Lexical variables, functions and classes belong to this block."""
+    names = set()
+    def visit(child):
+        names.update(_declared_names(child))
+        if child.type in TS_FUNCS | CLASS_NODES | {"statement_block", "for_statement", "for_in_statement"}:
+            return
+        if child.type == "lexical_declaration":
+            for declarator in child.named_children:
+                if declarator.type == "variable_declarator":
+                    names.update(_targets(declarator.child_by_field_name("name")))
+            return
+        for nested in child.named_children:
+            visit(nested)
+    for child in node.named_children:
+        visit(child)
+    return names
+
+
+def _loop_names(node):
+    if node.type not in ("for_statement", "for_in_statement"):
+        return set()
+    if any(child.type in ("const", "let") for child in node.children):
+        return _targets(node.child_by_field_name("left"))
+    initial = node.child_by_field_name("initializer")
+    if initial is not None and initial.type == "lexical_declaration":
+        return set().union(*(_targets(child.child_by_field_name("name")) for child in initial.named_children))
+    return set()
+
+
+def _written_names(node, lang, blocked=frozenset()):
+    """Names a statement can change in its enclosing lexical scope."""
+    if node is None:
+        return set()
+    if node.type in PY_FUNCS | TS_FUNCS | CLASS_NODES:
+        return _declared_names(node) - blocked
+    if lang == "typescript":
+        if node.type == "statement_block":
+            blocked = blocked | _block_names(node)
+        blocked = blocked | _loop_names(node)
+        if node.type == "catch_clause":
+            blocked = blocked | _targets(node.child_by_field_name("parameter"))
+    own = set()
+    if node.type in ("assignment", "assignment_expression", "augmented_assignment", "augmented_assignment_expression",
+                     "named_expression", "for_in_statement"):
+        own = _targets(node.child_by_field_name("left") or node.child_by_field_name("name"))
+    elif node.type == "for_statement" and lang == "python":
+        own = _targets(node.child_by_field_name("left"))
+    elif node.type == "variable_declarator":
+        own = _targets(node.child_by_field_name("name"))
+    elif lang == "python" and node.type == "except_clause":
+        value = node.child_by_field_name("value")
+        if value is not None and value.type == "as_pattern":
+            own = _targets(value.child_by_field_name("alias"))
+    elif node.type in ("update_expression", "delete_statement"):
+        own = _targets(node.child_by_field_name("argument") or next(iter(node.named_children), None))
+    return (own - blocked) | set().union(*(_written_names(child, lang, blocked) for child in node.named_children))
+
+
+def _var_names(node):
+    """var declarations shadow module literals throughout their containing function."""
+    if node is None or node.type in TS_FUNCS | CLASS_NODES:
+        return set()
+    own = set()
+    if node.type == "variable_declarator" and node.parent.type == "variable_declaration":
+        own = _targets(node.child_by_field_name("name"))
+    elif node.type == "for_in_statement" and any(child.type == "var" for child in node.children):
+        own = _targets(node.child_by_field_name("left"))
+    return own | set().union(*(_var_names(child) for child in node.named_children))
+
+
+def _fork_frame(frame):
+    return {**frame, "locals": dict(frame["locals"]), "literals": dict(frame["literals"]),
+            "uncertain": set(frame.get("uncertain", ()))}
+
+
+def _invalidate(frame, names):
+    frame.setdefault("uncertain", set()).update(names)
+    for name in names:
+        frame["locals"].pop(name, None)
+        frame["literals"].pop(name, None)
+
+
+def _walk_scoped(node, lang, frame, walk):
+    """Isolate branches and lexical blocks; uncertain writes never become literals."""
+    if lang == "typescript" and node.type in ("statement_block", "catch_clause"):
+        local_names = (_block_names(node) if node.type == "statement_block"
+                       else _targets(node.child_by_field_name("parameter")))
+        inner = _fork_frame(frame)
+        inner["module_scope"] = False
+        inner["scope_names"] = set(frame.get("scope_names", ())) | local_names
+        _invalidate(inner, local_names)
+        for child in node.named_children:
+            walk(child, inner)
+        for field in ("locals", "literals"):
+            for name in (frame[field].keys() | inner[field].keys()) - local_names:
+                if name in inner[field]:
+                    frame[field][name] = inner[field][name]
+                else:
+                    frame[field].pop(name, None)
+        frame["uncertain"] = ((inner["uncertain"] - local_names)
+                              | (frame.get("uncertain", set()) & local_names))
+        return True
+    if node.type in CONTROL_NODES:
+        written = _written_names(node, lang)
+        loop_names = _loop_names(node) if lang == "typescript" else set()
+        condition = node.child_by_field_name("condition")
+        condition_writes = _written_names(condition, lang) if node.type in CONDITIONAL_NODES else set()
+        for child in node.named_children:
+            inner = _fork_frame(frame)
+            if child != condition:
+                _invalidate(inner, condition_writes)
+            if node.type not in CONDITIONAL_NODES:
+                # Loops may repeat or run zero times. Exceptions can interrupt assignments.
+                _invalidate(inner, written | loop_names)
+            walk(child, inner)
+        _invalidate(frame, written)
+        return True
+    return False
+
+
 def _walk_body(node, lang, state, frame, func, routes_only):
     if node is None:
         return
+    if _walk_scoped(node, lang, frame, lambda child, inner: _walk_body(child, lang, state, inner, func, routes_only)):
+        return
+    declared = _declared_names(node)
+    _invalidate(frame, declared)
+    if node.type in CLASS_NODES:
+        # Class-body attributes and named expressions stay in their own namespace.
+        inner = _fork_frame(frame)
+        class_name = node.child_by_field_name("name")
+        own_names = {_text(class_name)} if class_name is not None else set()
+        _invalidate(inner, own_names)
+        inner["scope_names"] = set(frame.get("scope_names", ())) | own_names
+        for child in node.named_children:
+            _walk_body(child, lang, state, inner, func, routes_only)
+        return
     if lang == "python" and node.type in PY_FUNCS:
-        _function(node, lang, state, _py_name(node), _py_params(node), None, routes_only)
+        _function(node, lang, state, _py_name(node), _py_params(node), None, routes_only, frame)
         return
     if lang == "typescript" and node.type in TS_FUNCS and node.type != "arrow_function":
-        _function(node, lang, state, _ts_name(node), _ts_params(node), None, routes_only)
+        _function(node, lang, state, _ts_name(node), _ts_params(node), None, routes_only, frame)
         return
     if lang == "typescript" and node.type == "variable_declarator":
         name = node.child_by_field_name("name")
         value = node.child_by_field_name("value")
         if value is not None and value.type in ("arrow_function", "function_expression") and name is not None and name.type == "identifier":
             _note_local(frame, _text(name), value, lang)
-            _function(value, lang, state, _text(name), _ts_params(value), node, routes_only)
+            _function(value, lang, state, _text(name), _ts_params(value), node, routes_only, frame)
             return
-        _note_local(frame, _text(name) if name is not None and name.type == "identifier" else None, value, lang)
+        if name is not None and name.type == "identifier":
+            _note_local(frame, _text(name), value, lang)
+        else:
+            _invalidate(frame, _targets(name))
         if routes_only:
             _assign(node, lang, state, "value")
+    if node.type in ("augmented_assignment", "augmented_assignment_expression", "update_expression", "delete_statement"):
+        _invalidate(frame, _written_names(node, lang))
     if lang == "typescript" and node.type == "assignment_expression":
         left = node.child_by_field_name("left")
         if left is not None and left.type == "identifier":
             _note_local(frame, _text(left), node.child_by_field_name("right"), lang)
-    if lang == "python" and node.type == "assignment":
-        left = node.child_by_field_name("left")
+        else:
+            _invalidate(frame, _targets(left))
+    if lang == "python" and node.type in ("assignment", "named_expression"):
+        left = node.child_by_field_name("left") or node.child_by_field_name("name")
         if left is not None and left.type == "identifier":
-            _note_local(frame, _text(left), node.child_by_field_name("right"), lang)
-            if routes_only:
+            value = node.child_by_field_name("right") or node.child_by_field_name("value")
+            _note_local(frame, _text(left), value, lang)
+            if routes_only and node.type == "assignment":
                 _assign(node, lang, state, "right")
+        else:
+            _invalidate(frame, _targets(left))
     if not routes_only and lang == "typescript" and node.type == "jsx_attribute":
         _jsx_href(state, node)
     if _is_call(node, lang):
@@ -791,8 +948,9 @@ def _wrapper_call(state, node, spec, args, lang, frame):
     if index is None or index >= len(positional):
         return
     paths = _eval_paths(positional[index], lang, frame)
-    paths = [join_path(_without_origin(prefix), path, suffix)
-             for prefix, suffix in spec.get("affixes", [("", "")]) for path in paths]
+    affixes = spec.get("affixes", [("", "")])
+    paths = ([join_path(_without_origin(prefix), path, suffix) for prefix, suffix in affixes for path in paths]
+             if len(affixes) * len(paths) <= MAX_PATH_ALTERNATIVES else [])
     if not paths:
         state["unresolved"].extend((_line(node), method) for method in methods or ["GET"])
     _emit_calls(state, node, methods or ["GET"], paths)
@@ -884,12 +1042,18 @@ def _wrapper_spec(library, params):
     path_name = None
     method_name = None
     fixed = None
-    affixes = [("", "")]
+    affixes = []
     for path_node, method_node, method_fixed, lang, literals in library:
         name = _param_ref(path_node, params)
+        choices = [("", "")]
         if not name:
-            name, affixes = _wrapper_affixes(path_node, params, lang, literals)
+            name, choices = _wrapper_affixes(path_node, params, lang, literals)
         if not name:
+            return None
+        for choice in choices:
+            if choice not in affixes:
+                affixes.append(choice)
+        if len(affixes) > MAX_PATH_ALTERNATIVES:
             return None
         if path_name and path_name != name:
             return None
@@ -973,10 +1137,22 @@ def _param_ref(node, params):
     return None
 
 
+def _uncertain_value(node, frame):
+    if node is None:
+        return False
+    return ((node.type == "identifier" and _text(node) in frame.get("uncertain", ()))
+            or any(_uncertain_value(child, frame) for child in node.named_children))
+
+
 def _note_local(frame, name, value, lang):
-    if not name or value is None:
+    if not name:
         return
     values = _value_pieces(value, lang, frame)
+    if value is None or _uncertain_value(value, frame) or (
+            frame.get("configuration") and any(None in parts for parts in values)):
+        _invalidate(frame, {name})
+        return
+    frame.setdefault("uncertain", set()).discard(name)
     literals = frame.setdefault("literals", {})
     literals.pop(name, None)
     if values:
@@ -1011,26 +1187,38 @@ def _finite_type(node, aliases):
 
 
 def _configured_literals(root, lang, state):
-    """Read file-scope literal configuration without executing initializers."""
-    def visit(node):
-        if node.type in PY_FUNCS | TS_FUNCS | {"class_declaration", "class_definition"}:
+    """Read only certain file-scope literals, sharing the HTTP scope rules."""
+    frame = {"locals": {}, "literals": {}, "uncertain": set(), "configuration": True,
+             "params": [], "library": [], "module_scope": True}
+    def visit(node, inner):
+        if node.type in PY_FUNCS | TS_FUNCS | CLASS_NODES:
+            _invalidate(inner, _declared_names(node))
             return
-        if node.type == "type_alias_declaration":
+        if _walk_scoped(node, lang, inner, visit):
+            return
+        if node.type == "type_alias_declaration" and inner.get("module_scope"):
             name = node.child_by_field_name("name")
             values = _finite_type(node.child_by_field_name("value"), state["types"])
             if name is not None and values:
                 state["types"][_text(name)] = values
-        if node.type in ("variable_declarator", "assignment"):
-            name = node.child_by_field_name("name" if lang == "typescript" else "left")
-            value = node.child_by_field_name("value" if lang == "typescript" else "right")
-            constant = lang != "typescript" or _text(node.parent).lstrip().startswith("const ")
-            if name is not None and name.type == "identifier" and constant:
-                parts = _value_pieces(value, lang, {"literals": state["literals"]})
-                if parts and all(None not in row for row in parts):
-                    state["literals"][_text(name)] = parts
+        if node.type in ("variable_declarator", "assignment", "assignment_expression", "augmented_assignment", "augmented_assignment_expression"):
+            declaration = node.type == "variable_declarator"
+            name = node.child_by_field_name("name" if declaration else "left")
+            value = node.child_by_field_name("value" if declaration else "right")
+            if name is not None and name.type == "identifier":
+                constant = lang != "typescript" or not declaration or _text(node.parent).lstrip().startswith("const ")
+                if constant and node.type not in ("augmented_assignment", "augmented_assignment_expression"):
+                    _note_local(inner, _text(name), value, lang)
+                else:
+                    _invalidate(inner, {_text(name)})
+            else:
+                _invalidate(inner, _targets(name))
         for child in node.named_children:
-            visit(child)
-    visit(root)
+            visit(child, inner)
+    visit(root, frame)
+    state["literals"] = frame["literals"]
+    state["uncertain"] = frame["uncertain"]
+
 
 
 def _combine(left, right):
@@ -1083,6 +1271,8 @@ def _without_origin(text):
 
 
 def _eval_paths(node, lang, frame):
+    if _uncertain_value(node, frame):
+        return []
     paths = []
     for pieces in _value_pieces(node, lang, frame):
         # Coalesce adjacent known fragments so query suffixes and bases retain meaning.

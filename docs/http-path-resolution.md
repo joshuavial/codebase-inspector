@@ -29,3 +29,28 @@ with caller and source line. They produce `unmatched_http_call` diagnostics mark
 `resolution=dynamic_client` and never become guessed HTTP edges. For a recognized
 request wrapper, local call sites carry this diagnostic; an uncalled wrapper
 retains its own unresolved site so the resolution boundary stays visible.
+
+Conditional statement arms use independent copies of the incoming literal values.
+A name that an arm can assign becomes unknown after the statement. Loop bodies
+start with names that the loop can assign unknown, since the loop can run zero
+or multiple times. Try bodies, handlers and finalizers also use independent
+uncertain inputs for names they can assign, because an exception can interrupt
+an assignment sequence. Derived URLs retain that uncertainty and produce an
+unresolved-call diagnostic rather than guessing a server prefix from a suffix.
+Finite conditional expressions and request wrappers with bounded literal branch
+prefixes still retain all their alternatives, up to the same 64-alternative cap.
+
+TypeScript `const` and `let` bindings stay inside their lexical block, including
+loop and catch scopes. Function-scoped `var` declarations shadow module literals
+before their declaration. Python function-local assignments likewise shadow
+module values throughout the function. A closure binding that shadows a module
+constant remains unresolved rather than borrowing the same-named global value.
+These rules also govern file-scope configuration collection; values encountered
+inside conditional or nested scopes do not become unconditional global settings.
+
+Local function and class declarations also shadow same-named module literals.
+Their declared names are collected without treating their nested bodies as outer
+assignments. A declaration replaces any earlier local literal, and class-body
+attributes stay inside the class namespace. The resulting function/class value
+is not treated as a URL string. Named function and class expressions keep their
+self-binding inside their body and leave an outer same-named literal unchanged.
