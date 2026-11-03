@@ -423,3 +423,33 @@ def test_compose_working_directory_alone_selects_runtime_entry(make_repo, monkey
     found = _nodes(_db(root), 'deployable')
     assert found['deployable:acme-image'][1]['entry_points'] == ['one/start.py']
     assert found['deployable:worker'][1]['entry_points'] == ['two/start.py']
+
+
+@pytest.mark.parametrize('command', [
+    'exec echo "python -m api"',
+    '["echo", "python", "-m", "api"]',
+    'uvicorn api${SUFFIX}:app',
+    '["uvicorn", "api${SUFFIX}:app"]',
+    'python -m api${SUFFIX}',
+    '["sh", "-c", "echo uvicorn api:app"]',
+    '["sh", "-x", "-c", "python -m api"]',
+])
+def test_non_executable_or_dynamic_modules_stay_unresolved(make_repo, command):
+    files = {
+        'Dockerfile': f'FROM python\nWORKDIR /app\nCOPY . .\nCMD {command}\n',
+        'api.py': 'def app():\n    pass\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert not any(path for _, path in manifests.dockerfile(ws)[0][0]['entries'])
+
+
+def test_echoed_modules_in_shell_wrapper_are_not_roots(make_repo):
+    files = {
+        'Dockerfile': 'FROM python\nWORKDIR /app\nCOPY . .\nCMD ["sh", "boot.sh"]\n',
+        'boot.sh': '#!/bin/sh\nexec echo "python -m api"\n',
+        'api.py': 'def app():\n    pass\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert {path for _, path in manifests.dockerfile(ws)[0][0]['entries']} == {'boot.sh'}

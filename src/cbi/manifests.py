@@ -258,7 +258,6 @@ def pyproject(ws):
 
 
 DOCKERFILE = re.compile(r"(^|/)(Dockerfile|Dockerfile\.[^/]+|Containerfile)$")
-DOCKER_RUN = re.compile(r"^\s*(CMD|ENTRYPOINT)\s+(.*)$", re.I | re.M)
 
 
 def _tokens(value):
@@ -371,20 +370,72 @@ def _docker_builds(ws):
     return builds
 
 
+def _runtime_argv(command):
+    """Keep argv boundaries and unwrap only literal exec, shell -c and project runners."""
+    tokens = _tokens(command)
+    for _ in range(8):
+        if not tokens:
+            return []
+        executable = posixpath.basename(tokens[0])
+        if executable in ("sh", "bash", "ash") and len(tokens) > 1 and tokens[1].startswith("-"):
+            if len(tokens) != 3 or tokens[1] != "-c":
+                return []
+            tokens = _tokens(tokens[2])
+        elif tokens[0] == "exec":
+            tokens = tokens[1:]
+        elif executable in ("uv", "poetry") and tokens[1:2] == ["run"]:
+            tokens = tokens[2:]
+        else:
+            # Compound shell programs need a shell parser; do not guess their executable positions.
+            return [] if any(re.search(r"[;&|`\n]", token) for token in tokens) else tokens
+    return []
+
+
+def _script_argument(tokens):
+    """The file argument of a supported interpreter, excluding inline code and module modes."""
+    if not tokens or posixpath.basename(tokens[0]) not in (
+            "python", "python3", "node", "tsx", "ts-node", "ts-node-esm", "bun", "sh", "bash", "ash"):
+        return None
+    args = tokens[1:]
+    if posixpath.basename(tokens[0]) == "bun" and args[:1] == ["run"]:
+        args = args[1:]
+    while args and args[0].startswith("-"):
+        if args[0] in ("-m", "-c", "-e", "--eval", "-p", "--print"):
+            return None
+        args = args[1:]
+    return args[0] if args and not re.search(r"[$`*?]", args[0]) else None
+
+
+def _module_argument(tokens):
+    if not tokens:
+        return None
+    executable = posixpath.basename(tokens[0])
+    args = tokens[1:]
+    if executable in ("python", "python3"):
+        while args and args[0] in ("-u", "-B", "-O", "-OO", "-I", "-s", "-S", "-E"):
+            args = args[1:]
+        target = args[1] if len(args) >= 2 and args[0] == "-m" else ""
+        return target if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target) else None
+    if executable in ("uvicorn", "gunicorn", "hypercorn") and args:
+        match = re.fullmatch(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?::[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\(\))?)?", args[0])
+        return match.group(1) if match else None
+    return None
+
+
 def _docker_entry(ws, here, tokens, scripts, state=None):
-    """Resolve command argv through image paths, then project scripts and module names."""
-    for i, token in enumerate(tokens):
+    """Resolve only executable paths and supported interpreter file arguments."""
+    if not tokens:
+        return None
+    if tokens[0] in scripts:
+        return scripts[tokens[0]]
+    for token in (tokens[0], _script_argument(tokens)):
+        if not token or re.search(r"[$`*?]", token):
+            continue
         if state:
             source = state["files"].get(_image_path(state["workdir"], token))
             if source:
                 return source
-        if token in scripts and (i == 0 or i == 2 and tokens[:2] in (["uv", "run"], ["poetry", "run"])):
-            return scripts[token]
-        if i and tokens[i - 1] == "-m":
-            found = _py_module(ws, here, token) or _py_module(ws, "", token)
-            if found:
-                return found
-        elif ("/" in token or "." in token) and not (state and state["copies"]):
+        if ("/" in token or "." in token) and not (state and state["copies"]):
             # Legacy images without literal copies may still name a source path directly.
             parts = [p for p in token.split("/") if p not in ("", ".")]
             for k in range(len(parts)):
@@ -438,11 +489,6 @@ def dockerfile(ws):
 
 
 COMPOSE = re.compile(r"(^|/)(docker-compose[^/]*|compose[^/]*)\.ya?ml$")
-# A compose `command` that names a Python module: `python -m pkg.mod` or `uvicorn pkg.mod:app`.
-_PY_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
-_ASGI_APP = re.compile(r"\b(?:uvicorn|gunicorn|hypercorn)\s+([A-Za-z_][\w.]*)")
-
-
 def _npm_entries(ws, here, tokens, state, seen):
     """Follow package scripts at the runtime package, with a cycle guard and tracked web roots."""
     if not tokens or posixpath.basename(tokens[0]) != "npm":
@@ -459,11 +505,13 @@ def _npm_entries(ws, here, tokens, state, seen):
         return []
     here = posixpath.dirname(package)
     found = _command_entries(ws, here, command, state, (*seen, key))
-    for raw in SCRIPT_ENTRY.findall(command):
+    script_tokens = _runtime_argv(command)
+    raw = _script_argument(script_tokens)
+    if raw:
         path = ws.to_source(_join(here, raw))
         if path:
             found.append((raw, path))
-    if re.search(r"(?:^|[;&|]\s*)vite(?:\s|$)", command):
+    if script_tokens and script_tokens[0] == "vite":
         configs = [d for d in vite(ws)[0] if posixpath.dirname(d["manifest"]) == here]
         if configs:
             found += [entry for d in configs for entry in d["entries"] if entry[1]]
@@ -478,13 +526,13 @@ def _npm_entries(ws, here, tokens, state, seen):
 
 def _command_entries(ws, here, command, state=None, seen=()):
     """Resolve literal module commands and simple shell wrappers without running target code."""
-    tokens = _tokens(command)
-    if _idle_command(tokens):
+    tokens = _runtime_argv(command)
+    if not tokens or _idle_command(tokens):
         return []
-    text = " ".join(tokens)
-    modules = list(dict.fromkeys(_PY_MODULE.findall(text) + _ASGI_APP.findall(text)))
+    text = " ".join(_tokens(command))
+    module = _module_argument(tokens)
     found = []
-    for module in modules:
+    if module:
         path = None
         if state:
             stem = _image_path(state["workdir"], module.replace(".", "/"))
@@ -492,11 +540,6 @@ def _command_entries(ws, here, command, state=None, seen=()):
         path = path or _py_module(ws, here, module) or _py_module(ws, "", module)
         if path:
             found.append((module, path))
-    # sh -c keeps its command as one exec argument; split that argument for path resolution.
-    if len(tokens) > 2 and posixpath.basename(tokens[0]) in ("sh", "bash", "ash") and tokens[1] == "-c":
-        tokens = _tokens(tokens[2])
-    if tokens[:1] == ["exec"]:
-        tokens = tokens[1:]
     found += _npm_entries(ws, here, tokens, state, seen)
     entry = _docker_entry(ws, here, tokens, _project_scripts(ws), state)
     if entry:
