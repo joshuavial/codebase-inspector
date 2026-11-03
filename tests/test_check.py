@@ -221,10 +221,10 @@ def test_team_brief_budget_overrides_the_environment(make_repo, monkeypatch, cap
     (root / ".cbi" / "team.toml").write_text('check = "fail"\nbrief_budget = 200\n')
     monkeypatch.setenv("CBI_BRIEF_BUDGET", "99999999")
     [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
-    spec = run_json(capsys, "task", task["id"], "--parts")
-    assert spec["budget"] == 200
-    assert spec["brief_bytes"] > 200
-    assert spec["split"] is True
+    code, out, err = run(capsys, "task", task["id"], "--parts", "--json")
+    # The team budget wins: 200 bytes cannot hold even the schema/envelope.
+    assert code == 2 and out == ""
+    assert "brief_budget is too small" in err
 
 
 def test_readme_has_the_team_init_snippet():

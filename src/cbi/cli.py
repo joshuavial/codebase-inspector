@@ -936,7 +936,11 @@ def _cmd_parts(args, conn, brief, root):
     if brief["kind"] not in parts.SPLIT_KINDS:
         print(f"{brief['kind']} briefs are not split", file=sys.stderr)
         return 2
-    spec = parts.split_brief(conn, brief, root)
+    try:
+        spec = parts.split_brief(conn, brief, root)
+    except ValueError as err:
+        print(str(err), file=sys.stderr)
+        return 2
     if args.parts:
         if args.json:
             _print_json(parts.index_payload(spec))
@@ -948,9 +952,7 @@ def _cmd_parts(args, conn, brief, root):
         return 2
     part = spec["parts"][args.part - 1]
     if args.json:
-        payload = dict(part["brief"])
-        payload["bytes"] = part["bytes"]
-        _print_json(payload)
+        sys.stdout.write(parts.json_part(part["brief"]))
     else:
         sys.stdout.write(part["text"])
     return 0
