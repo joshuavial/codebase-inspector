@@ -494,3 +494,45 @@ def test_non_mapping_compose_document_does_not_abort_scan(make_repo, monkeypatch
     assert main(['init']) == 0
     assert main(['scan']) == 0
     assert set(_nodes(_db(root), 'deployable')) == {'deployable:acme-image'}
+
+
+@pytest.mark.parametrize('replacement', [
+    'ADD https://example.org/config.json /app/',
+    'ADD https://example.org/config.json?version=2 /app/',
+    'COPY configs/*.json /app/',
+    'COPY configs/[ab].json /app/',
+])
+def test_unknown_copy_preserves_unaffected_directory_siblings(make_repo, replacement):
+    files = {
+        'Dockerfile': f'FROM python\nCOPY start.py /app/\n{replacement}\nCMD ["python", "/app/start.py"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', 'start.py')]
+
+
+@pytest.mark.parametrize('replacement', [
+    'ADD https://example.org/start.py /app/',
+    'COPY configs/*.py /app/',
+    'COPY configs/[s]tart.py /app/',
+])
+def test_unknown_copy_still_invalidates_matching_directory_child(make_repo, replacement):
+    files = {
+        'Dockerfile': f'FROM python\nCOPY start.py /app/\n{replacement}\nCMD ["python", "/app/start.py"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', None)]
+
+
+def test_copy_glob_matching_directory_invalidates_merged_children(make_repo):
+    files = {
+        'Dockerfile': 'FROM python\nCOPY start.py /app/\nCOPY configs/*.json /app/\nCMD ["python", "/app/start.py"]\n',
+        'start.py': 'print(1)\n',
+        'configs/payload.json/start.py': 'print(2)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', None)]

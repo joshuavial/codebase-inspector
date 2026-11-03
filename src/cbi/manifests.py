@@ -15,6 +15,9 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from html.parser import HTMLParser
+from fnmatch import fnmatchcase
+from glob import has_magic
+from urllib.parse import unquote, urlsplit
 
 from cbi import resolve
 
@@ -275,10 +278,25 @@ def _image_path(workdir, path):
     return posixpath.normpath(posixpath.join(workdir, path))
 
 
-def _forget_image_destination(state, dest):
-    """Unknown replacement content must not keep the source provenance it may overwrite."""
-    state["files"] = {f: tracked for f, tracked in state["files"].items()
-                      if f != dest and not f.startswith(dest.rstrip("/") + "/")}
+def _forget_image_destination(state, dest, *, directory=False, basename=None):
+    """Drop only paths an unknown copy may overwrite, retaining constrained siblings."""
+    prefix = dest.rstrip("/") + "/"
+
+    def affected(path):
+        if path == dest:
+            return True
+        if not path.startswith(prefix):
+            return False
+        child = path[len(prefix):].split("/", 1)[0]
+        return not directory or basename is None or fnmatchcase(child, basename)
+
+    state["files"] = {f: tracked for f, tracked in state["files"].items() if not affected(f)}
+
+
+def _copy_pattern_matches(path, pattern):
+    """COPY globs match individual path components, not across directory separators."""
+    parts, patterns = path.split("/"), pattern.split("/")
+    return len(parts) == len(patterns) and all(fnmatchcase(p, g) for p, g in zip(parts, patterns))
 
 
 def _remember_image_directory(state, directory):
@@ -338,17 +356,38 @@ def _docker_state(ws, path, context, target=None):
                 state["files"].clear()  # the destination could overwrite any mapped path
                 continue
             dest = _image_path(state["workdir"], dest)
-            if any(re.search(r"[$*?]", source) for source in sources):
-                _forget_image_destination(state, dest)
-                continue
             origin = named.get(flags["from"]) if "from" in flags else None
-            if "from" in flags and origin is None:
-                _forget_image_destination(state, dest)
-                continue
+            external = "from" in flags and origin is None
             available = dict(origin["files"]) if origin else {"/" + p: p for p in ws.paths
                 if not context or p.startswith(context + "/")}
+            if external:
+                available = {}
+            dest_dir = dest in state["dirs"] or words[-1].endswith("/") or len(sources) > 1
+            if dest_dir:
+                _remember_image_directory(state, dest)
             for source in sources:
                 if "://" in source:
+                    try:
+                        basename = posixpath.basename(unquote(urlsplit(source).path)) or None
+                    except ValueError:
+                        basename = None
+                    _forget_image_destination(state, dest, directory=dest_dir, basename=basename)
+                    continue
+                if "$" in source or has_magic(source):
+                    basename = None
+                    if "$" not in source and instruction == "COPY" and not external and not source.endswith("/"):
+                        pattern = _image_path("/" if origin else "/" + context, source.lstrip("/"))
+                        directories = set(origin["dirs"]) if origin else {"/"}
+                        for file in available:
+                            directory = posixpath.dirname(file)
+                            while directory not in directories:
+                                directories.add(directory)
+                                directory = posixpath.dirname(directory)
+                        if not any(_copy_pattern_matches(d, pattern) for d in directories):
+                            basename = posixpath.basename(source)
+                    _forget_image_destination(state, dest, directory=dest_dir, basename=basename)
+                    continue
+                if external:
                     _forget_image_destination(state, dest)
                     continue
                 source = _image_path("/" if origin else "/" + context, source.lstrip("/"))
@@ -359,8 +398,6 @@ def _docker_state(ws, path, context, target=None):
                     _forget_image_destination(state, dest)
                 for f, tracked in matches:
                     suffix = f[len(prefix):] if directory else posixpath.basename(source)
-                    dest_dir = (dest in state["dirs"] or words[-1].endswith("/")
-                                or any(f.startswith(dest.rstrip("/") + "/") for f in state["files"]))
                     destination = _join(dest, suffix) if directory or dest_dir or len(sources) > 1 else dest
                     _remember_image_directory(state, posixpath.dirname(destination))
                     state["files"][destination] = tracked
