@@ -289,3 +289,46 @@ def test_image_stage_copy_boundaries(make_repo):
     (root / 'Dockerfile').write_text('FROM python AS builder\nCOPY scripts/start.py /built/serve\n'
                                     'FROM builder\nENTRYPOINT ["/built/serve"]\n')
     assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'scripts/start.py'
+
+
+@pytest.mark.parametrize('override', [
+    'command: [uvicorn, api:app]',
+    'entrypoint: [uvicorn, api:app]',
+    'command: sh -c "exec uvicorn api:app --host 0.0.0.0"',
+    'entrypoint: /usr/local/bin/boot',
+])
+def test_compose_build_context_and_overrides(make_repo, monkeypatch, capsys, override):
+    root = make_repo({
+        'services/api.py': 'def app():\n    pass\n',
+        'services/boot.sh': '#!/bin/sh\nif [ "$MODE" = "web" ]; then\n  exec uvicorn api:app\nfi\n',
+        'services/Dockerfile': 'FROM python\nWORKDIR /srv\nCOPY . .\nCOPY boot.sh /usr/local/bin/boot\n',
+        'compose.yaml': f'services:\n  api:\n    build: services\n    {override}\n',
+    }, name='acme')
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    conn = _db(root)
+    found = _nodes(conn, 'deployable')
+    assert 'services/api.py' in found['deployable:api'][1]['entry_points']
+    assert 'services/api.py' in found['deployable:services-image'][1]['entry_points']
+    assert not conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unresolved_entry'").fetchall()
+    capsys.readouterr()
+    assert main(['orphans', '--json']) == 0
+    assert 'services/api.py' not in capsys.readouterr().out
+
+
+def test_compose_override_replaces_default_command(make_repo):
+    files = {
+        'Dockerfile': 'FROM python\nWORKDIR /app\nCOPY . .\nCMD ["old.py"]\nENTRYPOINT ["python"]\n',
+        'old.py': 'print(1)\n',
+        'new.py': 'print(2)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    entries = manifests._service_entries(ws, {'command': ['new.py']}, 'Dockerfile', '')
+    assert {path for _, path in entries} == {'new.py'}
+    entries = manifests._service_entries(ws, {'entrypoint': ['python', 'new.py']}, 'Dockerfile', '')
+    assert {path for _, path in entries} == {'new.py'}
+
+    entries = manifests._service_entries(ws, {'command': None}, 'Dockerfile', '')
+    assert {path for _, path in entries} == {'old.py'}

@@ -279,7 +279,7 @@ def _image_path(workdir, path):
 def _docker_state(ws, path, context, target=None):
     """Track literal files in each build stage; remote, dynamic and generated copies stay unknown."""
     stages, named = [], {}
-    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False}
+    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False, "cmd_inherited": False}
     text = re.sub(r"\\\n", " ", (ws.text(path) or "") if path in ws.paths else "")
     for line in text.splitlines():
         instruction, _, value = line.strip().partition(" ")
@@ -291,7 +291,8 @@ def _docker_state(ws, path, context, target=None):
             state = {"files": dict(parent["files"]) if parent else {},
                      "workdir": parent["workdir"] if parent else "/",
                      "commands": dict(parent["commands"]) if parent else {},
-                     "copies": parent["copies"] if parent else False}
+                     "copies": parent["copies"] if parent else False,
+                     "cmd_inherited": bool(parent and "CMD" in parent["commands"])}
             stages.append(state)
             named[str(len(stages) - 1)] = state
             if len(words) >= 3 and words[-2].upper() == "AS":
@@ -300,7 +301,9 @@ def _docker_state(ws, path, context, target=None):
             state["workdir"] = _image_path(state["workdir"], value)
         elif instruction in ("CMD", "ENTRYPOINT"):
             state["commands"][instruction] = _tokens(value)
-            if instruction == "ENTRYPOINT":
+            if instruction == "CMD":
+                state["cmd_inherited"] = False
+            if instruction == "ENTRYPOINT" and state["cmd_inherited"]:
                 state["commands"].pop("CMD", None)  # a new entrypoint clears an inherited CMD
         elif instruction in ("COPY", "ADD"):
             state["copies"] = True
@@ -332,7 +335,9 @@ def _docker_state(ws, path, context, target=None):
                 matches = [(f, tracked) for f, tracked in available.items() if f == source or f.startswith(prefix)]
                 for f, tracked in matches:
                     suffix = f[len(prefix):] if directory else posixpath.basename(source)
-                    destination = _join(dest, suffix) if directory or words[-1].endswith("/") or len(sources) > 1 else dest
+                    dest_dir = (dest == state["workdir"] or words[-1].endswith("/")
+                                or any(f.startswith(dest.rstrip("/") + "/") for f in state["files"]))
+                    destination = _join(dest, suffix) if directory or dest_dir or len(sources) > 1 else dest
                     state["files"][destination] = tracked
     return named.get(target, state) if target else state
 
@@ -360,7 +365,7 @@ def _docker_entry(ws, here, tokens, scripts, state=None):
             source = state["files"].get(_image_path(state["workdir"], token))
             if source:
                 return source
-        if token in scripts:
+        if token in scripts and (i == 0 or i == 2 and tokens[:2] in (["uv", "run"], ["poetry", "run"])):
             return scripts[token]
         if i and tokens[i - 1] == "-m":
             found = _py_module(ws, here, token) or _py_module(ws, "", token)
@@ -395,7 +400,8 @@ def dockerfile(ws):
             state = _docker_state(ws, path, context, target)
             tokens = state["commands"].get("ENTRYPOINT", []) + state["commands"].get("CMD", [])
             raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
-            entries.append((raw, _docker_entry(ws, context, tokens, scripts, state)))
+            resolved = _compose_image_entries(ws, path) if not tokens else []
+            entries += resolved or [(raw, _docker_entry(ws, context, tokens, scripts, state))]
         deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
                             "ref": f"file:{ws.top(path)}"})
     return deployables, []
@@ -407,31 +413,69 @@ _PY_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
 _ASGI_APP = re.compile(r"\b(?:uvicorn|gunicorn|hypercorn)\s+([A-Za-z_][\w.]*)")
 
 
-def _command_text(command):
-    if isinstance(command, str):
-        return command
-    if isinstance(command, list):
-        return " ".join(str(part) for part in command)
-    return ""
-
-
-def _command_entries(ws, here, command):
-    """Resolved `(raw, workspace path)` pairs for modules named in a service command.
-
-    A shell wrapper that names nothing tracked is ignored. The image's own CMD stays the entry then.
-    """
-    text = _command_text(command)
+def _command_entries(ws, here, command, state=None, seen=()):
+    """Resolve literal module commands and simple shell wrappers without running target code."""
+    tokens = _tokens(command)
+    text = " ".join(tokens)
     modules = list(dict.fromkeys(_PY_MODULE.findall(text) + _ASGI_APP.findall(text)))
     found = []
     for module in modules:
-        path = _py_module(ws, here, module) or _py_module(ws, "", module)
-        if path and path not in {p for _, p in found}:
+        path = None
+        if state:
+            stem = _image_path(state["workdir"], module.replace(".", "/"))
+            path = state["files"].get(stem + ".py") or state["files"].get(stem + "/__init__.py")
+        path = path or _py_module(ws, here, module) or _py_module(ws, "", module)
+        if path:
             found.append((module, path))
-    return found
+    # sh -c keeps its command as one exec argument; split that argument for path resolution.
+    if len(tokens) > 2 and posixpath.basename(tokens[0]) in ("sh", "bash", "ash") and tokens[1] == "-c":
+        tokens = _tokens(tokens[2])
+    entry = _docker_entry(ws, here, tokens, _project_scripts(ws), state)
+    if entry:
+        found.append((text, entry))
+        if entry not in seen and (entry.endswith(".sh") or (ws.text(entry) or "").startswith("#!/bin/sh")):
+            for line in (ws.text(entry) or "").splitlines():
+                # Only literal executable lines, including branches, not comments or echoed commands.
+                if re.match(r"^\s*(?:exec\s+|uvicorn\s+|gunicorn\s+|hypercorn\s+|python3?\s+)", line):
+                    found += _command_entries(ws, here, line, state, (*seen, entry))
+    return [(raw, path) for path, raw in {path: raw for raw, path in found}.items()]
+
+
+def _service_entries(ws, svc, docker, context):
+    state = _docker_state(ws, docker, context, (svc.get("build") or {}).get("target")
+                          if isinstance(svc.get("build"), dict) else None)
+    if isinstance(svc.get("working_dir"), str):
+        state["workdir"] = _image_path(state["workdir"], svc["working_dir"])
+    commands = dict(state["commands"])
+    if svc.get("entrypoint") is not None:
+        commands["ENTRYPOINT"] = _tokens(svc["entrypoint"])
+        commands.pop("CMD", None)
+    if svc.get("command") is not None:
+        commands["CMD"] = _tokens(svc["command"])
+    tokens = commands.get("ENTRYPOINT", []) + commands.get("CMD", [])
+    return _command_entries(ws, context, tokens, state)
+
+
+def _compose_image_entries(ws, docker):
+    """A commandless build gets startup evidence from its Compose services."""
+    entries = []
+    for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
+        services = (_yaml(ws.text(path) or "") or {}).get("services") or {}
+        for svc in services.values() if isinstance(services, dict) else ():
+            build = svc.get("build") if isinstance(svc, dict) else None
+            build = {"context": build} if isinstance(build, str) else build
+            if not isinstance(build, dict):
+                continue
+            context = _join(posixpath.dirname(path), build.get("context") or ".")
+            if _join(context, build.get("dockerfile") or "Dockerfile") == docker:
+                entries += _service_entries(ws, svc, docker, context)
+    return list(dict.fromkeys(entries))
 
 
 def _yaml_scalar(text):
     text = re.sub(r"^[&!]\S+\s*", "", text.strip())  # anchors and tags
+    if text in ("null", "Null", "NULL", "~"):
+        return None
     if text.startswith("[") and text.endswith("]"):
         return [_yaml_scalar(t) for t in text[1:-1].split(",") if t.strip()]
     if text.startswith("{") and text.endswith("}"):
@@ -550,7 +594,8 @@ def compose(ws):
                 build = {"context": build} if isinstance(build, str) else build
                 context = _join(here, build.get("context") or ".")
                 docker = _join(context, build.get("dockerfile") or "Dockerfile")
-                entries = _command_entries(ws, here, svc.get("command"))
+                entries = (_service_entries(ws, svc, docker, context)
+                           if svc.get("command") is not None or svc.get("entrypoint") is not None else [])
                 if not entries:
                     entries = [] if docker in ws.paths else [(docker, None)]
                 found[ref.format(name)] = {**_deployable(name, "service", path, f"compose service {name}", entries),
