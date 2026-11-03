@@ -1221,6 +1221,8 @@ def resolve(conn, root):
     _inherit_helper_calls(m, edges, add)
     from cbi import testing_paths
     path_diags = testing_paths.link(m, edges, add)
+    from cbi import testing_sql
+    sql_diags = testing_sql.link(m, edges, add)
     from cbi import testing_subprocess
     subprocess_diags = testing_subprocess.link(m, edges, add)
 
@@ -1263,7 +1265,7 @@ def resolve(conn, root):
         sorted(ambiguous)
         + unmatched
         + [(fid, "unresolved_injection", f"{n} injected calls with no candidate") for fid, n in sorted(unresolved.items())]
-        + http_diags + subprocess_diags + path_diags,
+        + http_diags + subprocess_diags + path_diags + sql_diags,
     )
     from cbi.env import apply as apply_env  # local: env imports manifests, which imports this module
     apply_env(conn, root)
