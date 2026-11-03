@@ -59,3 +59,42 @@ def test_classification_policy_change_refreshes_existing_models(make_repo, monke
         assert {f["path"] for f in concepts._code_files(conn)} == {"Makefile"}
     finally:
         conn.close()
+
+
+def test_classification_policy_change_refreshes_existing_ref_models(make_repo, monkeypatch, capsys):
+    from test_refs import scan_ref
+
+    root = make_repo({"Makefile": "all:\n\t@echo ready\n"})
+    monkeypatch.chdir(root)
+    with monkeypatch.context() as old_policy:
+        old_policy.setattr(files, "CLASSIFICATION_VERSION", 0)
+        old_policy.setattr(files, "named_source_language", lambda path: None)
+        assert main(["init"]) == 0
+        sha, _ = scan_ref(capsys, "HEAD")
+    db = root / ".cbi" / "refs" / sha / "model.db"
+    conn = store.open_db(db)
+    try:
+        assert not concepts._code_files(conn)
+    finally:
+        conn.close()
+
+    for stored_version in ("0", None):
+        conn = store.open_db(db)
+        try:
+            with conn:
+                # Both pre-version models and explicitly older versions must rebuild.
+                if stored_version is None:
+                    conn.execute("DELETE FROM meta WHERE key = 'classification_version'")
+                else:
+                    store.set_meta(conn, "classification_version", stored_version)
+        finally:
+            conn.close()
+        _, output = scan_ref(capsys, "HEAD")
+        assert "scanned" in output and "reused" not in output
+        conn = store.open_db(db)
+        try:
+            assert {f["path"] for f in concepts._code_files(conn)} == {"Makefile"}
+            assert store.get_meta(conn, "classification_version") == str(files.CLASSIFICATION_VERSION)
+        finally:
+            conn.close()
+        assert "reused" in scan_ref(capsys, "HEAD")[1]

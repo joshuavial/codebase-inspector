@@ -507,6 +507,7 @@ def _map(root, out, ignore_text, workspaces, tracked, states, commit=None, parse
             store.replace_file_states(conn, {p: s[:4] for p, s in states.items()})
             store.set_meta(conn, "scanned_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
             store.set_meta(conn, "parser_version", str(files.PARSER_VERSION))
+            store.set_meta(conn, "classification_version", str(files.CLASSIFICATION_VERSION))
             store.set_meta(conn, "ignore", files.ignore_token(ignore_text))
             # content_hash is the git blob id. A model written before that misses this key,
             # so the next scan rehashes instead of reusing the old digest from mtime.
@@ -558,7 +559,7 @@ def scan_ref(root, out, ref, *, force=False):
     """Map one commit from git objects into out/refs/<sha>/model.db.
 
     Returns (sha, reused, counts, (open, blocked)). A stored model is reused when
-    the schema, parser version and ignore file still match.
+    the schema, parser and classification versions, and ignore file still match.
     """
     ignore_text = _read(out / "ignore")
     sha = files.resolve_commit(root, ref)
@@ -577,6 +578,7 @@ def scan_ref(root, out, ref, *, force=False):
     if not force and store.ref_reusable(
             db, files.ignore_token(ignore_text), files.PARSER_VERSION,
             _read(home / "concepts.json"), _read(home / "screens.json"),
+            classification_version=files.CLASSIFICATION_VERSION,
             structure_text=_read(home / "structure.json"), team_text=_read(home / "team.toml"),
             answers_text=_read(home / "answers.jsonl")):
         conn = store.read_only(db)
