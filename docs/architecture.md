@@ -4,7 +4,7 @@ Covers PRD-01 to PRD-07 (`docs/prd-0*.md`). Living document: update it when a de
 
 ## Constraints from the PRD
 
-- Deterministic CLI, no LLM calls, never executes target code. Agents supply judgement through a task protocol.
+- Deterministic CLI, no LLM calls, never executes target code. Agents supply judgement through a task protocol (see [`docs/determinism-and-enrichment.md`](determinism-and-enrichment.md) for the exact boundary).
 - Works on any repo without installing its dependencies or building it.
 - sample-monorepo scale: ~1.6k code files, ~30k symbols, ~100k edges, cold scan under 60 s, no-change rescan under 10 s, viewer first paint under 2 s.
 - Viewer opens from `file://` with no server.
