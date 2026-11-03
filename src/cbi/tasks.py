@@ -12,6 +12,8 @@ import json
 import os
 import posixpath
 import re
+import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -247,13 +249,15 @@ def attach_cache(conn, *, readonly=False):
 
 
 def _attach_cache_readonly(conn, path):
-    if not path.is_file():
-        return
-    uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     try:
+        if not path.is_file():
+            return
+        uri = store.read_uri(path)
         conn.execute("ATTACH DATABASE ? AS cache", (uri,))
         conn.execute("SELECT 1 FROM cache.sqlite_master LIMIT 1").fetchone()
-    except sqlite3.Error:
+    except (OSError, sqlite3.Error) as err:
+        print(f"Cannot read answer cache at {path}: {err}. Continuing with the local model. "
+              "Check cache read permissions or set CBI_CACHE_DIR to an accessible cache directory.", file=sys.stderr)
         try:
             conn.execute("DETACH DATABASE cache")
         except sqlite3.Error:

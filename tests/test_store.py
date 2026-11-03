@@ -87,3 +87,102 @@ def test_concurrent_scans_wait_for_the_writer(make_repo, monkeypatch):
         release.set()
         assert first.result(timeout=30)[0]
         assert second.result(timeout=30)[0]
+
+
+def test_task_queries_do_not_need_a_writable_cache(make_repo, monkeypatch, capsys, tmp_path):
+    import json
+    from cbi.cli import main
+
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    path = root / ".cbi/model.db"
+    with sqlite3.connect(path) as conn:
+        task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'summarise-files'").fetchone()[0]
+    blocked = tmp_path / "blocked"
+    blocked.write_text("This path cannot hold a cache directory.")
+    monkeypatch.setenv("CBI_CACHE_DIR", str(blocked / "cache"))
+    before = path.read_bytes()
+    capsys.readouterr()
+    assert main(["task", task_id, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["id"] == task_id
+    assert main(["tasks", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)
+    assert path.read_bytes() == before
+
+
+def test_task_query_reports_schema_mismatch_without_migrating(make_repo, monkeypatch, capsys):
+    from cbi.cli import main
+
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    path = root / ".cbi/model.db"
+    with sqlite3.connect(path) as conn:
+        conn.execute("PRAGMA user_version = 999")
+    conn.close()
+    before = path.read_bytes()
+    capsys.readouterr()
+    assert main(["task", "any", "--json"]) == 1
+    assert "rescan" in capsys.readouterr().err.lower()
+    assert path.read_bytes() == before
+
+
+def test_task_queries_report_unreadable_cache_and_keep_working(make_repo, monkeypatch, capsys, tmp_path):
+    import json
+    from cbi.cli import main
+
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        task_id = conn.execute("SELECT id FROM tasks LIMIT 1").fetchone()[0]
+    cache = tmp_path / "invalid-cache"
+    cache.mkdir()
+    (cache / "answers.db").write_text("not a SQLite database")
+    monkeypatch.setenv("CBI_CACHE_DIR", str(cache))
+    capsys.readouterr()
+    assert main(["task", task_id, "--json"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["id"] == task_id
+    assert "CBI_CACHE_DIR" in captured.err
+    assert "Continuing with the local model" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_readonly_task_query_sees_committed_wal_changes(make_repo, monkeypatch, capsys):
+    import json
+    from cbi.cli import main
+
+    root = make_repo({"core.py": "def run():\n    return 1\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    writer = sqlite3.connect(root / ".cbi/model.db")
+    task_id = writer.execute("SELECT id FROM tasks WHERE kind = 'summarise-files'").fetchone()[0]
+    writer.execute("UPDATE tasks SET state = 'done' WHERE id = ?", (task_id,))
+    writer.commit()
+    capsys.readouterr()
+    try:
+        assert main(["task", task_id, "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["state"] == "done"
+    finally:
+        writer.close()
+
+
+def test_readonly_cache_sees_committed_wal_changes(tmp_path):
+    conn = store.open_db(tmp_path / "model.db")
+    tasks.attach_cache(conn)
+    conn.execute("INSERT INTO cache.file_summaries VALUES (?, ?, ?)",
+                 ("blob", tasks.PROTOCOL_VERSION, "Current summary."))
+    conn.commit()
+    reader = store.read_only(tmp_path / "model.db")
+    try:
+        tasks.attach_cache(reader, readonly=True)
+        assert reader.execute("SELECT summary FROM cache.file_summaries").fetchone() == ("Current summary.",)
+    finally:
+        reader.close()
+        conn.close()

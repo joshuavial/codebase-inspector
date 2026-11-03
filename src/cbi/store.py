@@ -174,16 +174,23 @@ def open_db(path):
     return conn
 
 
-def read_only(path):
-    """Open a model without creating, migrating, or changing its journal.
+def read_uri(path):
+    """Read-only URI that includes committed WAL pages while a writer is active.
 
-    ``mode=ro`` refuses writes. ``immutable=1`` stops SQLite creating ``-wal`` and
-    ``-shm`` beside the file: a plain ``mode=ro`` open of a WAL database still
-    creates them, and that creation fails when the directory cannot be written.
-    No journal-mode pragma is issued.
+    A checkpointed database can be immutable, avoiding sidecar creation in a
+    read-only directory. An existing WAL must be read through normal SQLite
+    locking: immutable opens ignore it and silently return stale model answers.
     """
-    uri = Path(path).resolve().as_uri() + "?mode=ro&immutable=1"
-    conn = sqlite3.connect(uri, uri=True, timeout=BUSY_SECONDS)
+    path = Path(path).resolve()
+    uri = path.as_uri() + "?mode=ro"
+    if not Path(str(path) + "-wal").exists():
+        uri += "&immutable=1"
+    return uri
+
+
+def read_only(path):
+    """Open a model without creating, migrating, or changing its journal mode."""
+    conn = sqlite3.connect(read_uri(path), uri=True, timeout=BUSY_SECONDS)
     return prepare(conn, wal=False)
 
 

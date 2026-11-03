@@ -688,7 +688,7 @@ def _read_model(args):
     try:
         conn = store.read_only(path)
     except sqlite3.Error as err:
-        raise NoModel(f"{path} is not a cbi model ({err})") from err
+        raise NoModel(f"Cannot read model at {path}: {err}. Check read permissions or run `cbi scan` to rebuild it.") from err
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version != store.SCHEMA_VERSION:
         conn.close()
@@ -795,7 +795,7 @@ def cmd_deps(args):
 
 
 def cmd_tasks(args):
-    conn = _model(args)
+    conn = _read_model(args)
     try:
         if args.offset < 0:
             print("--offset must be 0 or greater", file=sys.stderr)
@@ -851,7 +851,7 @@ def _emit_brief(b, text, as_json):
 
 def cmd_task(args):
     root, home, _path, sha = _locate(args)
-    conn = _model(args)
+    conn = _read_model(args)
     source = _source(root, sha)
     token = parts.bind(home)
     try:
