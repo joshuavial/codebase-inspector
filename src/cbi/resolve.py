@@ -1225,6 +1225,8 @@ def resolve(conn, root):
     sql_diags = testing_sql.link(m, edges, add)
     from cbi.testing_fixtures import link as link_fixtures
     link_fixtures(m, edges, add)
+    from cbi.testing_http_bindings import link as link_test_http
+    http_test_diags = link_test_http(m, edges, add)
     from cbi import testing_subprocess
     subprocess_diags = testing_subprocess.link(m, edges, add)
 
@@ -1267,7 +1269,7 @@ def resolve(conn, root):
         sorted(ambiguous)
         + unmatched
         + [(fid, "unresolved_injection", f"{n} injected calls with no candidate") for fid, n in sorted(unresolved.items())]
-        + http_diags + subprocess_diags + path_diags + sql_diags,
+        + http_diags + subprocess_diags + path_diags + sql_diags + http_test_diags,
     )
     from cbi.env import apply as apply_env  # local: env imports manifests, which imports this module
     apply_env(conn, root)
