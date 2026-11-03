@@ -261,17 +261,113 @@ DOCKERFILE = re.compile(r"(^|/)(Dockerfile|Dockerfile\.[^/]+|Containerfile)$")
 DOCKER_RUN = re.compile(r"^\s*(CMD|ENTRYPOINT)\s+(.*)$", re.I | re.M)
 
 
-def _docker_entry(ws, here, tokens, scripts):
-    """The first token naming a project script, a `-m` module or a tracked file, as a workspace path."""
+def _tokens(value):
+    """Literal exec argv or shell words, without executing or expanding anything."""
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    try:
+        value = json.loads(value) if value and value.startswith("[") else value
+        return [str(v) for v in value] if isinstance(value, list) else shlex.split(value or "")
+    except ValueError:
+        return (value or "").split()
+
+
+def _image_path(workdir, path):
+    return posixpath.normpath(posixpath.join(workdir, path))
+
+
+def _docker_state(ws, path, context, target=None):
+    """Track literal files in each build stage; remote, dynamic and generated copies stay unknown."""
+    stages, named = [], {}
+    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False}
+    text = re.sub(r"\\\n", " ", (ws.text(path) or "") if path in ws.paths else "")
+    for line in text.splitlines():
+        instruction, _, value = line.strip().partition(" ")
+        instruction, value = instruction.upper(), value.strip()
+        if instruction == "FROM":
+            words = _tokens(value)
+            words = [w for w in words if not w.startswith("--")]
+            parent = named.get(words[0]) if words else None
+            state = {"files": dict(parent["files"]) if parent else {},
+                     "workdir": parent["workdir"] if parent else "/",
+                     "commands": dict(parent["commands"]) if parent else {},
+                     "copies": parent["copies"] if parent else False}
+            stages.append(state)
+            named[str(len(stages) - 1)] = state
+            if len(words) >= 3 and words[-2].upper() == "AS":
+                named[words[-1]] = state
+        elif instruction == "WORKDIR" and value and not re.search(r"[$*?]", value):
+            state["workdir"] = _image_path(state["workdir"], value)
+        elif instruction in ("CMD", "ENTRYPOINT"):
+            state["commands"][instruction] = _tokens(value)
+            if instruction == "ENTRYPOINT":
+                state["commands"].pop("CMD", None)  # a new entrypoint clears an inherited CMD
+        elif instruction in ("COPY", "ADD"):
+            state["copies"] = True
+            flags = {}
+            while value.startswith("--"):
+                flag, _, value = value.partition(" ")
+                key, _, val = flag[2:].partition("=")
+                flags[key] = val
+                value = value.lstrip()
+            words = _tokens(value)
+            if len(words) < 2 or any(re.search(r"[$*?]", w) for w in words):
+                continue
+            sources, dest = words[:-1], words[-1]
+            dest = _image_path(state["workdir"], dest)
+            origin = named.get(flags["from"]) if "from" in flags else None
+            if "from" in flags and origin is None:
+                # An unknown image can overwrite a previously mapped destination.
+                state["files"] = {f: tracked for f, tracked in state["files"].items()
+                                  if f != dest and not f.startswith(dest.rstrip("/") + "/")}
+                continue
+            available = dict(origin["files"]) if origin else {"/" + p: p for p in ws.paths
+                if not context or p.startswith(context + "/")}
+            for source in sources:
+                if "://" in source:
+                    continue
+                source = _image_path("/" if origin else "/" + context, source.lstrip("/"))
+                prefix = source.rstrip("/") + "/"
+                directory = any(f.startswith(prefix) for f in available)
+                matches = [(f, tracked) for f, tracked in available.items() if f == source or f.startswith(prefix)]
+                for f, tracked in matches:
+                    suffix = f[len(prefix):] if directory else posixpath.basename(source)
+                    destination = _join(dest, suffix) if directory or words[-1].endswith("/") or len(sources) > 1 else dest
+                    state["files"][destination] = tracked
+    return named.get(target, state) if target else state
+
+
+def _docker_builds(ws):
+    """Known local build contexts, relative to each Compose file."""
+    builds = defaultdict(list)
+    for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
+        services = (_yaml(ws.text(path) or "") or {}).get("services") or {}
+        for svc in services.values() if isinstance(services, dict) else ():
+            build = svc.get("build") if isinstance(svc, dict) else None
+            build = {"context": build} if isinstance(build, str) else build
+            if not isinstance(build, dict):
+                continue
+            context = _join(posixpath.dirname(path), build.get("context") or ".")
+            docker = _join(context, build.get("dockerfile") or "Dockerfile")
+            builds[docker].append((context, build.get("target")))
+    return builds
+
+
+def _docker_entry(ws, here, tokens, scripts, state=None):
+    """Resolve command argv through image paths, then project scripts and module names."""
     for i, token in enumerate(tokens):
+        if state:
+            source = state["files"].get(_image_path(state["workdir"], token))
+            if source:
+                return source
         if token in scripts:
             return scripts[token]
         if i and tokens[i - 1] == "-m":
             found = _py_module(ws, here, token) or _py_module(ws, "", token)
             if found:
                 return found
-        elif "/" in token or "." in token:
-            # ponytail: the COPY destination is unknown, so drop leading container dirs until a path matches
+        elif ("/" in token or "." in token) and not (state and state["copies"]):
+            # Legacy images without literal copies may still name a source path directly.
             parts = [p for p in token.split("/") if p not in ("", ".")]
             for k in range(len(parts)):
                 for base in (here, ""):
@@ -281,32 +377,26 @@ def _docker_entry(ws, here, tokens, scripts):
     return None
 
 
+def _project_scripts(ws):
+    return {d["name"]: d["entries"][0][1] for d in pyproject(ws)[0] + package_json(ws)[0]
+            if d["display_kind"] == "cli" and d["entries"][0][1]}
+
+
 def dockerfile(ws):
-    """Each Dockerfile, `Dockerfile.*` and Containerfile is a container image; its entry comes from
-    the last ENTRYPOINT and CMD where they name a tracked file or a project script."""
-    deployables = []
-    scripts = {d["name"]: d["entries"][0][1] for d in pyproject(ws)[0] + package_json(ws)[0]
-               if d["display_kind"] == "cli" and d["entries"][0][1]}
+    """Container image entries resolved through literal stage-local COPY/ADD paths and argv."""
+    deployables, scripts, builds = [], _project_scripts(ws), _docker_builds(ws)
     for path in sorted(p for p in ws.paths if DOCKERFILE.search(p) and not p.endswith((".tmpl", ".dockerignore"))):
         here, base = posixpath.dirname(path), posixpath.basename(path)
         name = posixpath.basename(here) or ws.name
         if "." in base:
             name += "-" + base.split(".", 1)[1]
-        text = re.sub(r"\\\n", " ", ws.text(path) or "")
-        commands = {}
-        for instruction, value in DOCKER_RUN.findall(text):
-            commands[instruction.upper()] = value.strip()
-        tokens = []
-        for key in ("ENTRYPOINT", "CMD"):
-            value = commands.get(key, "")
-            try:
-                parts = json.loads(value) if value.startswith("[") else [value]
-                tokens += [t for part in parts for t in shlex.split(str(part))]
-            except ValueError:
-                tokens += value.split()
-        raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
-        deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile",
-                                          [(raw, _docker_entry(ws, here, tokens, scripts))]),
+        entries = []
+        for context, target in dict.fromkeys(builds.get(path) or [(here, None)]):
+            state = _docker_state(ws, path, context, target)
+            tokens = state["commands"].get("ENTRYPOINT", []) + state["commands"].get("CMD", [])
+            raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
+            entries.append((raw, _docker_entry(ws, context, tokens, scripts, state)))
+        deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
                             "ref": f"file:{ws.top(path)}"})
     return deployables, []
 

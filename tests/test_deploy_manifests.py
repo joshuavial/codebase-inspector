@@ -234,3 +234,58 @@ services:
     assert ("deployable:worker", "deployable:acme-image") in edges
     assert ("deployable:worker-b", "deployable:acme-image") in edges
     assert _nodes(_db(root), "external")["service:redis"][1]["image"] == "redis:7-alpine"
+
+
+@pytest.mark.parametrize(('instruction', 'entry'), [
+    ('COPY scripts/start.sh /usr/local/bin/serve', '["/usr/local/bin/serve"]'),
+    ('ADD ["scripts/start.sh", "/usr/local/bin/serve"]', '["sh", "/usr/local/bin/serve"]'),
+    ('COPY --chmod=755 scripts/ /opt/bin/', '["sh", "/opt/bin/start.sh"]'),
+])
+def test_image_copy_destinations(make_repo, instruction, entry):
+    root = make_repo({
+        'service/scripts/start.sh': '#!/bin/sh\necho ready\n',
+        'service/deploy/Dockerfile': f'FROM alpine\n{instruction}\nENTRYPOINT {entry}\n',
+        'compose.yaml': 'services:\n  worker:\n    build:\n      context: service\n      dockerfile: deploy/Dockerfile\n',
+    })
+    ws = manifests._Workspace('local:repo', 'repo', root, {'service/scripts/start.sh', 'service/deploy/Dockerfile', 'compose.yaml'})
+    image = manifests.dockerfile(ws)[0][0]
+    assert image['entries'][0][1] == 'service/scripts/start.sh'
+
+
+def test_image_state_ignores_untracked_dockerfile(make_repo):
+    root = make_repo({'start.py': 'print(1)\n'})
+    (root / 'Dockerfile').write_text('FROM python\nCOPY start.py /serve\nCMD ["/serve"]\n')
+    ws = manifests._Workspace('local:repo', 'repo', root, {'start.py'})
+    state = manifests._docker_state(ws, 'Dockerfile', '')
+    assert state['files'] == {}
+    assert state['commands'] == {}
+
+
+def test_external_stage_copy_does_not_reuse_local_mapping(make_repo):
+    files = {
+        'Dockerfile': 'FROM python\nCOPY start.py /usr/bin/serve\n'
+                      'COPY --from=external /generated/serve /usr/bin/serve\n'
+                      'ENTRYPOINT ["python", "/usr/bin/serve"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] is None
+
+
+def test_image_stage_copy_boundaries(make_repo):
+    root = make_repo({
+        'scripts/start.py': 'print(1)\n',
+        'Dockerfile': 'FROM python AS builder\nCOPY scripts/start.py /built/serve\n'
+                      'CMD ["python", "/built/serve"]\nFROM alpine AS clean\n'
+                      'FROM clean\nCOPY --from=builder /built/serve /usr/bin/runner\n'
+                      'ENTRYPOINT ["python", "/usr/bin/runner"]\n',
+    })
+    ws = manifests._Workspace('local:repo', 'repo', root, {'Dockerfile', 'scripts/start.py'})
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'scripts/start.py'
+    (root / 'Dockerfile').write_text('FROM python AS builder\nCOPY scripts/start.py /built/serve\n'
+                                    'CMD ["python", "/built/serve"]\nFROM alpine\n')
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('no CMD or ENTRYPOINT', None)]
+    (root / 'Dockerfile').write_text('FROM python AS builder\nCOPY scripts/start.py /built/serve\n'
+                                    'FROM builder\nENTRYPOINT ["/built/serve"]\n')
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'scripts/start.py'
