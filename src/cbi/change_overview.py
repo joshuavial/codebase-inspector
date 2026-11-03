@@ -89,6 +89,7 @@ def git_line_stats(root, base, head):
 
 
 def build(ctx, grouped, line_stats=None):
+    lines_known = line_stats is not None
     line_stats = dict(line_stats or {})
     # Also key each row by its old path, so a base-side lookup finds a renamed or deleted file.
     for row in list(line_stats.values()):
@@ -111,11 +112,14 @@ def build(ctx, grouped, line_stats=None):
         state = "added" if not left else "removed" if not right else "moved" if moved and left.get("content_hash") == right.get("content_hash") else "changed"
         node = right or left
         measures = _measure(additions=(stat or {}).get("additions", 0), deletions=(stat or {}).get("deletions", 0),
-                            binary=1 if (stat or {}).get("binary") else 0)
+                            binary=1 if (stat or {}).get("binary") else 0,
+                            lines_known=lines_known and (not line_stats or stat is not None))
         measures["files"].update({state: 1, "total": 1})
         files.append({
             "id": node["id"], "canonical_id": fid, "name": node["name"], "path": node.get("path") or "",
             "old_path": (left or {}).get("path") or "", "state": state, "measures": measures,
+            "owner_id": _file_owner(ctx, fid),
+            "is_test": node.get("display_kind") == "test file" or node.get("attrs", {}).get("role") == "test",
             "symbols": [], "relationships": [],
         })
     by_file = {row["canonical_id"]: row for row in files}
@@ -129,11 +133,12 @@ def build(ctx, grouped, line_stats=None):
         fid = ctx.canon.get(_file_id(node), _file_id(node))
         if fid not in by_file:
             continue
-        sm = _symbol_measure(ctx, change, node, line_stats)
+        sm = _symbol_measure(ctx, change, node, line_stats, lines_known)
         untested = ref["id"] in untested_ids
         by_file[fid]["symbols"].append({
             "id": ref["id"], "name": ref["name"], "display_kind": ref.get("display_kind") or "symbol",
             "state": change["kind"].removeprefix("symbol-"), "measures": sm,
+            "verb": _symbol_verb(change),
             "untested": untested,
             "relationships": index.context({ref["id"]}),
         })
@@ -143,8 +148,8 @@ def build(ctx, grouped, line_stats=None):
         row["relationships"] = _crossing([row], index.context(ids))
         _add_symbol_counts(row["measures"], row["symbols"])
 
-    items = _items(ctx, grouped, changes, files, index)
-    total = _measure()
+    items = _items(ctx, grouped, changes, files, index, lines_known)
+    total = _measure(lines_known=lines_known)
     for row in files:
         _roll(total, row["measures"])
     total["concepts"] = sum(1 for item in items if item["kind"] == "concept")
@@ -155,30 +160,80 @@ def build(ctx, grouped, line_stats=None):
     return {"grouping": grouped["grouping"], "totals": total, "items": items}
 
 
-def _items(ctx, grouped, changes, files, index):
+def _items(ctx, grouped, changes, files, index, lines_known=True):
     rel_states = _relationship_states(changes)
     records = {}
+
+    def ensure(gid, name=None, kind="concept"):
+        if gid not in records:
+            records[gid] = _record(ctx, gid, name or gid, kind, lines_known)
+            records[gid]["_direct"] = False
+        return records[gid]
+
+    def chain(gid):
+        seen = set()
+        while gid and gid not in seen:
+            seen.add(gid)
+            yield gid
+            side = ctx.head if gid in ctx.head.nodes else ctx.base
+            parent = side.nodes.get(gid, {}).get("parent_id")
+            if side.nodes.get(parent, {}).get("kind") != "concept":
+                break
+            gid = ctx.rename.get(parent, parent)
+
+    def both_chains(gid):
+        found = set(chain(gid))
+        aliases = [gid, *(old for old, new in ctx.rename.items() if new == gid)]
+        for side in (ctx.base, ctx.head):
+            for alias in aliases:
+                current, visited = alias, set()
+                while current and current not in visited:
+                    visited.add(current)
+                    canonical = ctx.rename.get(current, current)
+                    found.add(canonical)
+                    parent = side.nodes.get(current, {}).get("parent_id")
+                    if side.nodes.get(parent, {}).get("kind") != "concept":
+                        break
+                    current = parent
+        return sorted(found)
+
     for group in grouped["groups"]:
-        gid = _top_concept(ctx, group["id"]) if grouped["grouping"] == "concept" else group["id"]
-        if gid not in records:
-            records[gid] = _record(ctx, gid, group["name"], group["kind"])
-        records[gid]["_changes"].extend(group["changes"])
+        for gid in both_chains(group["id"]):
+            item = ensure(gid, group["name"] if gid == group["id"] else None, group["kind"])
+            item["_changes"].extend(group["changes"])
+            item["_direct"] |= gid == group["id"]
+        for change in group["changes"]:
+            if not change["kind"].startswith("concept-"):
+                continue
+            participants = set()
+            for field in ("before", "after"):
+                values = change.get(field) or []
+                for value in values if isinstance(values, list) else [values]:
+                    raw = value.get("id")
+                    if _node_kind(ctx, raw) == "concept":
+                        participants.add(ctx.rename.get(raw, raw))
+            for participant in participants:
+                for gid in both_chains(participant):
+                    item = ensure(gid)
+                    item["_changes"].append(change)
+                    item["_direct"] |= gid == participant
     for row in grouped.get("provisional") or []:
-        gid = _top_concept(ctx, row.get("concept_id")) if row.get("concept_id") else None
-        if gid in records:
-            records[gid]["attention"]["provisional"] = True
+        for gid in chain(row.get("concept_id")):
+            ensure(gid)["attention"]["provisional"] = True
     for file in files:
-        gid = _file_group(ctx, file["canonical_id"])
-        if gid not in records:
-            records[gid] = _record(ctx, gid, gid, "folder")
-        module = _module(ctx, file, index)
-        target = next((m for m in records[gid]["modules"] if m["id"] == module["id"]), None)
-        if target is None:
-            target = {**module, "state": "changed", "measures": _measure(), "relationships": [], "files": []}
-            records[gid]["modules"].append(target)
-        target["files"].append(file)
+        direct = file["owner_id"] or _file_group(ctx, file["canonical_id"])
+        for gid in chain(direct):
+            item = ensure(gid, kind="folder")
+            item["_direct"] |= gid == direct
+            module = _module(ctx, file, index)
+            target = next((m for m in item["modules"] if m["id"] == module["id"]), None)
+            if target is None:
+                target = {**module, "state": "changed", "measures": _measure(lines_known=lines_known), "relationships": [], "files": []}
+                item["modules"].append(target)
+            target["files"].append(file)
     for item in records.values():
         own_changes = _dedupe(item.pop("_changes"))
+        item["change_scope"] = "direct" if item.pop("_direct") else "descendants"
         for module in item["modules"]:
             for file in module["files"]:
                 _roll(module["measures"], file["measures"])
@@ -190,35 +245,110 @@ def _items(ctx, grouped, changes, files, index):
         item["relationships"] = _concept_context(ctx, item["id"], rel_states)
         changed = {f["path"]: {sym["name"] for sym in f["symbols"]} for m in item["modules"] for f in m["files"]}
         _attention(item, own_changes, changed)
-        state_kind = next((c["kind"] for c in own_changes if c["kind"] in {"concept-added", "concept-removed"}), None)
+        state_kind = next((c["kind"] for c in own_changes
+                           if c["kind"] in {"concept-added", "concept-removed"}
+                           and (c.get("after") or c.get("before") or {}).get("id") == item["id"]), None)
         file_states = {f["state"] for m in item["modules"] for f in m["files"]}
         if state_kind:
             item["state"] = state_kind.removeprefix("concept-")
-        elif item["kind"] == "concept" and file_states in ({"added"}, {"removed"}):
-            # Current concepts on both sides: a concept that owned no files on one side was added or removed.
-            item["state"] = file_states.pop()
+        elif item["kind"] == "concept" and item["id"] not in ctx.base.nodes and item["id"] not in ctx.rename.values():
+            item["state"] = "added"
+        elif item["kind"] == "concept" and item["id"] not in ctx.head.nodes:
+            item["state"] = "removed"
+        elif item["kind"] == "concept" and item["change_scope"] == "direct" and file_states in ({"added"}, {"removed"}):
+            absent_side = ctx.base if file_states == {"added"} else ctx.head
+            owners = ctx.base_owner if absent_side is ctx.base else ctx.head_owner
+            if not any(_is_under(absent_side, owner, item["id"]) for owner in owners.values()):
+                item["state"] = next(iter(file_states))
+        if item["state"] == "changed" and item["change_scope"] == "direct" and own_changes and all(
+                c["kind"] in {"file-moved-concept", "file-moved", "symbol-moved"} for c in own_changes):
+            item["state"] = "moved"
+        item["unowned"] = ctx.concept_mode and item["kind"] != "concept"
+        item["state_label"] = {"added": "Added", "removed": "Removed", "moved": "Moved"}.get(
+            item["state"], "Changed here" if item["change_scope"] == "direct" else "Changes inside")
         item["modules"].sort(key=lambda m: (m["name"].lower(), m["id"]))
+        item["own_modules"] = []
         for module in item["modules"]:
             module["files"].sort(key=lambda f: f["path"])
             for file in module["files"]:
                 file["symbols"].sort(key=lambda s: (s["name"].lower(), s["id"]))
-    return sorted(records.values(), key=_attention_key)
+            own_files = [f for f in module["files"] if (f["owner_id"] or _file_group(ctx, f["canonical_id"])) == item["id"]]
+            if own_files:
+                own_module = {**module, "files": own_files, "measures": _measure(lines_known=lines_known)}
+                for file in own_files:
+                    _roll(own_module["measures"], file["measures"])
+                item["own_modules"].append(own_module)
+        item["children"] = []
+        item["moves"] = _moves(ctx, own_changes)
+    roots = []
+    for gid, item in records.items():
+        parents = list(chain(gid))[1:]
+        parent = next((records[pid] for pid in parents if pid in records), None)
+        (parent["children"] if parent else roots).append(item)
+    for item in records.values():
+        item["children"].sort(key=_attention_key)
+    return sorted(roots, key=_attention_key)
 
 
-def _record(ctx, gid, name, kind):
+def _file_owner(ctx, fid):
+    owner = ctx.head_owner.get(fid) or ctx.base_owner.get(fid)
+    return ctx.rename.get(owner, owner) if owner else None
+
+
+def _symbol_verb(change):
+    if change["kind"] != "symbol-changed":
+        return change["kind"].removeprefix("symbol-").title()
+    left, right = change.get("before") or {}, change.get("after") or {}
+    return " and ".join(label for field, label in (("signature", "Signature changed"), ("body", "Body changed"))
+                        if left.get(field) != right.get(field)) or "Changed"
+
+
+def _moves(ctx, changes):
+    rows = {}
+    priority = {"file-moved-concept": 0, "file-moved": 1, "symbol-moved": 2}
+    for change in changes:
+        kind = change["kind"]
+        if kind not in {"file-moved-concept", "file-moved", "symbol-moved"}:
+            continue
+        left, right = change.get("before") or {}, change.get("after") or {}
+        if kind == "file-moved-concept":
+            source, target = left.get("id"), right.get("id")
+        else:
+            source = ctx.base_owner.get(ctx.canon.get(left.get("id", "").split("#", 1)[0], left.get("id", "").split("#", 1)[0]))
+            target = ctx.head_owner.get(ctx.canon.get(right.get("id", "").split("#", 1)[0], right.get("id", "").split("#", 1)[0]))
+        refs = change.get("code") or []
+        target_id = (refs[-1].get("id") if refs else None) or right.get("id")
+        path = right.get("path") or left.get("path") or ""
+        key = (source, target, path or target_id)
+        row = {"id": "move:" + json.dumps(key, separators=(",", ":")),
+               "from": source, "to": target, "from_name": _node_name(ctx, source) if source else "Unowned",
+               "to_name": _node_name(ctx, target) if target else "Unowned",
+               "path": path, "target_id": target_id, "kind": kind, "verb": "Moved"}
+        if key not in rows:
+            rows[key] = {**row, "kinds": {kind}}
+        else:
+            previous = rows[key]
+            previous["kinds"].add(kind)
+            if priority[kind] < priority[previous["kind"]]:
+                previous.update(row)
+    return [{**row, "kinds": sorted(row["kinds"])} for row in rows.values()]
+
+
+def _record(ctx, gid, name, kind, lines_known=True):
     node = ctx.head.nodes.get(gid) or ctx.base.nodes.get(gid)
     return {
         "id": gid, "name": node["name"] if node else name,
         "kind": "concept" if node and node["kind"] == "concept" else kind,
-        "summary": (node or {}).get("summary") or "", "state": "changed", "measures": _measure(),
+        "summary": (node or {}).get("summary") or "", "state": "changed", "measures": _measure(lines_known=lines_known),
         "attention": {"integrations": [], "untested": 0, "structure": [], "relationships": [],
                       "env_vars": [], "removed_tests": 0, "provisional": False},
         "reasons": [], "relationships": [], "modules": [], "_changes": [],
     }
 
 
-def _measure(additions=0, deletions=0, binary=0):
+def _measure(additions=0, deletions=0, binary=0, lines_known=True):
     return {
+        "lines_known": bool(lines_known and not binary),
         "additions": additions, "deletions": deletions, "churn": additions + deletions + binary,
         "binary": binary, "files": Counter(), "symbols": Counter(), "tests": Counter(),
         "integrations": 0, "env_vars": 0, "untested": 0, "relationships": 0,
@@ -226,6 +356,7 @@ def _measure(additions=0, deletions=0, binary=0):
 
 
 def _roll(dst, src):
+    dst["lines_known"] = dst.get("lines_known", False) and src.get("lines_known", False)
     for key in ("additions", "deletions", "churn", "binary", "integrations", "env_vars", "untested", "relationships"):
         dst[key] += src.get(key, 0)
     for key in ("files", "symbols", "tests"):
@@ -275,7 +406,9 @@ def _attention(item, changes, changed):
         reasons.append(f"{attention['removed_tests']} removed test" + ("s" if attention["removed_tests"] != 1 else ""))
     if attention["provisional"]:
         reasons.append("provisional ownership")
-    item["reasons"] = reasons or [f"{item['measures']['churn']} changed lines"]
+    churn = item["measures"]["churn"]
+    item["reasons"] = reasons or ([f"{churn} changed line" + ("s" if churn != 1 else "")]
+                                  if item["measures"]["lines_known"] else ["Line counts unavailable"])
 
 
 def _touched(at, changed):
@@ -298,16 +431,18 @@ def _stat_for(stats, left, right):
     return None
 
 
-def _symbol_measure(ctx, change, node, stats):
+def _symbol_measure(ctx, change, node, stats, lines_known=True):
     left = ctx.base.nodes.get(node["id"])
     right = ctx.head.nodes.get(node["id"])
     if change["kind"] == "symbol-moved":
         left = ctx.base.nodes.get(change["before"]["id"])
         right = ctx.head.nodes.get(change["after"]["id"])
-    stat = _stat_for(stats, left, right) or {}
+    stat = _stat_for(stats, left, right)
+    known = lines_known and (not stats or stat is not None) and not (stat or {}).get("binary")
+    stat = stat or {}
     added = sum(1 for n in stat.get("added_lines", []) if right and right.get("start_line", 0) <= n <= right.get("end_line", 0))
     deleted = sum(1 for n in stat.get("deleted_lines", []) if left and left.get("start_line", 0) <= n <= left.get("end_line", 0))
-    return _measure(added, deleted)
+    return _measure(added, deleted, lines_known=known)
 
 
 def _module(ctx, file, index):
@@ -497,7 +632,12 @@ def select(result, concept=None, module=None, file=None, symbol=None):
     overview = result.get("overview") or {"totals": _measure(), "items": []}
     if not any((concept, module, file, symbol)):
         return "overview", overview
-    for item in overview["items"]:
+    def walk(items):
+        for item in items:
+            yield item
+            yield from walk(item.get("children", []))
+
+    for item in walk(overview["items"]):
         if concept and item["id"] == concept:
             return "concept", item
         for mod in item["modules"]:
@@ -587,17 +727,22 @@ def _measure_line(m):
     files = m.get("files") or {}
     total = files.get("total", 0)
     bits = [f"{total} {'file' if total == 1 else 'files'}"] if total else []
-    bits.append(f"+{m.get('additions', 0)} -{m.get('deletions', 0)}")
+    bits.append(f"+{m.get('additions', 0)} -{m.get('deletions', 0)}" if m.get("lines_known", False)
+                else "Line counts unavailable")
     if m.get("binary"):
-        bits.append(f"{m['binary']} binary")
+        bits.append(f"{m['binary']} binary file" + ("s" if m["binary"] != 1 else ""))
     symbols = m.get("symbols") or {}
     counts = ", ".join(f"{symbols[k]} {k}" for k in ("added", "changed", "removed", "moved") if symbols.get(k))
     if counts:
-        bits.append(f"symbols {counts}")
+        heading = "symbol" if sum(symbols.values()) == 1 else "symbols"
+        bits.append(f"{heading} {counts}")
     tests = m.get("tests") or {}
     if tests.get("added") or tests.get("removed"):
-        bits.append(f"tests +{tests.get('added', 0)} -{tests.get('removed', 0)}")
-    for key, word in (("untested", "untested"), ("integrations", "integrations"), ("env_vars", "env vars")):
+        heading = "test" if tests.get("added", 0) + tests.get("removed", 0) == 1 else "tests"
+        bits.append(f"{heading} +{tests.get('added', 0)} -{tests.get('removed', 0)}")
+    for key, singular, plural in (("untested", "untested", "untested"),
+                                  ("integrations", "integration", "integrations"),
+                                  ("env_vars", "env var", "env vars")):
         if m.get(key):
-            bits.append(f"{m[key]} {word}")
+            bits.append(f"{m[key]} {singular if m[key] == 1 else plural}")
     return "  ".join(bits)

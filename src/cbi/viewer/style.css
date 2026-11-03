@@ -26,7 +26,10 @@
   --kind-saas: #e34948;
   --kind-terminal: #8a8a85;
   --kind-storage: #8d5a2b;
-  --chg-del: #d64545;
+  --chg-add: #087e73;
+  --chg-edit: #9c5c00;
+  --chg-move: #8555af;
+  --chg-del: #c53454;
   --chg-del-soft: #fde8e8;
   color-scheme: light;
 }
@@ -58,7 +61,10 @@
     --kind-saas: #e66767;
     --kind-terminal: #8f8e88;
     --kind-storage: #c49262;
-    --chg-del: #e66767;
+    --chg-add: #66c7bd;
+    --chg-edit: #e9bb66;
+    --chg-move: #bc95e1;
+    --chg-del: #f58da5;
     --chg-del-soft: #3a2224;
     color-scheme: dark;
   }
@@ -393,20 +399,22 @@ body.history-compare #timeline { display: none; }
 .node.bundled .sum { font-size: 11.5px; }
 .node.touched rect.body { stroke: var(--accent); stroke-width: 1.8; }
 .node.ext.sel rect.body { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
-.node.chg-added rect.body, .sym.chg-added rect.body { stroke: var(--ok); stroke-width: 2; }
+.node.chg-added rect.body, .sym.chg-added rect.body { stroke: var(--chg-add); stroke-width: 2; }
 .node.chg-removed rect.body, .sym.chg-removed rect.body { stroke: var(--chg-del); stroke-width: 2; stroke-dasharray: 4 3; }
-.node.chg-changed rect.body, .sym.chg-changed rect.body { stroke: var(--role-core); stroke-width: 2; }
-.node.chg-provisional rect.body { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 2 2; }
-.edge.chg-new path { stroke: var(--ok); stroke-width: 1.8; }
+.node.chg-changed rect.body, .sym.chg-changed rect.body { stroke: var(--chg-edit); stroke-width: 2; }
+.node.chg-inside rect.body { stroke: var(--chg-edit); stroke-width: 2; stroke-dasharray: 8 3; }
+.node.chg-moved rect.body, .sym.chg-moved rect.body { stroke: var(--chg-move); stroke-width: 2; stroke-dasharray: 10 3; }
+.node.ownership-uncertain rect.stripe { stroke: var(--muted); stroke-dasharray: 2 2; }
+.edge.chg-new path { stroke: var(--chg-add); stroke-width: 1.8; }
 .edge.chg-removed path { stroke: var(--chg-del); stroke-dasharray: 4 3; }
-.edge.chg-volume path { stroke: var(--role-core); stroke-width: 1.8; }
-.edge.chg-mechanism path { stroke: var(--accent); stroke-width: 1.8; }
-.env.mark-added text, .env.mark-added rect { stroke: var(--ok); color: var(--ok); }
-.env.mark-added text { fill: var(--ok); stroke: none; }
+.edge.chg-volume path { stroke: var(--chg-edit); stroke-width: 1.8; }
+.edge.chg-mechanism path { stroke: var(--chg-move); stroke-width: 1.8; }
+.env.mark-added text, .env.mark-added rect { stroke: var(--chg-add); color: var(--chg-add); }
+.env.mark-added text { fill: var(--chg-add); stroke: none; }
 .env.mark-removed text { fill: var(--chg-del); stroke: none; }
 .env.mark-removed rect { stroke: var(--chg-del); }
-.env.mark-changed text { fill: var(--role-core); stroke: none; }
-.env.mark-changed rect { stroke: var(--role-core); }
+.env.mark-changed-here text, .env.mark-changes-inside text { fill: var(--chg-edit); stroke: none; }
+.env.mark-changed-here rect, .env.mark-changes-inside rect { stroke: var(--chg-edit); }
 .env.mark-provisional text { fill: var(--accent); stroke: none; }
 .env.mark-provisional rect { stroke: var(--accent); }
 .pill.mark-new { border-color: var(--ok); color: var(--ok); }
@@ -545,8 +553,80 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 
 /* A partial diagram stays useful when a filtered endpoint is unavailable. */
 #layout-notice {
-  position: absolute; top: 12px; left: 12px; max-width: min(420px, calc(100% - 24px));
+  position: static; flex: none; max-width: 100%;
   padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--panel); color: var(--muted); font-size: 12px;
 }
 #layout-notice[hidden] { display: none; }
+
+#snapshot-note { margin: 0; flex-basis: 100%; color: var(--muted); font-size: 12px; }
+#snapshot-note[hidden] { display: none; }
+.comparison header { gap: 10px 16px; padding: 10px 18px; }
+.comparison #compare { font-size: 12px; }
+.comparison #changes { width: 380px; max-width: 36vw; padding: 20px 22px 32px; line-height: 1.55; }
+.comparison #drawer { width: 270px; }
+#changes p, #changes li, #changes button, #drawer p { overflow-wrap: anywhere; }
+#changes details { margin: 7px 0; }
+#changes summary { cursor: pointer; padding: 3px 0; }
+#changes details > details, #changes details ul { margin-left: 12px; }
+#changes .change-summary { margin: 12px 0; }
+#changes .change-summary p { color: var(--text); }
+#changes .concept-entry { border-top: 1px solid var(--line); padding: 10px 0; }
+#changes .concept-entry.selected { border-left: 3px solid var(--accent); padding-left: 10px; }
+#changes .state { font-size: 12px; font-weight: 600; color: var(--chg-edit); }
+button:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+#diagram [role="button"]:focus-visible { outline: none; }
+#diagram [role="button"]:focus-visible rect.body, #diagram [role="button"]:focus-visible rect.frame { stroke: var(--accent); stroke-width: 4px; }
+#diagram text[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.node.ctx .sum, .node.ext .sum { fill: var(--muted); }
+.env.mark-moved text { fill: var(--chg-move); stroke: none; }
+.env.mark-moved rect { stroke: var(--chg-move); }
+@media (max-width: 1200px) and (min-width: 901px) {
+  .comparison #changes { width: 340px; max-width: 36vw; padding: 16px; }
+  .comparison #drawer { width: 230px; padding: 16px; }
+  .comparison #find { width: 190px; }
+}
+@media (max-width: 900px) {
+  body.comparison { height: auto; min-height: 100%; overflow-y: auto; overflow-x: hidden; }
+  .comparison header { padding: 10px 14px; gap: 8px; }
+  .comparison #system-tabs { max-width: 100%; flex-wrap: wrap; }
+  .comparison #system-tabs button { padding: 6px 8px; font-size: 12px; }
+  .comparison #crumbs { flex-basis: 100%; order: 1; overflow-wrap: anywhere; }
+  .comparison #diff-scope { order: 2; }
+  .comparison #find { flex: 1; min-width: 150px; width: auto; }
+  .comparison main { flex-direction: column; flex: none; min-width: 0; }
+  .comparison #changes:not([hidden]), body.comparison.changes-open #changes:not([hidden]) {
+    display: block; position: static; width: 100%; max-width: none; padding: 18px;
+    overflow: visible; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none;
+  }
+  .comparison #stage { flex: none; width: 100%; height: 480px; min-height: 360px; }
+  .comparison #drawer { width: 100%; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .comparison #chg-toggle:not([hidden]) { display: none; }
+  .comparison #snapshot-note { font-size: 11px; }
+  .comparison #legend { left: 10px; bottom: 10px; }
+  .comparison #zoom { right: 10px; bottom: 10px; }
+}
+
+#changes .change-index ul { padding-left: 0; }
+#changes .change-index ul ul { padding-left: 14px; }
+#changes button.change-concept { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; text-align: left; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 9px; cursor: pointer; }
+#changes button.change-concept small { grid-column: 1 / -1; color: var(--muted); }
+#changes button.change-concept.selected { background: var(--accent-soft); border-color: var(--accent); }
+#changes .change-state { font-size: 11px; color: var(--chg-edit); }
+#changes .selected-change { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 18px; }
+#changes .path { font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+#changes .change-symbol { padding: 5px 0; }
+#changes .test-gap { display: block; color: var(--muted); font-size: 11px; }
+
+#changes button.change-concept { grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; padding: 5px 7px; line-height: 1.35; }
+#changes button.change-concept strong { font-size: 12px; }
+#changes button.change-concept small { grid-column: 1; font-size: 10px; }
+#changes button.change-concept .change-state { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+#changes .selected-change { padding-top: 10px; margin-top: 10px; }
+#changes .change-summary h3, #changes .review-signals h3 { margin: 10px 0 5px; }
+#changes .change-summary p { margin: 5px 0 8px; }
+#changes .review-signals p { margin: 5px 0; }
+#changes .review-signals h4 { margin: 8px 0 4px; }
+
+#diagram-zoom-note { flex: none; padding: 7px 12px; background: var(--panel); color: var(--text); border-top: 1px solid var(--line); font-size: 12px; }
+#diagram-zoom-note[hidden] { display: none; }

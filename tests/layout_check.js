@@ -274,7 +274,7 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
-  // Entries that call each other at the top level. ELK threw "fromIndex: 2 > toIndex: 1"
+  // Top-level entries that call each other. ELK threw "fromIndex: 2 > toIndex: 1"
   // while both ends of an edge were in its first layer.
   const entryIds = ["control-ui", "api", "client-ui", "fetcher", "tools", "public-ui", "workers"];
   const kids = [...entryIds, "compute-core", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
@@ -505,7 +505,7 @@ async function main() {
     { id: "up1", w: 150, h: 38 },
   ];
   const aboveEdges = [
-    { id: "u0", a: "shell", b: "up0", text: "stores device token verifiers and the audit log", via: "security CLI" },
+    { id: "u0", a: "shell", b: "up0", text: "stores device token verifiers and the write ledger", via: "security CLI" },
     { id: "u1", a: "shell", b: "up1", text: "preflights serve status before the shell will start", via: "exec CLI" },
   ];
   const sideOf = {};
@@ -698,7 +698,7 @@ async function main() {
     `, app);
     assert.strictEqual(app.diffViewScope(), "changed");
     const changed = app.filterScopeKids(app.__kids, null, "changed");
-    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["app", "ui", "store", "billing"]);
+    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["ui", "store", "billing"]);
     assert.ok(changed.changedIds.has("ui") && changed.changedIds.has("billing") && changed.changedIds.has("store"));
     assert.ok(!changed.changedIds.has("app") && !changed.changedIds.has("quiet"));
     const billing = app.filterScopeKids(app.__kids, null, "billing");
@@ -716,16 +716,7 @@ async function main() {
     assert.strictEqual(app.diffViewScope(), "all");
     vm.runInContext('view = { scope: "ui", tab: "concept" };', app);
     assert.strictEqual(app.diffViewScope(), "ui");
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 8 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 8);
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 12 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 0);
-    assert.strictEqual(app.diffAreaTabs([{ id: "billing", name: "Billing" }, { id: "ui", name: "UI" }]).length, 2);
-    assert.strictEqual(app.diffAreaTabs([
-      { id: "a", name: "Release check and desktop update flow" },
-      { id: "b", name: "Static viewer comparison chrome" },
-      { id: "c", name: "Command line history replay" },
-      { id: "d", name: "Architecture history judgement tasks" },
-      { id: "e", name: "Desktop shell update check banner" },
-    ]).length, 0);
+    assert.strictEqual(typeof app.diffAreaTabs, "undefined", "concept navigation lives in Changes only");
     vm.runInContext('view = { scope: "", tab: "concept" }; SYMBOL_MARK.set("fn", "changed");', app);
     const narrowed = app.narrowLeaf({
       id: "ui",
