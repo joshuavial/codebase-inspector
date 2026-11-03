@@ -131,6 +131,10 @@ def test_concept_parts_follow_areas_and_check_does_not_submit(make_repo, monkeyp
     }
     root = scan(make_repo, monkeypatch, files, name="areas")
     confirm(capsys, tmp_path)
+    conn = store.open_db(root / ".cbi/model.db")
+    with conn:
+        conn.execute("UPDATE nodes SET summary = ? WHERE kind = 'file'", ("Description. " * 500,))
+    conn.close()
     [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
     whole = run_json(capsys, "task", task["id"], "--parts")
     assert whole["split"] is False
@@ -311,3 +315,76 @@ def test_prime_explains_parts_when_the_brief_is_large(make_repo, monkeypatch, ca
     assert code == 0, err
     assert "--parts" in out and "--part 1" in out and "--check answer.json" in out and "cbi submit" in out
     assert "## Large briefs" in out and "seeds/" in out and "fixture builders" in out
+
+
+def test_nested_current_map_parts_fit_both_serializations(make_repo, monkeypatch, capsys, tmp_path):
+    root = scan(make_repo, monkeypatch, {
+        f"src/module_{i}_{'x' * 80}.py": f"value = {i}\n" for i in range(100)
+    }, name="nested-map")
+    confirm(capsys, tmp_path)
+    [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
+    brief = run_json(capsys, "task", task["id"])
+    paths = [item["path"] for item in brief["files"]]
+    leaves = [{"id": f"leaf{i}", "name": f"Leaf {i}", "role": "core",
+               "summary": "Detail é " * 60, "files": paths if i == 0 else []}
+              for i in range(20)]
+    answer = {"input_hash": brief["input_hash"], "summary": "Generated modules.",
+              "concepts": [{"id": "root", "name": "Root", "role": "core",
+                            "summary": "Modules.", "children": leaves}],
+              "externals": [], "relationships": []}
+    code, _, err = submit(capsys, tmp_path, task["id"], answer)
+    assert code == 0, err
+    monkeypatch.setenv("CBI_BRIEF_BUDGET", "12500")
+    seen_paths, seen_leaves = set(), set()
+    for json_mode in (False, True):
+        flags = ["--json"] if json_mode else []
+        spec = run_json(capsys, "task", task["id"], "--parts") if json_mode else None
+        if spec is None:
+            conn = store.open_db(root / ".cbi/model.db")
+            spec = parts.index_payload(parts.split_brief(conn, tasks.brief(conn, task["id"], root), root))
+            conn.close()
+        for entry in spec["parts"]:
+            code, output, err = run(capsys, "task", task["id"], "--part", str(entry["index"]), *flags)
+            assert code == 0, err
+            assert len(output.encode()) == entry["json_bytes" if json_mode else "bytes"] <= 12500
+            if json_mode:
+                def visit(value):
+                    if isinstance(value, dict):
+                        if str(value.get("id", "")).startswith("leaf"):
+                            seen_leaves.add(value["id"])
+                        seen_paths.update(value.get("files", []) if all(isinstance(p, str) for p in value.get("files", [])) else [])
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+                visit(json.loads(output).get("concepts"))
+    assert seen_paths == set(paths)
+    assert seen_leaves == {f"leaf{i}" for i in range(20)}
+
+
+def test_indivisible_part_fits_exactly_with_actual_numbering(make_repo, monkeypatch, capsys, tmp_path):
+    root = scan(make_repo, monkeypatch, {"a.py": "value = 1\n", "b.py": "value = 2\n"}, name="boundary")
+    confirm(capsys, tmp_path)
+    conn = store.open_db(root / ".cbi/model.db")
+    with conn:
+        conn.execute("UPDATE nodes SET summary = ? WHERE kind = 'file'", ("s" * 600,))
+    [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
+    brief = tasks.brief(conn, task["id"], root)
+    # Force the area grouping down to one indivisible file per chunk to measure
+    # their real serialized envelopes, including the cross-area third part.
+    monkeypatch.setenv("CBI_BRIEF_BUDGET", "1")
+    chunks = parts._concept_chunks(conn, brief)
+    numbered = parts._number(chunks)
+    conn.close()
+    assert len(numbered) == 3
+    exact = max(max(item["bytes"], item["json_bytes"]) for item in numbered)
+    monkeypatch.setenv("CBI_BRIEF_BUDGET", str(exact))
+    spec = run_json(capsys, "task", task["id"], "--parts")
+    assert len(spec["parts"]) == 3
+    assert max(max(item["bytes"], item["json_bytes"]) for item in spec["parts"]) == exact
+    for entry in spec["parts"]:
+        for flags, key in (([], "bytes"), (["--json"], "json_bytes")):
+            code, output, err = run(capsys, "task", task["id"], "--part", str(entry["index"]), *flags)
+            assert code == 0, err
+            assert len(output.encode()) == entry[key] <= exact

@@ -1111,7 +1111,7 @@ def _write_http_routes(conn, routes):
     del stale
 
 
-def resolve(conn, root):
+def resolve(conn, root, reporter=None):
     """Replace import, call and test edges and the ambiguous_call, unmatched_test and unresolved_injection diagnostics."""
     m = _Model(conn, root)
     edges = {}
@@ -1127,7 +1127,9 @@ def resolve(conn, root):
 
     ambiguous, test_imports, external, unread = [], defaultdict(set), defaultdict(list), defaultdict(list)
     unresolved = Counter()
-    for fid, facts in m.facts.items():
+    for index, (fid, facts) in enumerate(m.facts.items(), 1):
+        if reporter:
+            reporter.file("resolve", index, len(m.facts), m.files[fid][1])
         counted = {}
         for imp in facts["imports"] + facts["reexports"]:
             targets = _import_targets(m, fid, imp)

@@ -141,7 +141,20 @@ IDs are stable across scans and machines, which PRD-02 needs for diffing.
 7. **Docs** (`docs.py`). Title from the first heading. A `mentions` edge goes to any node whose path or qualified name appears in backticks or a link.
 8. **Tasks** (`tasks.py`). Regenerate tasks whose input hash changed.
 
-Resolution reruns across the workspace whenever the shortcut in step 2 does not apply. Deliverable 2 measures enumeration on sample-monorepo and deliverable 14 measures the whole scan; if resolution is too slow, limit it to changed files and their importers.
+Resolution reruns across the workspace when file content, parser version,
+workspace metadata, ignore rules or structure inputs change. A separate mechanical
+fingerprint lets judgement-only changes (including historical answer rows) reuse
+parsed nodes, resolved relationships, data facts and manifest relationships.
+Concepts, screens, task summaries and search still refresh. A newly accepted
+structure that changes effective entry points retains its own resolution path.
+Older models without the mechanical fingerprint rebuild once. Source changes
+still resolve the whole workspace; incremental resolution by importer is future work.
+
+Scans report phase starts, phase durations and hash/parse/resolve file counts on
+stderr once a scan exceeds two seconds, flushed immediately, including scans
+called by checks, comparisons and history. Long phases also emit a heartbeat every
+two seconds. File updates are limited to one every two seconds plus the first and last
+file; stdout formats remain unchanged.
 
 ## Judgement task protocol
 
@@ -414,3 +427,18 @@ The generated artifact preservation policy also recognizes named build sources:
 These remain mapped when added after initialization in data-heavy directories,
 for both working-tree and historical scans. Ordinary saved `.txt` output remains
 excluded by the generated artifact rules.
+
+### Brief part byte budgets
+
+Concept task parts are checked after grouping against both the text output and
+pretty-printed JSON envelope, including the schema, part numbering, byte-count
+field and trailing newline. Splitting and actual part numbering repeat until
+every part fits; a change in count or index width rechecks earlier parts. No
+extra digits are reserved when rejecting indivisible items at the boundary.
+The parts index retains `bytes` for text and reports
+`json_bytes` for JSON. Oversized current maps split recursively at concept child
+and file-list boundaries, retaining ancestor metadata so fragments can be joined
+by concept ID. Area file outlines and cross-area lists use the same final check.
+An envelope or indivisible item larger than the budget produces a clear error;
+it is never advertised as a compliant concept part. Read all parts and submit one
+assembled JSON answer as before.

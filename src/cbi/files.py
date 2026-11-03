@@ -278,7 +278,7 @@ def enumerate_repo(root, ignore=None):
     return workspaces, files
 
 
-def hash_files(root, files, old_states):
+def hash_files(root, files, old_states, reporter=None):
     """Hash the working-tree content of each file, reusing old hashes when stat matches.
 
     Returns {top path: (mtime_ns, size, content_hash, parser_version, is_symlink)}.
@@ -287,7 +287,9 @@ def hash_files(root, files, old_states):
     Tracked files missing from disk are left out. Symlinks hash their target text.
     """
     states = {}
-    for top, _, _ in files:
+    for index, (top, _, _) in enumerate(files, 1):
+        if reporter:
+            reporter.file("hash", index, len(files), top)
         full = root / top
         try:
             st = os.lstat(full)
