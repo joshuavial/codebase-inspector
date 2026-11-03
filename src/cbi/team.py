@@ -110,6 +110,9 @@ def import_answers(conn, out):
     from cbi import tasks
     applied = 0
     for row in _parse(path.read_text()).values():
+        if row.get("superseded_by"):
+            conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (row["key"],))
+            continue
         if row["protocol"] != tasks.PROTOCOL_VERSION:
             continue
         if row["kind"] == FILE_KIND:
@@ -144,7 +147,7 @@ def committed_answer(out, kind, key, protocol):
     if path is None or not path.is_file():
         return None
     row = _parse(path.read_text()).get((kind, key))
-    return row["answer"] if row and row["protocol"] == protocol else None
+    return row["answer"] if row and not row.get("superseded_by") and row["protocol"] == protocol else None
 
 
 def committed_answers_changed(conn, out):
@@ -159,6 +162,29 @@ def committed_answers_changed(conn, out):
         return False
     previous = fingerprint.get("answers") if isinstance(fingerprint, dict) else None
     return isinstance(previous, str) and previous != files.ignore_token(path.read_text())
+
+
+def supersede(conn, out, kind, key):
+    """Retire older document judgements when a replacement is explicitly accepted.
+
+    Tombstones survive team cache imports and union merges. Content-keyed file
+    and group summaries remain reusable; document replacement is explicit.
+    """
+    directory = team_dir(out)
+    path = directory / ANSWERS_NAME if directory else None
+    rows = _parse(path.read_text()) if path and path.is_file() else {}
+    meta_key = "accepted_keys:" + kind
+    previous = set(json.loads(store.get_meta(conn, meta_key) or "[]"))
+    previous.update(k for (task_kind, k) in rows if task_kind == kind)
+    for old in previous - {key}:
+        conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (old,))
+        if (kind, old) in rows:
+            rows[(kind, old)]["superseded_by"] = key
+    if (kind, key) in rows:
+        rows[(kind, key)].pop("superseded_by", None)
+    store.set_meta(conn, meta_key, json.dumps(sorted(previous | {key})))
+    if path:
+        _atomic(path, _dump(rows))
 
 
 def sync(conn, out):
@@ -350,7 +376,9 @@ def _parse(text):
             continue
         row = _valid(data)
         if row:
-            rows[(row["kind"], row["key"])] = row
+            key = (row["kind"], row["key"])
+            if not rows.get(key, {}).get("superseded_by") or row.get("superseded_by"):
+                rows[key] = row
     return rows
 
 
@@ -364,7 +392,10 @@ def _valid(data):
         return None
     if answer is None:
         return None
-    return _canon(kind, key, protocol, answer)
+    row = _canon(kind, key, protocol, answer)
+    if isinstance(data.get("superseded_by"), str) and data["superseded_by"]:
+        row["superseded_by"] = data["superseded_by"]
+    return row
 
 
 def _dump(rows):
@@ -378,7 +409,7 @@ def _store(directory, rows):
     """Union `rows` into answers.jsonl. Current rows replace the same kind and key. Returns (path, count, changed)."""
     path = Path(directory) / ANSWERS_NAME
     merged = _parse(path.read_text()) if path.is_file() else {}
-    merged.update(rows)
+    merged.update({key: row for key, row in rows.items() if not merged.get(key, {}).get("superseded_by")})
     changed = _atomic(path, _dump(merged))
     return path, len(merged), changed
 

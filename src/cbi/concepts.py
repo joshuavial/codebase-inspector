@@ -719,6 +719,7 @@ def accept(conn, task, answer, out, root=None):
         _save_snapshot(conn, _tracked_files(conn), body)
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
                      (task["input_hash"], json.dumps(body)))
+        team.supersede(conn, out, "define-concepts", task["input_hash"])
         before = {row[0] for row in conn.execute("SELECT id FROM tasks WHERE state = 'open'")}
         refresh(conn, out, root)
         store.reindex(conn, old + new)

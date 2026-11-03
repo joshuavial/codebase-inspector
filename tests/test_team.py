@@ -466,3 +466,45 @@ def test_two_branches_merge_answers_without_a_conflict(make_repo, monkeypatch, c
     keys = [(row["kind"], row["key"]) for row in again]
     assert keys == sorted(keys) and len(keys) == len(set(keys))
     assert {row["answer"] for row in again} >= {"About a.py.", "About b.py.", "About c.py.", "About d.py."}
+
+
+def test_superseded_concept_answer_cannot_return_after_source_reverts(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo(MAP, name="superseded-map")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    answer_all(capsys, tmp_path)
+    assert main(["team", "init"]) == 0
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    baseline = run_json(capsys, "task", task_id)
+    assert submit(capsys, tmp_path, task_id, concepts_answer(baseline))[0] == 0
+    original = (root / "b.ts").read_text()
+    (root / "b.ts").write_text(original + "// changed\n")
+    assert main(["scan"]) == 0
+    answer_files(capsys, tmp_path)
+    conn = sqlite3.connect(root / ".cbi" / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    brief = run_json(capsys, "task", task_id)
+    answer = concepts_answer(brief)
+    answer["concepts"][0]["name"] = "Revised foundation"
+    assert submit(capsys, tmp_path, task_id, answer)[0] == 0
+    (root / "b.ts").write_text(original)
+    (root / ".cbi" / "concepts.json").unlink()
+    # A fresh cache must respect retirement persisted in the team answer file.
+    monkeypatch.setenv("CBI_CACHE_DIR", str(tmp_path / "fresh-retirement-cache"))
+    assert main(["scan"]) == 0
+    assert not (root / ".cbi" / "concepts.json").exists()
+    assert len(run_json(capsys, "tasks", "--kind", "define-concepts")) == 1
+    assert main(["prime"]) == 0
+    assert not (root / ".cbi" / "concepts.json").exists()
+
+
+def test_supersession_survives_union_merge_order():
+    live = team._canon("define-concepts", "old", tasks.PROTOCOL_VERSION, {"summary": "Old map."})
+    retired = {**live, "superseded_by": "new"}
+    for records in ([live, retired], [retired, live]):
+        parsed = team._parse("\n".join(json.dumps(row) for row in records))
+        assert parsed[("define-concepts", "old")]["superseded_by"] == "new"

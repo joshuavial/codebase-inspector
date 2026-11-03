@@ -30,3 +30,14 @@ incomplete or different model fails the gate. This comparison rolls back its
 projection and leaves the model unchanged. Concept task input hashes include
 file summaries as well as source hashes and cross-file pairs; revising a summary
 invalidates the previous task hash.
+
+
+## Replacing concept judgements (2026-11-03)
+
+Explicitly accepting a replacement concept map retires the older concept input
+keys for that repository. Team answer rows retain a `superseded_by` marker,
+which survives a fresh cache import and takes precedence over a duplicate live
+row in a union merge. Retired keys are removed from the attached cache and are
+never eligible for automatic restoration, even if source later returns to its
+old content. A new explicit submit may accept that input again. Historical
+file and group summaries remain reusable by content as before.
