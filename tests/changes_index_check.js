@@ -96,3 +96,27 @@ assert.ok(!text(panel).includes('1 integration signals'));
 assert.ok(!text(panel).includes('1 observed relationship changes'));
 assert.ok(!text(panel).includes('1 test links'));
 console.log('count availability and plural checks passed');
+
+vm.runInContext(`
+  view = {focus:'tasks',scope:'tasks',sel:null};
+  DIFF.overview.items[0].children[0].own_modules[0].files[0].symbols.push({id:'repo:src/tasks.py#next',name:'next',state:'changed',verb:'Body changed'});
+  symById['repo:src/tasks.py#next']={leaf:{id:'tasks'}};
+  changesPanel();
+`,app);
+const keptEvidence = all(panel).find(n => n.className === 'change-evidence');
+for (const detail of all(keptEvidence).filter(n => n.tag === 'details')) detail.open=true;
+const symbolButtons = all(keptEvidence).filter(n => n.tag === 'button' && /^(run|next) —/.test(n.textContent));
+assert.strictEqual(symbolButtons.length,2);
+const keptTree=panel.children;
+app.document.activeElement=symbolButtons[0];
+vm.runInContext("view.sel='repo:src/tasks.py#run';changesPanel();",app);
+assert.strictEqual(panel.children,keptTree,'symbol-only routing must preserve the reading DOM');
+assert.ok(all(panel).includes(app.document.activeElement),'focused evidence button remains attached');
+assert.ok(all(keptEvidence).filter(n=>n.tag==='details').every(n=>n.open),'all evidence levels stay open');
+app.document.activeElement=symbolButtons[1];
+vm.runInContext("view.sel='repo:src/tasks.py#next';changesPanel();",app);
+assert.strictEqual(panel.children,keptTree,'consecutive symbol inspection keeps the same reading DOM');
+assert.ok(all(panel).includes(app.document.activeElement),'keyboard focus remains on the next symbol');
+vm.runInContext("DIFF.changes.summaries.concepts.tasks.narrative='Updated task explanation.';changesPanel();",app);
+assert.match(text(panel),/Updated task explanation/,'actual summary changes still rebuild');
+console.log('evidence selection persistence checks passed');

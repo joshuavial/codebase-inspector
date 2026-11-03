@@ -466,9 +466,11 @@ function setDiffScope(scope) {
   let focus = view.focus;
   let sel = view.sel;
   const area = scope !== "changed" && scope !== "all";
-  if (area && byId[scope] && !byId[scope].ext) {
+  const headOnly = area && shownSide === "base" && (ADDED.has(scope) || HEAD_ONLY.has(scope));
+  if (area && ((byId[scope] && !byId[scope].ext) || headOnly)) {
     focus = scope;
     sel = null;
+    if (headOnly) extra.side = "head";
   } else if (!area && view.scope && view.scope !== "changed" && view.scope !== "all" && view.focus === view.scope) {
     focus = null;
     sel = null;
@@ -800,10 +802,18 @@ function changeReviewSignals(parent, item) {
   parent.append(wrapper);
 }
 
+let changesPanelStamp = null;
+let changesPanelRoot = null;
+
 function changesPanel() {
   const panel = document.getElementById("changes");
   panel.hidden = !diffActive();
-  if (panel.hidden) return;
+  if (panel.hidden) { changesPanelStamp = null; return; }
+  const selected = selectedChangeConcept();
+  const stamp = JSON.stringify([DIFF.base, DIFF.head, shownSide, selected && selected.id, DIFF.overview, DIFF.changes]);
+  if (panel === changesPanelRoot && stamp === changesPanelStamp) return;
+  changesPanelRoot = panel;
+  changesPanelStamp = stamp;
   panel.replaceChildren();
   panel.append(el("h2", "", "Changes"));
   const base = DIFF.base ? String(DIFF.base).slice(0, 12) : "base";
@@ -812,7 +822,6 @@ function changesPanel() {
   changeSummary(panel);
   const items = diffOverviewItems();
   if (!items.length) { panel.append(el("p", "", "No architectural changes.")); return; }
-  const selected = selectedChangeConcept();
   const index = el("nav", "change-index");
   index.setAttribute("aria-label", "Changed concepts");
   const renderItems = (rows, parent) => {
@@ -999,6 +1008,14 @@ function paintSystemChrome(tab) {
 // The concept a jump came from. "~" is the workspace, whose focus is null.
 function originFocus() { return view.from === "~" ? null : view.from; }
 
+function navigationDiffScope(scope, focus, sel) {
+  if (!diffActive() || !scope || scope === "changed" || scope === "all") return scope;
+  const symbol = sel && symById[sel];
+  const target = symbol ? symbol.leaf.id : (sel && byId[sel] ? sel : focus);
+  if (!target || inDiffArea(target, scope)) return scope;
+  return "changed";
+}
+
 function go(focus, sel, extra = {}) {
   // Landing back on the origin restores its zoom and selection, same as the chip.
   const home = view.from && !("from" in extra) && (focus || null) === originFocus()
@@ -1025,7 +1042,7 @@ function go(focus, sel, extra = {}) {
   const side = "side" in extra ? extra.side : cur.get("side");
   if (side === "base") h.set("side", "base");
   // scope=changed is the bare URL. all, or one overview id, is written.
-  const scope = "scope" in extra ? extra.scope : cur.get("scope");
+  const scope = "scope" in extra ? extra.scope : navigationDiffScope(cur.get("scope"), focus, sel);
   if (scope && scope !== "changed") h.set("scope", scope);
   writeHash(h.toString(), { replace: keep });
 }
