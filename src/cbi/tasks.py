@@ -17,7 +17,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from cbi import concepts, manifests, resolve, screens, store
+from cbi import change_summaries, concepts, manifests, resolve, screens, store
 from cbi.files import PARSER_VERSION, blob_id
 
 # Bump when briefs or answers change meaning; cached answers from older versions are ignored.
@@ -201,6 +201,9 @@ SCHEMAS["summarise-change"] = {
         },
     },
 }
+
+SCHEMAS[change_summaries.KIND] = change_summaries.ANSWER_SCHEMA
+INSTRUCTIONS[change_summaries.KIND] = change_summaries.INSTRUCTIONS
 
 # A manifest file anywhere under a top-level directory means that directory is not "bare".
 _MANIFEST = re.compile(
@@ -935,6 +938,10 @@ def brief(conn, task_id, root=None):
         out.update(screens.brief_body(conn, task, root))
         out["answer_schema"] = SCHEMAS[task["kind"]]
         return out
+    if task["kind"] == change_summaries.KIND:
+        out.update(task["inputs"])
+        out["answer_schema"] = SCHEMAS[task["kind"]]
+        return out
     if task["kind"] == "summarise-change":
         data = task["inputs"] if isinstance(task["inputs"], dict) else {}
         out["base"] = data.get("base")
@@ -1088,6 +1095,8 @@ def _summary_brief(conn, task, root):
 
 def answer_template(b):
     """A skeleton answer for a brief, with "..." where the agent writes."""
+    if b["kind"] == change_summaries.KIND:
+        return {"input_hash": b["input_hash"], "narrative": "...", "citations": b.get("citations", [])[:1]}
     if b["kind"] == "summarise-change":
         return {"input_hash": b["input_hash"], "narrative": "..."}
     if b["kind"] == "define-concepts":
@@ -1171,6 +1180,9 @@ def _format_change(b):
 
 def format_brief(b):
     """Text form of a group, workspace, structure, deployable or change brief."""
+    if b["kind"] == change_summaries.KIND:
+        return _format_tail(b, [f"# Task {b['id']}: {b['kind']}", b["instructions"],
+                               "## Diff evidence", json.dumps({k: b[k] for k in ("concept_id", "changes", "citations")}, indent=2)])
     if b["kind"] == "summarise-change":
         return _format_change(b)
     if b["kind"] == "confirm-structure":
@@ -1382,6 +1394,10 @@ def _validated(conn, task_id, text):
         extra, _files = _file_errors(conn, task, answer)
         if extra:
             raise AnswerError("\n".join(extra))
+    if task["kind"] == change_summaries.KIND:
+        extra = change_summaries.problems(task, answer)
+        if extra:
+            raise AnswerError("\n".join(extra))
     return task, answer
 
 
@@ -1431,7 +1447,7 @@ def _submit(conn, task_id, text, root, out):
         return concepts.accept(conn, task, answer, out, root)
     if task["kind"] == "sketch-screens":
         return screens.accept(conn, task, answer, out, root)
-    if task["kind"] == "summarise-change":
+    if task["kind"] in ("summarise-change", change_summaries.KIND):
         return _submit_change(conn, task, answer, out)
     if task["kind"] != "summarise-files":
         return _submit_summary(conn, task, answer, out)
@@ -1473,6 +1489,8 @@ def _submit(conn, task_id, text, root, out):
 def _submit_change(conn, task, answer, out=None):
     """Cache the narrative by the task's input hash, which is the commit pair, and close the task."""
     stored = {"narrative": answer["narrative"].strip()}
+    if task["kind"] == change_summaries.KIND:
+        stored["citations"] = answer["citations"]
 
     def write():
         previous = _cached_answer(conn, task["input_hash"])

@@ -4,6 +4,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -316,7 +317,9 @@ children's summaries), confirm-structure (one per workspace; accepting it
 writes structure.json), summarise-deployable (one per deployable, after
 confirm-structure), summarise-workspace, define-concepts (the concept
 map), sketch-screens (region trees for UI screens) and summarise-change
-(a short narrative of one diff, cached by the two commits). Tasks run
+(a legacy narrative of one diff) and summarise-architecture-change (one cited paragraph
+per changed concept plus the whole diff, cached by both model hashes). Run a diff or
+comparison build first to open these tasks in the ordinary task inbox. Tasks run
 bottom-up: a group or workspace task is blocked, and not listed, until
 its children are summarised. define-concepts opens once confirm-structure
 is done; sketch-screens opens once that map is done and the repo has UI
@@ -671,6 +674,14 @@ def _locate(args):
     root, out = _paths(args)
     ref = getattr(args, "ref", None)
     if not ref:
+        if getattr(args, "command", None) in ("tasks", "task", "submit") and not (out / "model.db").exists():
+            try:
+                head = json.loads((out / "refs" / "comparison-inbox.json").read_text())["head"]
+                if isinstance(head, str) and re.fullmatch(r"[0-9a-f]{40,64}", head):
+                    home = out / "refs" / head
+                    return root, home, home / "model.db", head
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
         return root, out, out / "model.db", None
     sha = files.resolve_commit(root, ref)
     home = out / "refs" / sha
@@ -1038,6 +1049,8 @@ def cmd_diff(args):
     try:
         if root is None:
             result = diff.compare(base, head)
+            from cbi import change_summaries
+            change_summaries.enrich(base, head, result)
         else:
             result = diff.compare_refs(base, head, root, args.base, args.head)
     finally:
@@ -1086,6 +1099,14 @@ def _cmd_build_history(args):
     except (OSError, json.JSONDecodeError) as err:
         print(f"cannot read history index: {err}", file=sys.stderr)
         return 1
+    # Cached structural facts stay immutable; answers can arrive between viewer builds.
+    from cbi import change_summaries
+    answer_conn = _read_model(args)
+    try:
+        for entry in entries:
+            change_summaries.refresh(answer_conn, entry["changes"])
+    finally:
+        answer_conn.close()
     payload = []
     for entry in entries:
         base_conn = head_conn = base_src = head_src = None

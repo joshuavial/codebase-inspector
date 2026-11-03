@@ -11,9 +11,9 @@ import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from cbi import diff, review, store, tasks
+from cbi import change_summaries, diff, review, store, tasks
 
-VERSION = 3
+VERSION = 4
 DEFAULT_DAYS = 183
 PR_RE = re.compile(r"(?:Merge pull request #|\(#)(\d+)\)?")
 
@@ -374,12 +374,18 @@ def build_history(root, out, since=None, until=None):
                               "changes": changes, "change_count": sum(len(g["changes"]) for g in changes["groups"])}
                     _write_json(entry_path, cached)
             if number:
+                # Answer state changes independently of the immutable structural diff.
+                # Cached entries carry their keys/evidence, so even a dropped point
+                # can pick up a newly submitted summary without rebuilding its model.
+                changed = change_summaries.refresh(current_conn, cached["changes"])
                 narrative = _narrative(current_conn, cached)
                 if narrative != cached.get("narrative"):
                     if narrative:
                         cached["narrative"] = narrative
                     else:
                         cached.pop("narrative", None)
+                    changed = True
+                if changed:
                     _write_json(entry_path, cached)
                 if _has_changes(cached["changes"]):
                     entries.append(cached)

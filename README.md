@@ -66,6 +66,22 @@ cbi open
 
 Judgement tasks (`cbi tasks`) ask for file summaries and a concept map. Submit answers with `cbi submit`. Query with `cbi search`, `cbi show` and `cbi tests-for`.
 
+## Explain an architectural change
+
+Run `cbi diff BASE HEAD` or `cbi review BASE..HEAD` to open judgement tasks for each changed concept and the whole diff. The tool supplies facts; an agent supplies the explanations.
+
+```
+cbi tasks --kind summarise-architecture-change
+cbi task TASK_ID --json
+cbi submit TASK_ID answer.json
+cbi diff BASE HEAD
+cbi build --compare BASE..HEAD
+```
+
+The task commands work without `--ref`, including after a fresh `cbi init` followed by a diff: cbi records which comparison head holds that inbox when an ordinary model has not been scanned yet.
+
+Each answer copies the brief's `input_hash`, gives a `narrative` paragraph explaining what changed, why it matters, affected callers/users and risk, and lists `citations` copied from the allowed symbol IDs/file paths. References outside the supplied diff are rejected. Answers are reused across diff, review and viewer builds until either model changes. Unanswered summaries show `Summary pending: run cbi tasks`.
+
 ## Desktop app
 
 The app in `app/` is a thin Electron shell over the installed `cbi` CLI. It remembers recent projects, switches worktrees and branches, and shows the same viewer. See `app/README.md`.
