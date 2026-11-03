@@ -281,10 +281,17 @@ def _forget_image_destination(state, dest):
                       if f != dest and not f.startswith(dest.rstrip("/") + "/")}
 
 
+def _remember_image_directory(state, directory):
+    """WORKDIR and COPY create directories whose identity survives later WORKDIR changes."""
+    while directory not in state["dirs"]:
+        state["dirs"].add(directory)
+        directory = posixpath.dirname(directory)
+
+
 def _docker_state(ws, path, context, target=None):
     """Track literal files in each build stage; remote, dynamic and generated copies stay unknown."""
     stages, named = [], {}
-    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False, "cmd_inherited": False}
+    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False, "cmd_inherited": False, "dirs": {"/"}}
     text = re.sub(r"\\\n", " ", (ws.text(path) or "") if path in ws.paths else "")
     for line in text.splitlines():
         instruction, _, value = line.strip().partition(" ")
@@ -294,6 +301,7 @@ def _docker_state(ws, path, context, target=None):
             words = [w for w in words if not w.startswith("--")]
             parent = named.get(words[0]) if words else None
             state = {"files": dict(parent["files"]) if parent else {},
+                     "dirs": set(parent["dirs"]) if parent else {"/"},
                      "workdir": parent["workdir"] if parent else "/",
                      "commands": dict(parent["commands"]) if parent else {},
                      "copies": parent["copies"] if parent else False,
@@ -304,6 +312,7 @@ def _docker_state(ws, path, context, target=None):
                 named[words[-1]] = state
         elif instruction == "WORKDIR" and value and not re.search(r"[$*?]", value):
             state["workdir"] = _image_path(state["workdir"], value)
+            _remember_image_directory(state, state["workdir"])
         elif instruction in ("CMD", "ENTRYPOINT"):
             state["commands"][instruction] = _tokens(value)
             if instruction == "CMD":
@@ -347,9 +356,10 @@ def _docker_state(ws, path, context, target=None):
                     _forget_image_destination(state, dest)
                 for f, tracked in matches:
                     suffix = f[len(prefix):] if directory else posixpath.basename(source)
-                    dest_dir = (dest == state["workdir"] or words[-1].endswith("/")
+                    dest_dir = (dest in state["dirs"] or words[-1].endswith("/")
                                 or any(f.startswith(dest.rstrip("/") + "/") for f in state["files"]))
                     destination = _join(dest, suffix) if directory or dest_dir or len(sources) > 1 else dest
+                    _remember_image_directory(state, posixpath.dirname(destination))
                     state["files"][destination] = tracked
     return named.get(target, state) if target else state
 

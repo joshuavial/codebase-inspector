@@ -453,3 +453,16 @@ def test_echoed_modules_in_shell_wrapper_are_not_roots(make_repo):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert {path for _, path in manifests.dockerfile(ws)[0][0]['entries']} == {'boot.sh'}
+
+
+@pytest.mark.parametrize('created', ['/app', '/app/nested'])
+@pytest.mark.parametrize('inherit', ['', 'FROM base\n'])
+def test_copy_respects_directories_created_by_earlier_workdir(make_repo, created, inherit):
+    files = {
+        'Dockerfile': f'FROM python AS base\nWORKDIR {created}\n{inherit}WORKDIR /other\n'
+                      'COPY start.py /app\nCMD ["python", "/app/start.py"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /app/start.py', 'start.py')]
