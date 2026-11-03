@@ -86,10 +86,14 @@ class _Model:
             for wid, attrs in conn.execute("SELECT id, attrs FROM nodes WHERE kind = 'workspace'")
         }
         self.files = {}  # file id -> (workspace id, path, role)
+        self.symlinks = set()
         self.by_path = defaultdict(dict)  # workspace id -> {path: file id}
         for fid, wid, path, attrs in conn.execute(
                 "SELECT id, workspace_id, path, attrs FROM nodes WHERE kind IN ('file', 'doc')"):
-            self.files[fid] = (wid, path, json.loads(attrs or "{}").get("role"))
+            attributes = json.loads(attrs or "{}")
+            self.files[fid] = (wid, path, attributes.get("role"))
+            if attributes.get("symlink"):
+                self.symlinks.add(fid)
             self.by_path[wid][path] = fid
         self.facts = {fid: json.loads(data) for fid, data in conn.execute("SELECT file_id, data FROM facts")}
         self.nodes = {}  # symbol or test id -> (parent id, kind, display kind, file id)
@@ -100,6 +104,8 @@ class _Model:
             self.nodes[nid] = (parent, kind, display, self.by_path[wid].get(path))
             if kind == "symbol":
                 self.members[(parent, name)].append(nid)
+        self.node_spans = {nid: (start or 0, end or 0) for nid, start, end in conn.execute(
+            "SELECT id, start_line, end_line FROM nodes WHERE kind IN ('symbol', 'test')")}
         self.bindings = {
             fid: {local: (imp["spec"], imported) for imp in f["imports"] for local, imported in imp["names"].items()}
             for fid, f in self.facts.items()
@@ -1213,6 +1219,8 @@ def resolve(conn, root):
                 add(fid, dst, "references", "html", 1.0)
 
     _inherit_helper_calls(m, edges, add)
+    from cbi import testing_subprocess
+    subprocess_diags = testing_subprocess.link(m, edges, add)
 
     linked = {src if src in m.files else m.nodes[src][3] for src, _, kind, _ in edges if kind == "tests"}
     unmatched = []
@@ -1246,14 +1254,14 @@ def resolve(conn, root):
     _write_http_routes(conn, http_routes)
     conn.execute(
         "DELETE FROM diagnostics WHERE kind IN "
-        "('ambiguous_call', 'unmatched_test', 'unresolved_injection', 'unmatched_http_call')"
+        "('ambiguous_call', 'unmatched_test', 'unresolved_injection', 'unmatched_http_call', 'unsupported_test_mechanism')"
     )
     conn.executemany(
         "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, ?, ?)",
         sorted(ambiguous)
         + unmatched
         + [(fid, "unresolved_injection", f"{n} injected calls with no candidate") for fid, n in sorted(unresolved.items())]
-        + http_diags,
+        + http_diags + subprocess_diags,
     )
     from cbi.env import apply as apply_env  # local: env imports manifests, which imports this module
     apply_env(conn, root)
