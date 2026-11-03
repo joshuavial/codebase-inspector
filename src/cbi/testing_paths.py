@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from cbi.testing_static import owner, python_modules
 
+MAX_CONTEXT_EXPANSIONS = 64
+
 
 @dataclass(frozen=True)
 class PathValue:
@@ -144,10 +146,21 @@ def _assigned(node):
 def contexts(model, file_ids=None):
     """Call contexts in Python tests and optional registered helpers, with lexical bindings."""
     additional = set(file_ids or ())
-    for fid, module in python_modules(model).items():
+    if not hasattr(model, "_test_path_contexts"):
+        model._test_path_contexts = {}
+        model._test_path_budget = MAX_CONTEXT_EXPANSIONS
+        model._test_path_limits = set()
+    cache = model._test_path_contexts
+    for fid, module in sorted(python_modules(model).items()):
         if model.files[fid][2] != "test" and fid not in additional:
             continue
+        if fid in cache:
+            yield from cache[fid]
+            continue
         own = model.files[fid][1]
+
+        def boundary(node, mechanism):
+            model._test_path_limits.add((fid, node, mechanism))
 
         def walk(node, values, aliases):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -185,19 +198,46 @@ def contexts(model, file_ids=None):
                             values[part.id] = value if not isinstance(node, ast.AugAssign) else None
                             aliases[part.id] = None
                 return
+            if isinstance(node, ast.NamedExpr):
+                # Guard assignments execute before the selected body, but a
+                # conditional value is not an unconditional path literal.
+                yield from walk(node.value, values, aliases)
+                for target in ast.walk(node.target):
+                    if isinstance(target, ast.Name):
+                        values.pop(target.id, None)
+                        aliases[target.id] = None
+                return
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 yield from walk(node.iter, values, aliases)
                 value = evaluate(node.iter, values, aliases, own)
-                choices = value if isinstance(value, tuple) else (value,)
-                for choice in choices[:100]:
+                choices = value if isinstance(value, tuple) else (None,)
+                guarded = any(isinstance(child, (ast.If, ast.IfExp, ast.While, ast.Match,
+                    ast.Try, ast.TryStar, ast.Assert, ast.BoolOp, ast.Break, ast.Continue,
+                    ast.Return, ast.Raise)) or isinstance(child, ast.comprehension) and child.ifs
+                    for statement in node.body for child in ast.walk(statement))
+                if guarded:
+                    choices = (None,)
+                    boundary(node, "guarded_loop")
+                elif not isinstance(value, tuple):
+                    boundary(node, "dynamic_loop")
+                elif len(choices) > model._test_path_budget:
+                    choices = (None,)
+                    boundary(node, "expansion_limit")
+                else:
+                    model._test_path_budget -= len(choices)
+                for choice in choices:
                     inner, names = dict(values), dict(aliases)
                     for part in ast.walk(node.target):
                         if isinstance(part, ast.Name):
                             inner[part.id], names[part.id] = choice, None
                     for child in node.body:
                         yield from walk(child, inner, names)
+                after, after_names = dict(values), dict(aliases)
+                for name in _assigned(node):
+                    after.pop(name, None)
+                    after_names[name] = None
                 for child in node.orelse:
-                    yield from walk(child, dict(values), dict(aliases))
+                    yield from walk(child, after, after_names)
                 for name in _assigned(node):
                     values.pop(name, None)
                     aliases[name] = None
@@ -262,8 +302,13 @@ def contexts(model, file_ids=None):
                 return
             if isinstance(node, (ast.If, ast.While)):
                 # Conditional writes cannot become unconditional literal facts.
-                for _field, children in ast.iter_fields(node):
+                guard_writes = _assigned(node.test)
+                for field, children in ast.iter_fields(node):
                     inner, names = dict(values), dict(aliases)
+                    if field != "test":
+                        for name in guard_writes:
+                            inner.pop(name, None)
+                            names[name] = None
                     if isinstance(children, list):
                         for child in children:
                             if isinstance(child, ast.AST):
@@ -279,7 +324,8 @@ def contexts(model, file_ids=None):
             for child in ast.iter_child_nodes(node):
                 yield from walk(child, values, aliases)
 
-        yield from walk(module, {}, {})
+        cache[fid] = tuple(walk(module, {}, {}))
+        yield from cache[fid]
 
 
 def read_value(context):
@@ -334,4 +380,27 @@ def link(model, edges, add):
             path = model.files[context.fid][1]
             detail = f"{path}:{call.lineno}:{call.col_offset + 1}: {mechanism}: target is dynamic, external or absent from tracked files"
             diagnostics.add((context.fid, "unsupported_test_mechanism", detail))
+    return sorted(diagnostics)
+
+
+def expansion_diagnostics(model):
+    """Report capped/guarded scopes only when they contain an actual path mechanism."""
+    targets = {}
+    for fid, items in getattr(model, "_test_path_contexts", {}).items():
+        calls = set()
+        for context in items:
+            _dst, mechanism, _value = resolve_target(context)
+            if mechanism or (isinstance(context.call.func, ast.Attribute)
+                             and context.call.func.attr in {"glob", "rglob"}):
+                calls.add(context.call)
+        targets[fid] = calls
+    diagnostics = set()
+    for fid, loop, mechanism in getattr(model, "_test_path_limits", ()):
+        if not any(call in targets.get(fid, ()) for statement in loop.body
+                   for call in ast.walk(statement) if isinstance(call, ast.Call)):
+            continue
+        path = model.files[fid][1]
+        diagnostics.add((fid, "unsupported_test_mechanism",
+            f"{path}:{loop.lineno}:{loop.col_offset + 1}: {mechanism}: "
+            "loop-dependent targets remain unresolved"))
     return sorted(diagnostics)

@@ -1231,6 +1231,7 @@ def resolve(conn, root):
     subprocess_diags = testing_subprocess.link(m, edges, add)
     from cbi import testing_boundaries
     boundary_diags = testing_boundaries.link(m)
+    path_boundary_diags = testing_paths.expansion_diagnostics(m)
 
     linked = {src if src in m.files else m.nodes[src][3] for src, _, kind, _ in edges if kind == "tests"}
     unmatched = []
@@ -1271,7 +1272,7 @@ def resolve(conn, root):
         sorted(ambiguous)
         + unmatched
         + [(fid, "unresolved_injection", f"{n} injected calls with no candidate") for fid, n in sorted(unresolved.items())]
-        + http_diags + subprocess_diags + path_diags + sql_diags + http_test_diags + boundary_diags + fixture_diags,
+        + http_diags + subprocess_diags + path_diags + sql_diags + http_test_diags + boundary_diags + fixture_diags + path_boundary_diags,
     )
     from cbi.env import apply as apply_env  # local: env imports manifests, which imports this module
     apply_env(conn, root)

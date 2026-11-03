@@ -12,8 +12,10 @@ A read-only AST pass follows module and function-local literal constants,
 `os.path` joins, and literal string concatenation. It respects imported aliases,
 shadowed parameters, reassignment, and conditional scopes. Context-manager
 targets replace prior literals; exception handlers and `finally` blocks do not
-reuse values that preceding `try` regions may have overwritten. Each `match` case starts from its own incoming snapshot, and pattern captures
-replace prior literals. Literal assignments within each branch still bind in sequence. It uses the existing
+reuse values that preceding `try` regions may have overwritten. Each `match`
+case starts from its own incoming snapshot, and pattern captures replace prior
+literals. Guard assignments invalidate earlier aliases before the selected body.
+Literal assignments within each branch still bind in sequence. It uses the existing
 workspace module and tracked-file resolvers. It never imports or executes target
 code, evaluates arbitrary expressions, or walks directories outside the model.
 
@@ -21,3 +23,13 @@ Unknown values and missing or external targets produce
 `unsupported_test_mechanism` diagnostics with a source location and mechanism.
 A resolved target removes the unmatched-test status only for the linked test
 file; a static relationship does not establish coverage of a whole module.
+
+Literal loops share a budget of 64 iteration expansions across the entire model,
+including registered fixture modules. Call contexts are cached per file and
+reused by path, SQL, fixture and boundary consumers. A loop exceeding the
+remaining budget is walked once with unknown iteration values and emits an
+`expansion_limit` diagnostic. Guarded or abruptly terminated loop bodies also
+keep iteration values unknown, preventing conditional filters from binding every
+literal alternative. Unknown iterables are not mistaken for single literal
+values. These boundaries produce diagnostics when the loop contains an
+import, file-read or SQL-glob mechanism; ordinary value-only loops do not.

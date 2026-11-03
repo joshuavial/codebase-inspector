@@ -1,0 +1,118 @@
+"""Finite-loop inference is bounded and does not assume guards select every value."""
+import ast
+import sqlite3
+
+from cbi import testing_paths
+from cbi.cli import main
+
+
+def test_guarded_loop_variables_remain_unresolved(make_repo, monkeypatch):
+    root = make_repo({
+        'pkg/__init__.py': '',
+        'pkg/a.py': 'def run(): return 1\n',
+        'pkg/b.py': 'def run(): return 2\n',
+        'tests/test_loops.py': '''import importlib
+
+def test_guard():
+    for name in ("pkg.a", "pkg.b"):
+        if name == "pkg.a":
+            importlib.import_module(name)
+
+def test_alias_guard():
+    for name in ("pkg.a", "pkg.b"):
+        chosen = name
+        if chosen == "pkg.a":
+            importlib.import_module(chosen)
+
+def test_finite():
+    for name in ("pkg.a", "pkg.b"):
+        importlib.import_module(name)
+
+def test_string_iteration():
+    for name in "pkg.a":
+        importlib.import_module(name)
+
+def test_dynamic_else(runtime_names):
+    name = "pkg.a"
+    for name in runtime_names:
+        pass
+    else:
+        importlib.import_module(name)
+
+def test_known_else(runtime_names):
+    for name in runtime_names:
+        pass
+    else:
+        chosen = "pkg.a"
+        importlib.import_module(chosen)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        bindings = {(src.rsplit('#', 1)[-1], dst.rsplit(':', 1)[-1]) for src, dst in conn.execute(
+            "SELECT src,dst FROM edges WHERE kind='tests'")}
+    assert {('test_finite', 'pkg/a.py'), ('test_finite', 'pkg/b.py'), ('test_known_else', 'pkg/a.py')} <= bindings
+    assert not any(src in {'test_guard', 'test_alias_guard', 'test_string_iteration', 'test_dynamic_else'} for src, _ in bindings)
+
+
+def test_nested_literal_loops_share_a_bounded_expansion_budget(make_repo, monkeypatch):
+    choices = repr(tuple('pkg.worker' for _ in range(20)))
+    root = make_repo({
+        'pkg/__init__.py': '',
+        'pkg/worker.py': 'def run(): pass\n',
+        'tests/test_product.py': 'import importlib\ndef test_product():\n'
+        f'    for first in {choices}:\n'
+        f'        for second in {choices}:\n'
+        f'            for third in {choices}:\n'
+        '                importlib.import_module(third)\n',
+    })
+    original = testing_paths.evaluate
+    evaluations = 0
+
+    def count(node, *args):
+        nonlocal evaluations
+        if isinstance(node, ast.Name) and node.id == 'third':
+            evaluations += 1
+            assert evaluations <= 256, 'literal loop product exceeded the shared work budget'
+        return original(node, *args)
+
+    monkeypatch.setattr(testing_paths, 'evaluate', count)
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        details = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind='unsupported_test_mechanism'")]
+    assert any('expansion_limit' in detail for detail in details)
+
+
+def test_loops_without_path_targets_do_not_emit_path_boundaries(make_repo, monkeypatch):
+    root = make_repo({'tests/test_values.py': 'def test_values():\n    for value in (1, 2):\n        assert value > 0\n'})
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        assert not conn.execute("SELECT 1 FROM diagnostics WHERE kind='unsupported_test_mechanism'").fetchone()
+
+
+def test_guard_assignments_do_not_reuse_pre_guard_path_aliases(make_repo, monkeypatch):
+    root = make_repo({
+        'pkg/__init__.py': '',
+        'pkg/a.py': 'def run(): pass\n',
+        'pkg/b.py': 'def run(): pass\n',
+        'tests/test_guard_alias.py': '''import importlib
+
+def test_loop_guard():
+    chosen = "pkg.b"
+    for name in ("pkg.a",):
+        if (chosen := name) == "pkg.a":
+            importlib.import_module(chosen)
+
+def test_condition(runtime):
+    chosen = "pkg.b"
+    if (chosen := runtime()):
+        importlib.import_module(chosen)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        assert not conn.execute("SELECT 1 FROM edges WHERE kind='tests'").fetchone()
