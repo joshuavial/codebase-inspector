@@ -222,7 +222,39 @@ def test_cycles_between_files_folders_and_packages(repo, capsys):
     status = run_json(capsys, "status")
     assert status["diagnostics"]["cycle"]["count"] == 6
     code, out, _ = run(capsys, "show", "core/a.ts")
-    assert code == 0 and "cycle: core/a.ts → core/b.ts → core/a.ts" in out
+    assert code == 0 and "cycle: file-import SCC: core/a.ts → core/b.ts → core/a.ts" in out
+
+
+def test_cycle_status_separates_components_from_projected_memberships(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        "left/a.ts": 'import { b } from "../right/b"; export const a = b;\n',
+        "right/b.ts": "export const b = 1;\n",
+        "right/c.ts": 'import { d } from "../left/d"; export const c = d;\n',
+        "left/d.ts": "export const d = 2;\n",
+        "core/a.ts": 'import { b } from "./b"; export const a = b;\n',
+        "core/b.ts": 'import { a } from "./a"; export const b = a;\n',
+    }, name="projected-cycles")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    body = run_json(capsys, "cycles")
+    assert len(body["files"]) == 1
+    assert len(body["folders"]) == 1
+    summary = run_json(capsys, "status")["diagnostics"]["cycle"]
+    assert summary["count"] == 4 and summary["count_unit"] == "memberships"
+    assert summary["levels"] == {
+        "files": {"scc_count": 1, "membership_count": 2, "projection": False},
+        "folders": {"scc_count": 1, "membership_count": 2, "projection": True},
+        "packages": {"scc_count": 0, "membership_count": 0, "projection": True},
+    }
+    _, out, _ = run(capsys, "status")
+    assert "cycle memberships: 4" in out
+    assert "file-import SCCs: 1 (2 memberships)" in out
+    assert "projected folder SCCs: 1 (2 memberships)" in out
+    _, out, _ = run(capsys, "cycles")
+    assert "file-import SCCs: 1 (2 memberships)" in out
+    assert "projected folder SCCs: 1 (2 memberships)" in out
+    _, out, _ = run(capsys, "show", "left/")
+    assert "cycle: projected folder SCC:" in out
 
 
 def test_deps_matrix_and_forbid(repo, capsys):

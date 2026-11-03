@@ -719,6 +719,7 @@ class _Collector:
         self.lambda_injected = {}  # lambda start byte -> {param name: type}
         self.loads_dotenv = False
         self.calls = []
+        self.call_locations = []
         self.uses = []
         self.envs = []
         self.constructs = []
@@ -1049,7 +1050,10 @@ class _Collector:
             if self.defs[index]["display_kind"] in TYPE_DISPLAY.values():
                 c = index
         shadow, types = self._enter(node, index, c, shadow, types)
+        before = len(self.calls)
         self._emit(node, d, c, shadow, types)
+        self.call_locations.extend([node.start_point.row + 1, node.start_point.column + 1]
+                                   for _ in range(len(self.calls) - before))
         for child in node.named_children:
             self._walk(child, d, c, shadow, types)
         if node.type == "variable_declarator" and types:
@@ -1263,6 +1267,7 @@ def parse(source, lang, is_test):
         "reexports": [],
         "locals": sorted(collector.locals),
         "calls": collector.calls,
+        "call_locations": collector.call_locations,
         "reads": [],
         "envs": collector.envs,
         "uses": collector.uses,

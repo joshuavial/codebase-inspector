@@ -178,7 +178,9 @@ def test_diagnostics(repo):
     conn = sqlite3.connect(repo / ".cbi" / "model.db")
     rows = conn.execute("SELECT kind, node_id, detail FROM diagnostics ORDER BY kind").fetchall()
     assert rows == [
-        ("ambiguous_call", "local:repo:src/legacy.js", "1 calls with more than one candidate"),
+        ("ambiguous_call", "local:repo:src/legacy.js",
+         "src/legacy.js:6:25: call pick has more than one candidate: "
+         "local:repo:src/legacy.js#pick~aab3175b, local:repo:src/legacy.js#pick~e6943713"),
         ("unmatched_test", "local:repo:src/orphan.test.ts",
          "no call, import, file read or file name reaches tracked code; imports only node:assert/strict, node:test"),
     ]
