@@ -72,6 +72,8 @@ One SQLite file per mapped repo at `.cbi/model.db`.
 
 **diagnostics**: `node_id`, `kind` (`parse_error`, `unresolved_entry`, `ambiguous_call`, `unmatched_test`, `unmapped_coverage`), `detail`. `cbi status` summarises them.
 
+Import cycles are strongly connected components (SCCs) of the production file import graph or its projection onto immediate folders and packages. A projected folder or package SCC can exist without a file-import SCC: different files can provide each direction of the projected dependency. `cycle` diagnostics identify the level and store one membership per node. `status --json` keeps `diagnostics.cycle.count` as the membership count, labels its `count_unit` as `memberships`, and reports `levels.files`, `levels.folders` and `levels.packages` with separate `scc_count`, `membership_count` and `projection` fields. Text status and `cycles` label file-import SCCs separately from projected folder/package SCCs. A representative chain describes an SCC; it does not enumerate every possible cycle inside it.
+
 **file_state**: `path`, `mtime_ns`, `size`, `content_hash`, `parser_version`. Used for incremental scans.
 
 **coverage_lines**: `file_id`, `line`, `hits`, `artifact`. **results**: `test_node_id`, `status`, `duration_ms`, `artifact`. Ingesting an artifact replaces only rows from the same artifact path, so several suites merge. A line counts as covered if any artifact hit it.

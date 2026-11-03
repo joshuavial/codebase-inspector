@@ -63,11 +63,11 @@ Exit codes: 0 done, 1 no model (run `cbi scan`).
 
 Example: cbi orphans --json""",
     "cycles": """\
-List import cycles between production files, between their folders and
-between their packages. The same cycles are `cycle` diagnostics, one per
-node in the cycle, shown by `cbi status` and `cbi show`. A folder cycle is
-an import that leaves a folder and comes back. A package cycle follows
-part_of. Imports that stay inside one folder or package are not a cycle.
+List strongly connected components (SCCs) of production file imports and
+of imports projected onto folders and packages. Projected SCCs can exist
+without any file-import SCC. Each component has one `cycle` diagnostic
+per member; `cbi status` separates SCC counts from these memberships.
+Imports inside one folder or package do not create projected cycles.
 
 --json: {files, folders, packages}, each a list of {detail, members:
 [{id, name, path}]}.
@@ -684,8 +684,20 @@ def record_cycles(conn):
     """Replace cycle diagnostics with one row per node in a file, folder or package cycle."""
     found = collect_cycles(conn)
     conn.execute("DELETE FROM diagnostics WHERE kind = 'cycle'")
-    rows = [(member["id"], comp["detail"]) for comps in found.values() for comp in comps for member in comp["members"]]
+    rows = [(member["id"], f"{CYCLE_LABELS[level][:-1]}: {comp['detail']}")
+            for level, comps in found.items() for comp in comps for member in comp["members"]]
     conn.executemany("INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, 'cycle', ?)", rows)
+
+
+CYCLE_LABELS = {"files": "file-import SCCs", "folders": "projected folder SCCs", "packages": "projected package SCCs"}
+
+
+def cycle_summary(conn):
+    """Count unique SCCs and memberships independently at each graph level."""
+    return {level: {"scc_count": len(comps),
+                    "membership_count": sum(len(comp["members"]) for comp in comps),
+                    "projection": level != "files"}
+            for level, comps in collect_cycles(conn).items()}
 
 
 def cycles(conn, args):
@@ -695,10 +707,8 @@ def cycles(conn, args):
         return 0
     for key in ("files", "folders", "packages"):
         comps = found[key]
-        if not comps:
-            print(f"{key}: none")
-            continue
-        print(f"{key}:")
+        memberships = sum(len(comp["members"]) for comp in comps)
+        print(f"{CYCLE_LABELS[key]}: {len(comps)} ({memberships} memberships)")
         for comp in comps:
             print(f"  {comp['detail']}")
     return 0

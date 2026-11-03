@@ -112,7 +112,10 @@ diagnostics by kind with a few example nodes (see one node's with
 
 --json: {scanned_at, nodes: {display kind: count}, open_tasks: {kind:
 count}, diagnostics: {kind: {count, examples: [{node_id, path,
-detail}]}}}. scanned_at is local ISO time, null before the first scan.
+detail}]}}}. For cycle diagnostics, count_unit is `memberships` and levels
+contains files/folders/packages with scc_count, membership_count and
+projection. A projected folder or package SCC need not be a file-import
+cycle. scanned_at is local ISO time, null before the first scan.
 
 Exit codes: 0 done, 1 no model (run `cbi init` and `cbi scan`).
 
@@ -730,6 +733,9 @@ def status(conn, args):
             "SELECT d.node_id, n.path, d.detail FROM diagnostics d LEFT JOIN nodes n ON n.id = d.node_id "
             "WHERE d.kind = ? ORDER BY n.path, d.node_id LIMIT ?", (kind, DIAGNOSTIC_EXAMPLES))]
         diagnostics[kind] = {"count": count, "examples": examples}
+        if kind == "cycle":
+            from cbi.graph import cycle_summary
+            diagnostics[kind].update(count_unit="memberships", levels=cycle_summary(conn))
     result = {
         "scanned_at": store.get_meta(conn, "scanned_at"),
         "nodes": store.counts_by_display_kind(conn),
@@ -749,7 +755,12 @@ def status(conn, args):
         print(f"  {kind}: {count}")
     print("diagnostics:" + ("" if diagnostics else " none"))
     for kind, d in diagnostics.items():
-        print(f"  {kind}: {d['count']}")
+        label = "cycle memberships" if kind == "cycle" else kind
+        print(f"  {label}: {d['count']}")
+        if kind == "cycle":
+            from cbi.graph import CYCLE_LABELS
+            for level, counts in d["levels"].items():
+                print(f"    {CYCLE_LABELS[level]}: {counts['scc_count']} ({counts['membership_count']} memberships)")
         for e in d["examples"]:
             print(f"    {e['path'] or e['node_id']}" + (f": {e['detail'].splitlines()[0]}" if e["detail"] else ""))
     return 0
