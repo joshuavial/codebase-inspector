@@ -399,3 +399,42 @@ def test_ref_scan_loads_committed_concepts(make_repo, monkeypatch, capsys):
     assert (root / ".cbi/answers.jsonl").read_bytes() == worktree_answers
     assert team.team_dir(home) is None
     assert "reused" in scan_ref(capsys, committed)[1]
+
+
+def test_ref_upgrade_rebuilds_for_committed_structure_and_answers(make_repo, monkeypatch, capsys):
+    from cbi import cli, tasks
+
+    source = "def run():\n    return 1\n"
+    structure = {"deployables": [{"name": "runner", "entry_points": ["core.py"]}], "packages": []}
+    row = {"kind": "summarise-files", "key": files.blob_id(source.encode()),
+           "protocol": tasks.PROTOCOL_VERSION, "answer": "Committed core summary."}
+    root = make_repo({"core.py": source, ".cbi/structure.json": json.dumps(structure),
+                      ".cbi/team.toml": team.TEMPLATE, ".cbi/answers.jsonl": json.dumps(row) + "\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    real_run = subprocess.run
+
+    def legacy_run(argv, *args, **kwargs):
+        if argv[:3] == ["git", "cat-file", "blob"] and ":.cbi/" in argv[3]:
+            return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"missing")
+        return real_run(argv, *args, **kwargs)
+
+    # Reproduce a pre-upgrade ref model that never saw the committed judgement.
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.subprocess, "run", legacy_run)
+        sha, _ = scan_ref(capsys, "HEAD")
+    home = root / ".cbi/refs" / sha
+    with sqlite3.connect(home / "model.db") as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'ref_judgement'")
+        assert conn.execute("SELECT summary FROM nodes WHERE path = 'core.py' AND kind = 'file'").fetchone() == (None,)
+    conn.close()
+
+    _sha, output = scan_ref(capsys, "HEAD")
+    assert "scanned" in output and "reused" not in output
+    with sqlite3.connect(home / "model.db") as conn:
+        assert conn.execute("SELECT name FROM nodes WHERE kind = 'deployable'").fetchall() == [("runner",)]
+        assert conn.execute("SELECT summary FROM nodes WHERE path = 'core.py' AND kind = 'file'").fetchone() == ("Committed core summary.",)
+    conn.close()
+    assert not (home / "concepts.json").exists()
+    assert not (home / "screens.json").exists()
+    assert "reused" in scan_ref(capsys, "HEAD")[1]

@@ -1,5 +1,6 @@
 """SQLite model store: schema, version check and the queries scan needs."""
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -231,8 +232,15 @@ def retry_write(conn, fn, attempts=8):
             delay = min(delay * 2, 0.4)
 
 
-def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None):
-    """True when a commit model still matches its parser, ignore file and projections."""
+def ref_judgement(structure_text, team_text, answers_text):
+    """Versioned provenance for ref inputs not covered by the projection metadata."""
+    inputs = json.dumps([1, structure_text, team_text, answers_text], ensure_ascii=False)
+    return hashlib.sha256(inputs.encode()).hexdigest()
+
+
+def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None,
+                 *, structure_text=None, team_text=None, answers_text=None):
+    """True when a ref model matches every judgement input and has current provenance."""
     if not Path(path).exists():
         return False
     try:
@@ -253,6 +261,7 @@ def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_
         and meta.get("ignore") == ignore_hash
         and meta.get("concepts_json", "") == (concepts_text or "")
         and meta.get("screens_json", "") == (screens_text or "")
+        and meta.get("ref_judgement") == ref_judgement(structure_text, team_text, answers_text)
     )
 
 
