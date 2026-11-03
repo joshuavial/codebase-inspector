@@ -388,17 +388,29 @@ function diffViewScope() {
   if (!diffActive()) return null;
   const raw = (view && view.scope) || "";
   if (raw === "all") return "all";
-  if (raw && raw !== "changed" && diffOverviewItems().some((item) => item.id === raw)) return raw;
+  if (raw && raw !== "changed" && diffConceptItems().some((item) => item.id === raw)) return raw;
   return "changed";
 }
 
-// One tab per ranked area when the labels fit on one desktop row with Changed and Full map.
-function diffAreaTabs(items) {
-  if (!Array.isArray(items)) return [];
-  const rows = items.filter((item) => item && item.id && item.id !== "all" && item.id !== "changed");
-  if (rows.length < 2 || rows.length > 10) return [];
-  const labels = rows.reduce((n, item) => n + String(item.name || item.id).length, "Changed".length + "Full map".length);
-  return labels > 160 ? [] : rows;
+function diffConceptItems() {
+  const rows = [];
+  const walk = (items) => { for (const item of items) { rows.push(item); walk(item.children || []); } };
+  walk(diffOverviewItems());
+  return rows;
+}
+
+function selectedChangeConcept() {
+  const items = diffConceptItems();
+  const symbol = view.sel && symById[view.sel];
+  const id = symbol ? symbol.leaf.id : (byId[view.sel] ? view.sel : view.focus);
+  if (id) {
+    const chain = [id, ...ancestors(id)];
+    for (const cid of chain) {
+      const item = items.find((row) => row.id === cid);
+      if (item) return item;
+    }
+  }
+  return items.find((row) => row.id === view.scope) || items[0] || null;
 }
 
 function paintDiffScope() {
@@ -410,7 +422,6 @@ function paintDiffScope() {
   const scope = diffViewScope();
   const tabs = [
     ["changed", "Changed"],
-    ...diffAreaTabs(diffOverviewItems()).map((item) => [item.id, item.name || item.id]),
     ["all", "Full map"],
   ];
   bar.replaceChildren(...tabs.map(([id, label]) => {
@@ -563,9 +574,88 @@ function changeSummary(parent, conceptId = null) {
 
 // ---------- comparison details ----------
 
+function changeCounts(item) {
+  const m = item.measures || {};
+  return `${(m.files || {}).total || 0} files · +${m.additions || 0} −${m.deletions || 0}`;
+}
+
+function changeState(item) {
+  return item.state_label || ({ added: "Added", removed: "Removed", moved: "Moved" }[item.state])
+    || (item.change_scope === "descendants" ? "Changes inside" : "Changed here");
+}
+
+function changeDisclosure(title, cls = "") {
+  const details = el("details", cls);
+  details.append(el("summary", "", title));
+  return details;
+}
+
+function inspectChangeEvidence(id, item, state) {
+  const symbol = symById[id];
+  if (symbol) return jump(symbol.leaf.id, id, { force: true });
+  if (state === "removed" && shownSide !== "base") {
+    return go(item.id, id, { side: "base", scope: item.id });
+  }
+  return jump(groupFocus(item) || view.focus, id, { force: true });
+}
+
+function changeEvidence(parent, item) {
+  const modules = item.own_modules || item.modules || [];
+  const evidence = changeDisclosure("Evidence", "change-evidence");
+  for (const module of modules) {
+    const mod = changeDisclosure(`${module.name} · ${changeCounts(module)}`);
+    const production = (module.files || []).filter((file) => !file.is_test);
+    const tests = (module.files || []).filter((file) => file.is_test);
+    const addFiles = (target, files) => {
+      for (const file of files) {
+        const group = changeDisclosure(`${file.name} · ${changeState(file)}`);
+        group.append(el("p", "path", file.path));
+        if (file.old_path && file.old_path !== file.path) group.append(el("p", "path", `Moved from ${file.old_path}`));
+        for (const symbol of file.symbols || []) {
+          const row = el("div", "change-symbol");
+          row.append(link(`${symbol.name} — ${symbol.verb || changeState(symbol)}`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+          if (symbol.untested) row.append(el("span", "test-gap", "No static test link"));
+          group.append(row);
+        }
+        if (!(file.symbols || []).length) group.append(link("Inspect file", () => inspectChangeEvidence(file.id, item, file.state)));
+        target.append(group);
+      }
+    };
+    addFiles(mod, production);
+    if (tests.length) { const testGroup = changeDisclosure(`Tests (${tests.length})`); addFiles(testGroup, tests); mod.append(testGroup); }
+    evidence.append(mod);
+  }
+  for (const child of item.children || []) {
+    evidence.append(link(`${child.name} — ${changeState(child)} · inspect evidence`, () => setDiffScope(child.id)));
+  }
+  for (const move of item.moves || []) {
+    const row = el("p", "move-evidence");
+    row.append(`Moved: ${move.path || "code"} · `,
+      link(move.from_name || move.from, () => setDiffScope(move.from)), " → ",
+      link(move.to_name || move.to, () => setDiffScope(move.to)));
+    evidence.append(row);
+  }
+  const groups = ((DIFF.changes || {}).groups || []).filter((g) => g.id === item.id);
+  const records = groups.flatMap((g) => g.changes || []).filter((ch) => !ch.kind.startsWith("symbol-") && ch.kind !== "untested" && ch.kind !== "file-moved-concept");
+  if (records.length) {
+    const architecture = changeDisclosure("Architecture and test changes");
+    for (const ch of records) {
+      const target = changeTarget(ch, item);
+      const label = ch.kind.split("-").map((word, i) => i ? word : word[0].toUpperCase() + word.slice(1)).join(" ");
+      const row = el("p", "");
+      if (target) row.append(link(`${label}: ${ch.summary}`, () => jump(target.focus, target.sel, { force: true, extra: target.side ? { side: target.side } : {} })));
+      else row.append(`${label}: ${ch.summary}`);
+      architecture.append(row);
+    }
+    evidence.append(architecture);
+  }
+  if (!modules.length && !records.length && !(item.moves || []).length && !(item.children || []).length) evidence.append(el("p", "hint", "No changed code evidence; structural change only."));
+  parent.append(evidence);
+}
+
 function changesPanel() {
   const panel = document.getElementById("changes");
-  panel.hidden = !DIFF || (!!HISTORY && !historyCompare);
+  panel.hidden = !diffActive();
   if (panel.hidden) return;
   panel.replaceChildren();
   panel.append(el("h2", "", "Changes"));
@@ -573,27 +663,38 @@ function changesPanel() {
   const head = DIFF.head ? String(DIFF.head).slice(0, 12) : "head";
   panel.append(el("p", "hint", `${base} → ${head}`));
   changeSummary(panel);
-  const groups = (DIFF.changes && DIFF.changes.groups) || [];
-  if (!groups.length) { panel.append(el("p", "", "No architectural changes.")); return; }
-  for (const g of groups) {
-    const headEl = el("h3");
-    const focus = groupFocus(g);
-    if (focus) headEl.append(link(g.name, () => jump(focus, null, { force: true })));
-    else headEl.append(document.createTextNode(g.name));
-    panel.append(headEl);
-    changeSummary(panel, g.id);
+  const items = diffOverviewItems();
+  if (!items.length) { panel.append(el("p", "", "No architectural changes.")); return; }
+  const selected = selectedChangeConcept();
+  const index = el("nav", "change-index");
+  index.setAttribute("aria-label", "Changed concepts");
+  const renderItems = (rows, parent) => {
     const ul = el("ul");
-    for (const ch of g.changes) {
+    for (const item of rows) {
       const li = el("li");
-      const target = changeTarget(ch, g);
-      const text = ch.summary;
-      if (target) li.append(link(text, () => jump(target.focus, target.sel, { force: true, extra: target.side ? { side: target.side } : {} })));
-      else li.append(el("span", "", text));
-      li.append(el("div", "kind", ch.kind));
+      const button = el("button", "change-concept" + (selected && selected.id === item.id ? " selected" : ""));
+      button.type = "button";
+      button.dataset.concept = item.id;
+      button.setAttribute("aria-current", selected && selected.id === item.id ? "true" : "false");
+      button.append(el("strong", "", item.name), el("span", "change-state", changeState(item)), el("small", "", changeCounts(item)));
+      button.onclick = () => setDiffScope(item.id);
+      li.append(button);
+      if ((item.children || []).length) renderItems(item.children, li);
       ul.append(li);
     }
-    panel.append(ul);
+    parent.append(ul);
+  };
+  renderItems(items, index);
+  panel.append(index);
+  if (selected) {
+    const section = el("section", "selected-change");
+    section.append(el("h2", "", selected.name));
+    changeSummary(section, selected.id);
+    changeEvidence(section, selected);
+    panel.append(section);
   }
+  const active = panel.querySelector('[aria-current="true"]');
+  if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
 }
 
 function changeTarget(ch, g) {

@@ -716,16 +716,7 @@ async function main() {
     assert.strictEqual(app.diffViewScope(), "all");
     vm.runInContext('view = { scope: "ui", tab: "concept" };', app);
     assert.strictEqual(app.diffViewScope(), "ui");
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 8 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 8);
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 12 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 0);
-    assert.strictEqual(app.diffAreaTabs([{ id: "billing", name: "Billing" }, { id: "ui", name: "UI" }]).length, 2);
-    assert.strictEqual(app.diffAreaTabs([
-      { id: "a", name: "Release check and desktop update flow" },
-      { id: "b", name: "Static viewer comparison chrome" },
-      { id: "c", name: "Command line history replay" },
-      { id: "d", name: "Architecture history judgement tasks" },
-      { id: "e", name: "Desktop shell update check banner" },
-    ]).length, 0);
+    assert.strictEqual(typeof app.diffAreaTabs, "undefined", "concept navigation lives in Changes only");
     vm.runInContext('view = { scope: "", tab: "concept" }; SYMBOL_MARK.set("fn", "changed");', app);
     const narrowed = app.narrowLeaf({
       id: "ui",

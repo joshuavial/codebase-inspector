@@ -145,6 +145,19 @@ Use option C as the default overview, with option A as a Map toggle. Do not make
 
 The ranked overview answers the reviewer's first questions directly and transfers to every CBI output. Its inline local maps keep the part of CodeSee's approach that helps: changed nodes, their direct context and no unrelated graph. The changed-concepts map remains useful when a reviewer wants spatial orientation. A treemap can be reconsidered after the hierarchy and churn data have been used, but it does not solve the need to explain why a change matters and it makes relationships secondary.
 
+## Current comparison reading contract
+
+This section governs the comparison viewer and supersedes conflicting sketches and delivery proposals below. The Changes reading column and local diagram form one view on desktop and at 390px. A screenshot must explain the conceptual change, affected concepts and their states, the selected concept's meaning and uncertainty, review priorities, and where to find code evidence. Essential information must be visible text rather than hover content.
+
+1. Put `summaries.overall` first, above the concept index. Use accepted `summaries.concepts[id]` for the selected concept before its evidence, beside its picture. Keep that explanation while inspecting a symbol. Each narrative explains what changed, why it matters, affected callers/users and what remains uncertain. Label authored interpretation as an agent summary. Pending, unavailable or stale answers show an explicit pending line and deterministic counts; never substitute the standing concept description. Standing descriptions belong only in “About this concept.”
+2. Changes is the sole concept navigator, using ranked `overview.items` identities and nested changed concepts in the same hierarchy and order as the map. Show human names and explicit states: “Changed here”, “Changes inside”, “Added”, “Removed” and “Moved”. Distinguish direct edits from descendant rollups and ownership uncertainty from lifecycle state. Do not infer concept addition merely because every changed file was added. Keep unowned changes visible.
+3. Default-close Evidence → modules → files → symbols. Use short names and human verbs (“Body changed”, “Signature changed”, “Added”, “Removed”, “Moved”), with paths secondary. Separate test evidence and flag missing static test links without claiming absent coverage. Deduplicate move evidence and retain navigation from both former and current concepts.
+4. Concept selection synchronises the map, explanation and highlighted/revealed index entry. Symbol inspection preserves the selected concept. Other concepts remain a compact index. Remove duplicate per-concept tabs; retain Changed and Full map scope controls.
+5. Explain review signals with evidence: changed integrations/relationships and their direction, ownership moves, removed tests, missing static test links and provisional ownership. Separate observed relationship changes from possible downstream context. Counts and adjacency do not establish severity; risk remains unknown unless an accepted explanation supports it. Evidence must be navigable.
+6. Emphasise changed concepts and relationships with text and a dedicated change palette. Show removed items and distinguish parent rollups. Unchanged context is optional, labelled, and limited to direct neighbours. Fit the diagram on navigation. Do not silently replace an empty changed view with the full map.
+7. Keep the reading column usable alongside the diagram, and stack it visibly before the diagram on narrow screens. Collapse the full legend initially. Put layout diagnostics outside the drawing. Demote snapshot controls and disclose that Base is an approximate reconstruction before presenting it as a prior state.
+8. Name Changes and diagram regions; expose selection, pressed and disclosure states. Interactive SVG nodes remain accessible controls and include change state in accessible names. Provide focus equivalents for hover and visible keyboard focus. Colour always has a text or shape counterpart.
+
 ## What the user sees
 
 ### Level 0: change overview
@@ -169,7 +182,7 @@ Context for Release check
 Enter open   N/P next change   Esc back   / find
 ```
 
-The factual line under a card uses existing concept summaries and diff facts. It names added or removed responsibility, changed integration points, relationship changes and untested production code. The optional `summarise-change` narrative sits once above the cards and is labelled as an agent summary.
+The factual line under a card uses diff facts. It names added or removed responsibility, changed integration points, relationship changes and untested production code. The optional `summarise-change` narrative sits once above the cards and is labelled as an agent summary.
 
 ### Level 1: concept
 
@@ -340,7 +353,7 @@ One build-time projection produces the hierarchy and measures for all outputs. I
 
 Viewer and desktop app:
 
-- `cbi build --compare` opens at level 0 in List mode.
+- `cbi build --compare` opens with the Changes reading column and changed-first local map.
 - The existing Changes panel is replaced by the level navigation. It does not coexist with another exhaustive list.
 - Copy for agent includes the selected level's compact overview and the exact drill command.
 - The current full concept comparison remains under Map, with the contextual filtering above.
@@ -357,7 +370,7 @@ Viewer and desktop app:
 
 ### Viewer
 
-- O6. Open comparisons on the ranked level 0 overview with List and Map modes.
+- O6. Open comparisons with the ranked concept index, summary and changed-first diagram.
 - O7. Support every drill level and sketch above with local relationship context only.
 - O8. Support click, keyboard, URL history, side switching and two-way navigation as specified above.
 - O9. Preserve test, coverage and result overlays. At overview levels they colour the test measure, not the churn measure.
@@ -399,7 +412,7 @@ Each slice is useful and testable on the update-check comparison before the next
 
 - Code correctness, style or security review.
 - Comments, approvals or viewed-file state.
-- An agent-generated narrative by default.
+- Generating an answer inside the viewer; it displays accepted comparison answers.
 - Comparing more than two versions.
 - Replacing the normal, non-comparison concept map.
 - A treemap in this increment.

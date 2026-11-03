@@ -3,6 +3,8 @@
 import json
 import subprocess
 
+import pytest
+
 from cbi import change_overview, diff
 from test_diff import _concept, _concepts, commit_tree, run, scan_into
 
@@ -129,3 +131,136 @@ def test_binary_counts_as_one_changed_file(make_repo, tmp_path):
     stats = change_overview.git_line_stats(root, base, sha(root))
     measure = change_overview._measure(binary=1 if stats["logo.bin"]["binary"] else 0)
     assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary")
+
+
+def test_nested_index_distinguishes_rollups_and_preserves_evidence_verbs(
+        make_repo, monkeypatch, tmp_path, capsys):
+    files = {
+        "src/engine.ts": "export function compute() { return 1; }\n",
+        "src/engine.test.ts": 'import { compute } from "./engine";\ntest("computes", () => compute());\n',
+        "src/stable.ts": "export const stable = 1;\n",
+    }
+    root = make_repo(files, name="nested-index")
+    monkeypatch.chdir(root)
+    leaf = _concept("engine", "Computation", ["src/engine.ts", "src/engine.test.ts", "src/stable.ts"])
+    document = _concepts([{"id": "platform", "name": "Platform", "summary": "Contains services.",
+                           "role": "core", "children": [leaf]}], [], [])
+    scan_into(capsys, tmp_path / "base", document)
+    commit_tree(root, {**files, "src/engine.ts": files["src/engine.ts"].replace("return 1", "return 2"),
+                       "src/engine.test.ts": files["src/engine.test.ts"].replace('"computes"', '"computes again"')})
+    scan_into(capsys, tmp_path / "head", document)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        [parent] = diff.compare(base, head)["overview"]["items"]
+    finally:
+        base.close()
+        head.close()
+    assert parent["state_label"] == "Changes inside"
+    assert parent["change_scope"] == "descendants"
+    assert parent["own_modules"] == []
+    [child] = parent["children"]
+    assert child["id"] == "engine" and child["state_label"] == "Changed here"
+    assert child["change_scope"] == "direct"
+    files = [file for module in child["own_modules"] for file in module["files"]]
+    assert {f["path"] for f in files} == {"src/engine.ts", "src/engine.test.ts"}
+    assert {f["owner_id"] for f in files} == {"engine"}
+    assert next(f for f in files if f["path"].endswith("test.ts"))["is_test"]
+    [symbol] = next(f for f in files if f["path"] == "src/engine.ts")["symbols"]
+    assert symbol["verb"] == "Body changed"
+    assert len([f for module in parent["modules"] for f in module["files"]]) == 2
+
+
+def test_added_file_does_not_make_existing_concept_added(make_repo, monkeypatch, tmp_path, capsys):
+    files = {"src/stable.ts": "export function stable() { return 1; }\n"}
+    root = make_repo(files, name="existing-concept")
+    monkeypatch.chdir(root)
+    before = _concepts([_concept("engine", "Computation", ["src/stable.ts"])], [], [])
+    after = _concepts([_concept("engine", "Computation", ["src/stable.ts", "src/new.ts"])], [], [])
+    scan_into(capsys, tmp_path / "base", before)
+    commit_tree(root, {**files, "src/new.ts": "export function fresh() { return 2; }\n"})
+    scan_into(capsys, tmp_path / "head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        [item] = diff.compare(base, head)["overview"]["items"]
+    finally:
+        base.close()
+        head.close()
+    assert item["state"] == "changed"
+    assert item["state_label"] == "Changed here"
+
+
+def test_ownership_move_is_one_reference_reachable_from_both_concepts(
+        make_repo, monkeypatch, tmp_path, capsys):
+    files = {f"src/{name}.ts": f"export function {name}() {{ return {number}; }}\n"
+             for number, name in enumerate(("left", "right", "transfer"), 1)}
+    root = make_repo(files, name="ownership-move")
+    monkeypatch.chdir(root)
+    before = _concepts([_concept("left", "Producer", ["src/left.ts", "src/transfer.ts"]),
+                        _concept("right", "Consumer", ["src/right.ts"])], [], [])
+    after = _concepts([_concept("left", "Producer", ["src/left.ts"]),
+                       _concept("right", "Consumer", ["src/right.ts", "src/transfer.ts"])], [], [])
+    scan_into(capsys, tmp_path / "base", before)
+    scan_into(capsys, tmp_path / "head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        items = diff.compare(base, head)["overview"]["items"]
+    finally:
+        base.close()
+        head.close()
+    assert {item["id"] for item in items} == {"left", "right"}
+    assert all(item["state_label"] == "Moved" for item in items)
+    assert all(item["modules"] == [] for item in items)
+    [first], [second] = [item["moves"] for item in items]
+    assert first == second
+    assert first["from_name"] == "Producer" and first["to_name"] == "Consumer"
+    assert first["path"] == "src/transfer.ts" and first["target_id"].endswith(":src/transfer.ts")
+
+
+@pytest.mark.parametrize("operation", ["split", "merged"])
+def test_split_merge_with_unchanged_source_lists_every_concept_participant(
+        make_repo, monkeypatch, tmp_path, capsys, operation):
+    files = {f"src/{name}.ts": f"export function {name}() {{ return {number}; }}\n"
+             for number, name in enumerate(("first", "second"), 1)}
+    root = make_repo(files, name="split-index")
+    monkeypatch.chdir(root)
+    before = _concepts([_concept("whole", "Whole", list(files))], [], [])
+    after = _concepts([_concept("first", "First part", ["src/first.ts"]),
+                       _concept("second", "Second part", ["src/second.ts"])], [], [])
+    if operation == "merged":
+        before, after = after, before
+    scan_into(capsys, tmp_path / "base", before)
+    scan_into(capsys, tmp_path / "head", after)
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        items = {item["id"]: item for item in diff.compare(base, head)["overview"]["items"]}
+    finally:
+        base.close()
+        head.close()
+    assert set(items) == {"whole", "first", "second"}
+    assert items["whole"]["state_label"] == ("Removed" if operation == "split" else "Added")
+    assert items["first"]["state_label"] == items["second"]["state_label"] == ("Added" if operation == "split" else "Removed")
+    assert all(item["modules"] == [] for item in items.values())
+
+
+def test_reparented_change_retains_both_ancestor_rollups(make_repo, monkeypatch, tmp_path, capsys):
+    root = make_repo({"src/engine.ts": "export function compute() { return 1; }\n"}, name="reparent-index")
+    monkeypatch.chdir(root)
+    def branch(cid, children):
+        return {"id": cid, "name": cid.title(), "summary": "Groups responsibilities.",
+                "role": "core", "children": children}
+    def document(previous):
+        leaf = _concept("engine", "Earlier label" if previous else "Current label", ["src/engine.ts"])
+        return _concepts([branch("root", [branch("earlier", [leaf] if previous else []),
+                                           branch("later", [] if previous else [leaf])])], [], [])
+    scan_into(capsys, tmp_path / "base", document(True))
+    scan_into(capsys, tmp_path / "head", document(False))
+    base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "head")
+    try:
+        [item] = diff.compare(base, head)["overview"]["items"]
+    finally:
+        base.close()
+        head.close()
+    assert {child["id"] for child in item["children"]} == {"earlier", "later"}
+    assert all(child["state_label"] == "Changes inside" for child in item["children"])
+    assert next(child for child in item["children"] if child["id"] == "earlier")["children"] == []
+    assert next(child for child in item["children"] if child["id"] == "later")["children"][0]["id"] == "engine"
