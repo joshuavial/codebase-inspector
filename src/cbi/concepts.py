@@ -665,8 +665,10 @@ def refresh(conn, out=None, root=None, previous=None):
     files = [f for f in tracked if f["role"] in ("code", "test")]
     pairs = _pairs(conn, files)
     digest = _input_hash(files, pairs)
-    cached = None if team.answer_superseded(out, "define-concepts", digest) else _cached(conn, digest)
     committed = team.committed_answer(out, "define-concepts", digest, tasks.PROTOCOL_VERSION)
+    cached = None
+    if not team.answer_superseded(out, "define-concepts", digest):
+        cached = committed if committed is not None else _cached(conn, digest)
     previous_data = _document(previous)
     if team.committed_answers_changed(conn, out) and isinstance(committed, dict) \
             and previous_data is not None and committed != previous_data \
@@ -687,7 +689,8 @@ def refresh(conn, out=None, root=None, previous=None):
         _save_snapshot(conn, tracked, cached)
         data = cached
     review, removed = _classify(conn, tracked, data)
-    state = "done" if data is not None and not review and not removed else "open"
+    conflicted = bool(team.answer_conflicts(out, "define-concepts"))
+    state = "done" if data is not None and not review and not removed and not conflicted else "open"
     conn.execute(
         "INSERT INTO tasks (id, kind, node_id, input_hash, state, depends_on, inputs) "
         "VALUES (?, 'define-concepts', ?, ?, ?, '[]', ?) "
@@ -711,7 +714,8 @@ def accept(conn, task, answer, out, root=None):
     text = json.dumps(body, indent=2) + "\n"
     current = (out / "concepts.json").read_text() if (out / "concepts.json").exists() else None
     if (_cached(conn, task["input_hash"]) == body and current == text and not warnings
-            and not team.answer_superseded(out, "define-concepts", task["input_hash"])):
+            and not team.answer_superseded(out, "define-concepts", task["input_hash"])
+            and not team.answer_conflicts(out, "define-concepts")):
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
@@ -735,6 +739,7 @@ def accept(conn, task, answer, out, root=None):
 
 def brief_body(conn, task):
     """The define-concepts inputs: structure, the files to assign, pairs, and the current map."""
+    from cbi import team
     workspace = _workspace(conn) or {"id": task["node_id"], "name": "", "summary": None}
     tracked = _tracked_files(conn)
     files = [f for f in tracked if f["role"] in ("code", "test")]
@@ -768,6 +773,10 @@ def brief_body(conn, task):
     for name, attrs in conn.execute("SELECT name, attrs FROM nodes WHERE kind = 'env' ORDER BY name"):
         attrs = json.loads(attrs or "{}")
         env.append({"name": name, "default": attrs.get("default"), "declared_in": attrs.get("declared_in")})
+    conflicts = [row for revision in team._answer_revisions(conn).get("define-concepts", {}).values()
+                 for row in revision.get("conflicts", [])]
+    conflict_brief = ({"conflicting_acceptances": [row["acceptance_id"] for row in conflicts],
+                       "conflict_source": "answers.jsonl"} if conflicts else {})
     return {
         "checks": CHECKS,
         "workspace": workspace,
@@ -779,6 +788,7 @@ def brief_body(conn, task):
         "concepts": data,
         "removed": removed,
         "rescan": data is not None,
+        **conflict_brief,
     }
 
 
@@ -804,6 +814,10 @@ def format_brief(b):
     lines += _part_line(b)
     lines += ["", b["instructions"], "", "## Checks"]
     lines += [f"- {check}" for check in b["checks"]]
+    if b.get("conflicting_acceptances"):
+        lines += ["", "## Concurrent accepted answers",
+                  f"Review {b['conflict_source']} and submit one reviewed answer to resolve:",
+                  *[f"- {identity}" for identity in b["conflicting_acceptances"]]]
     summary = node.get("summary")
     lines += ["", "## Workspace", f"{node.get('name')}: {summary}" if summary else f"{node.get('name')}: (no summary yet)"]
     for heading, key in (("Deployables", "deployables"), ("Packages", "packages")):

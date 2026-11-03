@@ -36,8 +36,9 @@ invalidates the previous task hash.
 
 Explicitly accepting a replacement concept map retires the older concept input
 keys for that repository. Team answer rows retain a `superseded_by` marker,
-which survives a fresh cache import and takes precedence over a duplicate live
-row at the same or an older acceptance generation in a union merge. Retired keys are removed from the attached cache and are
+which survives a fresh cache import. Causal retirement records name the
+observed acceptance identities they supersede, rather than retiring an entire
+input key forever. Retired keys are removed from the attached cache and are
 never eligible for automatic restoration, even if source later returns to its
 old content. A new explicit submit may accept that input again. Historical
 file and group summaries remain reusable by content as before.
@@ -50,19 +51,37 @@ The marker remains authoritative even when the row reappears. An explicit new
 submission may still accept a reviewed answer for that input.
 
 
-## Acceptance generations (2026-11-03)
+## Acceptance identities and concurrent edits (2026-11-03)
 
-Each explicit concept acceptance records a `generation` greater than every
-previously observed generation for that task kind. It assigns that generation
-to the accepted row and to the older keys it supersedes. Union import selects
-the highest generation for each kind/key pair. A retirement marker wins a tie;
-unversioned legacy rows count as generation zero. A later explicit acceptance
-therefore beats an older retirement marker regardless of line order, while a
-stale live row cannot erase a retirement at the same generation.
+Each explicit concept acceptance gets a unique `acceptance_id`. Its
+`retired_acceptances` context names only acceptance identities already observed
+for that input; replacement records likewise retire only observed identities
+for the other inputs. Union import combines those contexts. An unseen
+concurrent acceptance stays live even if another branch has a higher numeric
+`generation`. Generations remain useful for legacy records and diagnostics,
+but do not establish causality between independent branches.
 
-Import and export retain generation metadata in the model and team file. The
-model also remembers the digest of each accepted answer, so an unrelated cache
-write cannot acquire a newer acceptance generation merely by being exported.
-Reaccepting an input whose cached answer and projection already match still
-advances its generation when its key is marked retired. Content-keyed file and
-group summary rows keep their existing unversioned behavior.
+Concurrent acceptances for different inputs are both retained. If multiple
+live identities remain for the same input, their complete records are retained
+in `conflicts`; none is imported or restored automatically. `cbi check` reports
+the answer file, task kind and key, and the concept task stays open. Its brief
+identifies the conflicting acceptance IDs in `answers.jsonl`. An explicit
+reviewed submission retires every observed conflicting identity and resolves
+the conflict without relying on line order.
+
+Unversioned legacy rows keep their previous generation ordering until they
+interact with causal records; stable identities derived from their answer
+content allow a new acceptance to supersede those observed records. Import and
+export preserve causal context in both model metadata and the team file. The
+model retains answer digests so cache writes cannot impersonate an acceptance,
+and unversioned cache exports cannot overwrite causal team history.
+
+
+Secret checks inspect every raw conflict answer body, including alternatives
+that are already causally resolved. Acceptance IDs and retirement metadata are
+not answer text and are excluded from token heuristics.
+
+
+When restoring a missing concept document, an unambiguous committed live answer
+is authoritative over the shared cache. A later cache write at the same input
+hash cannot replace an explicitly reviewed acceptance with an older body.

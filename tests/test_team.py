@@ -635,3 +635,100 @@ def test_reaccepted_concept_answer_survives_older_merged_tombstone(make_repo, mo
         team.sync(conn, out)
     conn.close()
     assert team._parse(path.read_text())[old_key] == accepted
+    (out / "concepts.json").unlink()
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        concepts.apply(conn, None)
+        concepts.refresh(conn, out, root)
+    conn.close()
+    assert json.loads((out / "concepts.json").read_text()) == accepted["answer"]
+
+
+def _accept_document_key(conn, out, key, summary):
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                     (key, json.dumps({"summary": summary})))
+        team.supersede(conn, out, "define-concepts", key)
+
+
+def _branched_document_answers(make_repo, tmp_path, branch_keys, higher_generation=False):
+    root = make_repo({"core.py": "def run():\n    return 1\n"}, name="concurrent-maps")
+    out = root / ".cbi"
+    out.mkdir()
+    (out / "team.toml").write_text(team.TEMPLATE)
+    conn = store.open_db(out / "model.db")
+    tasks.attach_cache(conn)
+    _accept_document_key(conn, out, "input-a", "The first map.")
+    _accept_document_key(conn, out, "input-b", "The second map.")
+    baseline = (out / "answers.jsonl").read_text()
+    branches = []
+    for index, key in enumerate(branch_keys):
+        branch = tmp_path / f"branch-{index}"
+        branch.mkdir()
+        (branch / "team.toml").write_text(team.TEMPLATE)
+        (branch / "answers.jsonl").write_text(baseline)
+        side = store.open_db(branch / "model.db")
+        tasks.attach_cache(side)
+        if higher_generation and index == 1:
+            _accept_document_key(side, branch, key, "An intermediate reviewed map.")
+        _accept_document_key(side, branch, key, f"The reviewed map from branch {index}.")
+        branches.append((branch / "answers.jsonl").read_text())
+        side.close()
+    return root, out, conn, branches
+
+
+@pytest.mark.parametrize("higher_generation", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_concurrent_acceptances_are_not_retired_by_unseen_branch_events(make_repo, tmp_path, higher_generation, reverse):
+    _root, out, conn, branches = _branched_document_answers(
+        make_repo, tmp_path, ["input-a", "input-b"], higher_generation)
+    try:
+        for left, right in [branches[::-1] if reverse else branches]:
+            (out / "answers.jsonl").write_text(left + right)
+            assert team.committed_answer(out, "define-concepts", "input-a", tasks.PROTOCOL_VERSION) == {
+                "summary": "The reviewed map from branch 0.",
+            }
+            assert team.committed_answer(out, "define-concepts", "input-b", tasks.PROTOCOL_VERSION) == {
+                "summary": "The reviewed map from branch 1.",
+            }
+            with conn:
+                team.import_answers(conn, out)
+                team.sync(conn, out)
+            assert all(not row.get("superseded_by") for row in team._parse((out / "answers.jsonl").read_text()).values())
+    finally:
+        conn.close()
+
+
+def test_same_key_concurrent_acceptances_are_preserved_and_reported(make_repo, tmp_path):
+    from cbi import check
+
+    root, out, conn, branches = _branched_document_answers(make_repo, tmp_path, ["input-b", "input-b"])
+    key = ("define-concepts", "input-b")
+    try:
+        for left, right in (branches, branches[::-1]):
+            (out / "answers.jsonl").write_text(left + right)
+            row = team._parse((out / "answers.jsonl").read_text())[key]
+            assert {candidate["answer"]["summary"] for candidate in row["conflicts"]} == {
+                "The reviewed map from branch 0.", "The reviewed map from branch 1.",
+            }
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) is None
+            assert team.answer_superseded(out, *key)
+            with conn:
+                team.import_answers(conn, out)
+                assert conn.execute("SELECT 1 FROM cache.summary_answers WHERE input_hash = ?", (key[1],)).fetchone() is None
+                findings = check._stale_findings(conn, root, out)
+                assert any(item["file"] == ".cbi/answers.jsonl" and "conflicting" in item["message"]
+                           and "define-concepts" in item["message"] and "input-b" in item["message"] for item in findings)
+                team.sync(conn, out)
+            assert team._parse((out / "answers.jsonl").read_text())[key]["conflicts"] == row["conflicts"]
+            _accept_document_key(conn, out, key[1], "The explicitly resolved map.")
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
+            # Previously merged alternatives cannot undo their explicit resolution.
+            resolved = (out / "answers.jsonl").read_text()
+            (out / "answers.jsonl").write_text(resolved + left + right)
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
+            team._store(out, {key: team._canon(*key, tasks.PROTOCOL_VERSION, {"summary": "A stale cache copy."})})
+            assert team.committed_answer(out, *key, tasks.PROTOCOL_VERSION) == {"summary": "The explicitly resolved map."}
+    finally:
+        conn.close()

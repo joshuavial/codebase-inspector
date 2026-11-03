@@ -14,6 +14,7 @@ import os
 import sqlite3
 import subprocess
 import tomllib
+import uuid
 from pathlib import Path
 
 from cbi import files, store
@@ -113,7 +114,7 @@ def import_answers(conn, out):
     rows = _parse(path.read_text())
     _remember_revisions(conn, rows.values())
     for row in rows.values():
-        if row.get("superseded_by"):
+        if row.get("superseded_by") or row.get("conflicts"):
             conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (row["key"],))
             continue
         if row["protocol"] != tasks.PROTOCOL_VERSION:
@@ -139,28 +140,36 @@ def import_answers(conn, out):
     return applied
 
 
-def committed_answer(out, kind, key, protocol):
-    """The current committed answer for a task key, or None.
-
-    This is the same generation-aware view import_answers writes into the shared
-    cache. Callers use it when accepting the row also updates model-local state.
-    """
+def _committed_row(out, kind, key):
     directory = team_dir(out)
     path = directory / ANSWERS_NAME if directory is not None else None
     if path is None or not path.is_file():
         return None
-    row = _parse(path.read_text()).get((kind, key))
-    return row["answer"] if row and not row.get("superseded_by") and row["protocol"] == protocol else None
+    return _parse(path.read_text()).get((kind, key))
+
+
+def committed_answer(out, kind, key, protocol):
+    """The unambiguous live answer for this task key, or None."""
+    row = _committed_row(out, kind, key)
+    return row["answer"] if (row and not row.get("superseded_by") and not row.get("conflicts")
+                             and row["protocol"] == protocol) else None
 
 
 def answer_superseded(out, kind, key):
-    """Whether this model's team history forbids automatically restoring a key."""
+    """Whether this model's history forbids automatically restoring a key."""
+    row = _committed_row(out, kind, key)
+    return bool(row and (row.get("superseded_by") or row.get("conflicts")))
+
+
+def answer_conflicts(out, kind, key=None):
+    if key is not None:
+        row = _committed_row(out, kind, key)
+        return row.get("conflicts", []) if row else []
     directory = team_dir(out)
     path = directory / ANSWERS_NAME if directory is not None else None
-    if path is None or not path.is_file():
-        return False
-    row = _parse(path.read_text()).get((kind, key))
-    return bool(row and row.get("superseded_by"))
+    rows = _parse(path.read_text()) if path is not None and path.is_file() else {}
+    return [candidate for (task_kind, _), row in rows.items() if task_kind == kind
+            for candidate in row.get("conflicts", [])]
 
 
 def committed_answers_changed(conn, out):
@@ -198,12 +207,23 @@ def supersede(conn, out, kind, key):
         + [_generation(row) for (task_kind, _), row in rows.items() if task_kind == kind]
     ) + 1
     revised = []
-    for old in previous - {key}:
+    retired_current = set()
+    for old in previous:
+        observed = rows.get((kind, old))
+        revision = known.get(old, {})
+        if observed is None and (revision.get("acceptance_id") or revision.get("conflicts")):
+            observed = {**_canon(kind, old, 0, {}), **revision}
+        targets = _retired_ids(observed) | set(_acceptance_candidates(observed)) if observed else set()
+        if old == key:
+            retired_current.update(targets)
+            continue
         conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (old,))
-        revision = {"kind": kind, "key": old, "generation": generation, "superseded_by": key}
-        revised.append(revision)
+        retired = {"kind": kind, "key": old, "generation": generation,
+                   "superseded_by": key, "retired_acceptances": sorted(targets)}
+        revised.append(retired)
         if (kind, old) in rows:
-            rows[(kind, old)].update({"generation": generation, "superseded_by": key})
+            rows[(kind, old)] = {**rows[(kind, old)], **retired}
+            rows[(kind, old)].pop("conflicts", None)
     from cbi import tasks
     accepted = conn.execute(
         "SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (key,)
@@ -211,7 +231,8 @@ def supersede(conn, out, kind, key):
     if accepted is None:
         raise ValueError("cannot accept an uncached document answer")
     rows[(kind, key)] = {**_canon(kind, key, tasks.PROTOCOL_VERSION, json.loads(accepted[0])),
-                         "generation": generation}
+                         "generation": generation, "acceptance_id": uuid.uuid4().hex,
+                         "retired_acceptances": sorted(retired_current)}
     revised.append(rows[(kind, key)])
     _remember_revisions(conn, revised)
     store.set_meta(conn, meta_key, json.dumps(sorted(previous | {key})))
@@ -390,14 +411,13 @@ def _collect(conn):
             continue
         if isinstance(answer, (dict, list)):
             revision = revisions.get(kind, {}).get(key, {})
-            if revision.get("superseded_by"):
+            if revision.get("superseded_by") or revision.get("conflicts"):
                 continue
             if (revision.get("generation")
                     and revision.get("answer_digest") != _answer_digest(answer)):
                 continue
             found[(kind, key)] = {**_canon(kind, key, protocol, answer),
-                                  **{name: revision[name] for name in ("generation", "superseded_by")
-                                     if name in revision}}
+                                  **{name: revision[name] for name in _REVISION_FIELDS if name in revision}}
     return found
 
 
@@ -412,7 +432,7 @@ def _remember_revisions(conn, rows):
     clock = json.loads(store.get_meta(conn, "answer_generation_clock") or "{}")
     for row in rows:
         kind, key = row["kind"], row["key"]
-        revision = {name: row[name] for name in ("generation", "superseded_by") if name in row}
+        revision = {name: row[name] for name in _REVISION_FIELDS if name in row}
         clock[kind] = max(clock.get(kind, 0), _generation(row))
         if revision and "answer" in row:
             revision["answer_digest"] = _answer_digest(row["answer"])
@@ -431,11 +451,60 @@ def _generation(row):
     return row.get("generation", 0)
 
 
+_REVISION_FIELDS = ("generation", "superseded_by", "acceptance_id", "retired_acceptances", "conflicts")
+
+
+def _legacy_acceptance_id(row):
+    value = [row["kind"], row["key"], row["protocol"], _answer_digest(row["answer"])]
+    return "legacy-" + _answer_digest(value)
+
+
+def _acceptance_candidates(row):
+    if not row:
+        return {}
+    if row.get("conflicts"):
+        return {candidate["acceptance_id"]: candidate for candidate in row["conflicts"]}
+    if "retired_acceptances" in row and not row.get("acceptance_id"):
+        return {}
+    candidate = {name: row[name] for name in ("kind", "key", "protocol", "answer", "generation") if name in row}
+    candidate["acceptance_id"] = row.get("acceptance_id") or _legacy_acceptance_id(row)
+    return {candidate["acceptance_id"]: candidate}
+
+
+def _retired_ids(row):
+    if not row:
+        return set()
+    retired = set(row.get("retired_acceptances", []))
+    if row.get("superseded_by") and not retired:
+        retired.update(_acceptance_candidates(row))
+    return retired
+
+
 def _prefer_row(current, candidate):
     if current is None:
         return candidate
-    rank = lambda row: (_generation(row), bool(row.get("superseded_by")))
-    return candidate if rank(candidate) >= rank(current) else current
+    causal = any(row.get("acceptance_id") or row.get("conflicts") or "retired_acceptances" in row
+                 for row in (current, candidate))
+    if not causal:
+        rank = lambda row: (_generation(row), bool(row.get("superseded_by")))
+        return candidate if rank(candidate) >= rank(current) else current
+    retired = _retired_ids(current) | _retired_ids(candidate)
+    choices = _acceptance_candidates(current)
+    choices.update(_acceptance_candidates(candidate))
+    live = [choices[key] for key in sorted(choices) if key not in retired]
+    if live:
+        row = dict(live[0])
+        if len(live) > 1:
+            row.pop("acceptance_id", None)
+            row["conflicts"] = live
+            row["generation"] = max(_generation(value) for value in live)
+        row["retired_acceptances"] = sorted(retired)
+        return row
+    row = dict(max((current, candidate), key=lambda item: (_generation(item), _answer_digest(item))))
+    row.pop("conflicts", None)
+    row["superseded_by"] = row.get("superseded_by") or "retired acceptance"
+    row["retired_acceptances"] = sorted(retired)
+    return row
 
 
 def _canon(kind, key, protocol, answer):
@@ -443,10 +512,10 @@ def _canon(kind, key, protocol, answer):
 
 
 def _parse(text):
-    """Valid rows keyed by (kind, key), ordered by observed generation.
+    """Merge records by acceptance identity and observed retirement targets.
 
-    A tombstone wins a generation tie, including unversioned legacy rows. A
-    later explicit acceptance can revive the key by advancing its generation.
+    Legacy rows without causal fields retain generation ordering. Concurrent
+    live identities at one input key are preserved as an explicit conflict.
     """
     rows = {}
     for line in text.splitlines():
@@ -463,7 +532,7 @@ def _parse(text):
     return rows
 
 
-def _valid(data):
+def _valid(data, allow_conflicts=True):
     if not isinstance(data, dict):
         return None
     kind, key, protocol, answer = (data.get("kind"), data.get("key"), data.get("protocol"), data.get("answer"))
@@ -479,6 +548,16 @@ def _valid(data):
         row["generation"] = generation
     if isinstance(data.get("superseded_by"), str) and data["superseded_by"]:
         row["superseded_by"] = data["superseded_by"]
+    if isinstance(data.get("acceptance_id"), str) and data["acceptance_id"]:
+        row["acceptance_id"] = data["acceptance_id"]
+    if isinstance(data.get("retired_acceptances"), list):
+        row["retired_acceptances"] = sorted({value for value in data["retired_acceptances"] if isinstance(value, str)})
+    if allow_conflicts and isinstance(data.get("conflicts"), list):
+        candidates = [_valid(value, allow_conflicts=False) for value in data["conflicts"]]
+        candidates = [value for value in candidates if value and value.get("acceptance_id")
+                      and (value["kind"], value["key"]) == (kind, key)]
+        if candidates:
+            row["conflicts"] = sorted(candidates, key=lambda value: value["acceptance_id"])
     return row
 
 
@@ -490,11 +569,15 @@ def _dump(rows):
 
 
 def _store(directory, rows):
-    """Union `rows` into answers.jsonl. Current rows replace the same kind and key. Returns (path, count, changed)."""
+    """Merge collected rows into answers.jsonl without inventing acceptance events."""
     path = Path(directory) / ANSWERS_NAME
     merged = _parse(path.read_text()) if path.is_file() else {}
     for key, row in rows.items():
-        merged[key] = _prefer_row(merged.get(key), row)
+        current = merged.get(key)
+        if (current and (current.get("acceptance_id") or current.get("conflicts") or "retired_acceptances" in current)
+                and not (row.get("acceptance_id") or row.get("conflicts") or "retired_acceptances" in row)):
+            continue  # an unversioned cache export is not a new acceptance event
+        merged[key] = _prefer_row(current, row)
     changed = _atomic(path, _dump(merged))
     return path, len(merged), changed
 

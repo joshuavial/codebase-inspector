@@ -1,7 +1,10 @@
 """cbi check: changed files, JSON checks, stale answers, secrets, warn mode."""
 
 import json
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from cbi import check, team
 from cbi.cli import main
@@ -285,3 +288,85 @@ def test_check_rejects_a_missing_cached_concepts_document(make_repo, monkeypatch
         assert conn.execute("SELECT count(*) FROM nodes WHERE kind = 'concept'").fetchone()[0] == 2
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("historical_input", [False, True])
+def test_concurrent_same_input_answers_fail_check_until_explicitly_resolved(make_repo, monkeypatch, capsys, tmp_path, historical_input):
+    from cbi import store, tasks
+
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="concurrent-review")
+    out = root / ".cbi"
+    path = out / "answers.jsonl"
+    baseline = path.read_text()
+    document = json.loads((out / "concepts.json").read_text())
+    conn = store.open_db(out / "model.db")
+    task_id, key = conn.execute("SELECT id, input_hash FROM tasks WHERE kind = 'define-concepts'").fetchone()
+    conn.close()
+    conflict_key = "historical-input" if historical_input else key
+    branches = []
+    for index in range(2):
+        branch = tmp_path / f"answer-branch-{index}"
+        branch.mkdir()
+        (branch / "team.toml").write_text(team.TEMPLATE)
+        (branch / "answers.jsonl").write_text(baseline)
+        conn = store.open_db(branch / "model.db")
+        tasks.attach_cache(conn)
+        body = {**document, "summary": f"The map reviewed on branch {index}."}
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
+                         (conflict_key, json.dumps(body)))
+            team.supersede(conn, branch, "define-concepts", conflict_key)
+        conn.close()
+        branches.append((branch / "answers.jsonl").read_text())
+    path.write_text("".join(branches))
+    code, output, err = run(capsys, "check")
+    assert code == 1, output + err
+    assert f"conflicting accepted answers for define-concepts {conflict_key}" in output
+    [task] = run_json(capsys, "tasks", "--kind", "define-concepts")
+    brief = run_json(capsys, "task", task["id"])
+    assert len(brief["conflicting_acceptances"]) == 2
+    code, text, err = run(capsys, "task", task["id"])
+    assert code == 0, err
+    assert "Concurrent accepted answers" in text and "answers.jsonl" in text
+    resolved = concepts_answer(brief)
+    resolved["summary"] = "The explicitly resolved application map."
+    assert submit(capsys, tmp_path, task_id, resolved)[0] == 0
+    code, output, err = run(capsys, "check")
+    assert code == 0, output + err
+
+
+def test_resolved_stale_conflict_payloads_are_checked_for_secrets(make_repo, monkeypatch, capsys, tmp_path):
+    root = prepared(make_repo, monkeypatch, capsys, tmp_path, name="conflict-payload")
+    out = root / ".cbi"
+    path = out / "answers.jsonl"
+    rows = team._parse(path.read_text())
+    accepted = next(row for row in rows.values() if row["kind"] == "define-concepts" and not row.get("superseded_by"))
+    key = (accepted["kind"], accepted["key"])
+    metadata_id = "ghp_" + "b" * 36
+    candidates = [{**team._canon(*key, accepted["protocol"], {**accepted["answer"], "summary": f"Old map {index}."}),
+                   "acceptance_id": identity, "generation": accepted["generation"] + 1}
+                  for index, identity in enumerate((metadata_id, "other-acceptance"))]
+    stale = {**team._canon(*key, accepted["protocol"], candidates[0]["answer"]),
+             "conflicts": candidates, "generation": accepted["generation"] + 1,
+             "retired_acceptances": accepted.get("retired_acceptances", []) + [accepted["acceptance_id"]]}
+    rows[key] = stale
+    path.write_text(team._dump(rows))
+    conn = sqlite3.connect(out / "model.db")
+    task_id = conn.execute("SELECT id FROM tasks WHERE kind = 'define-concepts'").fetchone()[0]
+    conn.close()
+    brief = run_json(capsys, "task", task_id)
+    resolved = concepts_answer(brief)
+    resolved["summary"] = "The safe reviewed map."
+    assert submit(capsys, tmp_path, task_id, resolved)[0] == 0
+    current = path.read_text()
+    path.write_text(current + json.dumps(stale) + "\n")
+    assert not team.answer_conflicts(out, *key)
+    code, output, err = run(capsys, "check")
+    assert code == 0, output + err  # acceptance identities are metadata, not answer text
+    stale["conflicts"][1]["answer"]["summary"] = "ghp_" + "a" * 36
+    path.write_text(current + json.dumps(stale) + "\n")
+    assert not team.answer_conflicts(out, *key)
+    code, output, err = run(capsys, "check")
+    assert code == 1, output + err
+    assert "answer looks like a github token" in output
+    assert "conflicting accepted answers" not in output

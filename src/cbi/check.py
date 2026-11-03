@@ -355,6 +355,12 @@ def _stale_findings(conn, root, out):
     have = team._parse(path.read_text()) if path.is_file() else {}
     found = []
     shown = _show(root, path)
+    for (kind, key), row in sorted(have.items()):
+        if row.get("conflicts"):
+            found.append(_finding(
+                "json", shown, f"conflicting accepted answers for {kind} {key}; submit a reviewed answer",
+                "conflicting answers",
+            ))
     for key, row in sorted(team._collect(conn).items()):
         current = have.get(key)
         if current is None:
@@ -386,10 +392,13 @@ def _secret_findings(conn, root, out):
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            answer = data.get("answer") if isinstance(data, dict) else None
             task_kind = data.get("kind") if isinstance(data, dict) else None
-            ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
-            kind = _answer_secret(answer, ignored)
+            kind = None
+            for answer in _record_answer_payloads(data):
+                ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
+                kind = _answer_secret(answer, ignored)
+                if kind:
+                    break
             if not kind:
                 continue
             key = (data.get("kind"), data.get("key"), kind)
@@ -410,6 +419,17 @@ def _secret_findings(conn, root, out):
             "secret",
         ))
     return found
+
+
+def _record_answer_payloads(record):
+    """All raw answer bodies, including alternatives a causal merge resolves."""
+    if not isinstance(record, dict):
+        return
+    yield record.get("answer")
+    conflicts = record.get("conflicts")
+    if isinstance(conflicts, list):
+        for candidate in conflicts:
+            yield from _record_answer_payloads(candidate)
 
 
 def _answer_secret(answer, ignored=()):
