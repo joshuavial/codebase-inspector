@@ -19,3 +19,11 @@ The log does not record a second option. It records the split: deterministic str
 ## Consequences
 
 `review.md` is useful before any agent runs. Files the base concepts do not own get a provisional owner, marked as provisional, and a `define-concepts` task opens for those files only. The facts and the narrative stay distinct sections, so a reader can see which sentences were measured. Comparing versions does not check out a branch or edit a working tree.
+
+## Amendment: grounded comparison paragraphs (2026-11-03)
+
+Comparison summaries now use the sibling `summarise-architecture-change` judgement task: one for the whole diff and one for each changed concept. This includes concepts whose changes appear only in the ranked file overview. cbi still never calls a model. The calling agent explains the change, its importance, affected callers/users and risk using only the diff facts and direct relationship context supplied in the brief. Unknown intent or runtime impact must stay unknown.
+
+Answers require symbol/file citations copied from the brief. Pure structural changes include ownership context; empty concepts without source are explicitly marked structural-only and permit structural references. Draft checks and submission reject references outside that evidence. This is a grounding boundary for references; it cannot mechanically prove prose claims. The shared answer cache uses both models' semantic hashes and the concept ID, so unchanged rebuilds reuse the answer and changes to either side open fresh work.
+
+Diff and review output and the comparison viewer consume the same `summaries` payload. An unanswered task shows `Summary pending: run cbi tasks`. The existing history `summarise-change` task remains supported.

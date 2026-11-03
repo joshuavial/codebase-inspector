@@ -16,7 +16,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from cbi import change_overview, files, store
+from cbi import change_overview, change_summaries, files, store
 
 HELP = """\
 Print the architectural changes between two models.
@@ -314,7 +314,7 @@ def compare_refs(base_conn, head_conn, root, base_ref, head_ref):
     base_sha, head_sha = files.resolve_commit(root, base_ref), files.resolve_commit(root, head_ref)
     result = compare(base_conn, head_conn, change_overview.git_line_stats(root, base_sha, head_sha))
     result["overview"].update({"base": base_sha, "head": head_sha})
-    return result
+    return change_summaries.enrich(base_conn, head_conn, result)
 
 
 def render(result, fmt="text", concept=None, module=None, file=None, symbol=None, detail=False):
@@ -325,13 +325,14 @@ def render(result, fmt="text", concept=None, module=None, file=None, symbol=None
             level, selected = change_overview.select(result, concept, module, file, symbol)
             shown = {**shown, "selection": {"level": level, "item": selected}}
         return json.dumps(shown, indent=2, sort_keys=True) + "\n"
+    summary_text = change_summaries.render(result, concept, markdown=fmt == "markdown")
     if not detail:
         return change_overview.render(
             result, markdown=fmt == "markdown", concept=concept, module=module, file=file, symbol=symbol,
-        )
+        ) + ("\n" + summary_text if summary_text and not any((module, file, symbol)) else "")
     if fmt == "markdown":
-        return _markdown(shown)
-    return _text(shown)
+        return summary_text + _markdown(shown)
+    return summary_text + _text(shown)
 
 
 # --- load -----------------------------------------------------------------------
@@ -1226,6 +1227,8 @@ def _filter(result, concept):
     out = {"grouping": result["grouping"], "groups": groups}
     if "overview" in result:
         out["overview"] = result["overview"]
+    if "summaries" in result:
+        out["summaries"] = result["summaries"]
     rows = [row for row in result.get("provisional") or [] if row.get("concept_id") == concept]
     if rows:
         out["provisional"] = rows

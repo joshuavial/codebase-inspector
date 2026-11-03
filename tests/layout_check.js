@@ -247,13 +247,13 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
-  // Entries that call each other (a fundsorter top level). ELK threw "fromIndex: 2 > toIndex: 1"
+  // Top-level entries that call each other. ELK threw "fromIndex: 2 > toIndex: 1"
   // while both ends of an edge were in its first layer.
   const entryIds = ["admin-ui", "api", "client-ui", "crawler", "platform", "public-ui", "workers"];
-  const kids = [...entryIds, "funding-engine", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
+  const kids = [...entryIds, "billing-core", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
   const calls = [["admin-ui", "api"], ["api", "crawler"], ["client-ui", "api"], ["public-ui", "api"], ["platform", "records"],
-    ["workers", "crawler"], ["workers", "funding-engine"], ["workers", "records"], ["funding-engine", "api"], ["platform", "api"],
-    ["records", "api"], ["workers", "api"], ["records", "crawler"], ["funding-engine", "records"], ["funding-engine", "platform"]]
+    ["workers", "crawler"], ["workers", "billing-core"], ["workers", "records"], ["billing-core", "api"], ["platform", "api"],
+    ["records", "api"], ["workers", "api"], ["records", "crawler"], ["billing-core", "records"], ["billing-core", "platform"]]
     .map(([a, b], i) => ({ id: "e" + i, a, b }));
   const first = app.firstTier(kids, calls);
   assert.deepStrictEqual([...first].sort(), ["admin-ui", "client-ui", "platform", "public-ui", "workers"]);

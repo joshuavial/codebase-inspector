@@ -292,10 +292,14 @@ def test_scanned_pair_covers_every_kind(make_repo, monkeypatch, tmp_path, capsys
     assert diff.render(result, "markdown").startswith("# Change overview\n")
     assert diff.render(result, "markdown", detail=True).startswith("# structural diff\n")
     code, out, err = run(capsys, "diff", "--base-model", str(base_out), "--head-model", str(head_out))
-    assert code == 0 and out == text and err == ""
+    assert code == 0 and out.startswith(text) and err == ""
+    assert "Summary pending: run cbi tasks" in out
     code, out, err = run(capsys, "diff", "--base-model", str(base_out / "model.db"),
                          "--head-model", str(head_out), "--format", "json")
-    assert code == 0 and out == rendered
+    assert code == 0
+    enriched = json.loads(out)
+    assert enriched.pop("summaries")["overall"]["state"] == "pending"
+    assert enriched == json.loads(rendered)
 
     data = json.loads(rendered)
     assert set(data) == {"grouping", "groups", "overview"}

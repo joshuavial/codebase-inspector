@@ -539,6 +539,30 @@ function groupFocus(g) {
   return node && !node.ext ? g.id : null;
 }
 
+// ---------- agent change summaries ----------
+
+function changeSummary(parent, conceptId = null) {
+  if (!DIFF || (HISTORY && !historyCompare)) return;
+  const changes = DIFF.changes || {};
+  const summaries = changes.summaries || {};
+  const concepts = summaries.concepts || {};
+  if (conceptId && !concepts[conceptId] && !(changes.groups || []).some((g) => g.id === conceptId)) return;
+  if (!conceptId && !summaries.overall && !(changes.groups || []).length) return;
+  const answer = conceptId ? concepts[conceptId] : summaries.overall;
+  const section = el("section", "change-summary");
+  if (answer && answer.state === "answered" && answer.narrative) {
+    section.append(el("h3", "", "Agent summary"), el("p", "", answer.narrative));
+    if (answer.citations && answer.citations.length) {
+      section.append(el("p", "hint", `Sources: ${answer.citations.join(", ")}`));
+    }
+  } else {
+    section.append(el("p", "hint", "Summary pending: run cbi tasks"));
+  }
+  parent.append(section);
+}
+
+// ---------- comparison details ----------
+
 function changesPanel() {
   const panel = document.getElementById("changes");
   panel.hidden = !DIFF || (!!HISTORY && !historyCompare);
@@ -548,6 +572,7 @@ function changesPanel() {
   const base = DIFF.base ? String(DIFF.base).slice(0, 12) : "base";
   const head = DIFF.head ? String(DIFF.head).slice(0, 12) : "head";
   panel.append(el("p", "hint", `${base} → ${head}`));
+  changeSummary(panel);
   const groups = (DIFF.changes && DIFF.changes.groups) || [];
   if (!groups.length) { panel.append(el("p", "", "No architectural changes.")); return; }
   for (const g of groups) {
@@ -556,6 +581,7 @@ function changesPanel() {
     if (focus) headEl.append(link(g.name, () => jump(focus, null, { force: true })));
     else headEl.append(document.createTextNode(g.name));
     panel.append(headEl);
+    changeSummary(panel, g.id);
     const ul = el("ul");
     for (const ch of g.changes) {
       const li = el("li");
@@ -4198,12 +4224,14 @@ function drawer() {
   const c = byId[view.sel] || byId[view.focus];
   if (!c) {
     d.append(el("h2", "", M.workspace), el("p", "", M.summary));
+    changeSummary(d);
     d.append(el("p", "hint", "Click a box to open it. Scroll to pan, pinch to zoom. Esc goes up. Backspace goes back."));
     integrationList(d, integrationPoints(null), false);
     envList(d, null, false);
     return;
   }
   d.append(el("h2", "", c.name), el("p", "", c.summary));
+  changeSummary(d, c.id);
   if (!view.sel && c.id === view.focus) {
     const u = usage(c);
     usageList(d, "Used by", u.by, true);
