@@ -1223,6 +1223,8 @@ def resolve(conn, root):
     path_diags = testing_paths.link(m, edges, add)
     from cbi import testing_sql
     sql_diags = testing_sql.link(m, edges, add)
+    from cbi.testing_fixtures import link as link_fixtures
+    link_fixtures(m, edges, add)
     from cbi import testing_subprocess
     subprocess_diags = testing_subprocess.link(m, edges, add)
 
