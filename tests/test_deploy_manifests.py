@@ -555,3 +555,64 @@ def test_shell_options_keep_script_and_command_entries(make_repo, command, entry
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == entry
+
+
+@pytest.mark.parametrize('command', [
+    '["python", "/start.py", "--pattern", "foo|bar"]',
+    '["python", "/start.py", "--pattern", "|"]',
+    '["python", "/start.py", "--pattern", "`"]',
+    'python /start.py --pattern "foo|bar"',
+    "python /start.py --pattern ';'",
+    r'python /start.py --pattern foo\|bar',
+    '["sh", "-ec", "python /start.py --pattern \'foo|bar\'"]',
+])
+def test_literal_argument_punctuation_does_not_hide_image_entry(make_repo, command):
+    files = {
+        'Dockerfile': f'FROM python\nCOPY start.py /start.py\nCMD {command}\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'start.py'
+
+
+@pytest.mark.parametrize('command', [
+    'python /start.py | echo ready',
+    'python /start.py; echo ready',
+    'python /start.py --pattern foo|bar',
+    'python /start.py > output',
+    'echo "python /start.py --pattern foo|bar"',
+])
+def test_shell_syntax_is_not_treated_as_literal_exec_argv(make_repo, command):
+    files = {'Dockerfile': f'FROM python\nCOPY start.py /start.py\nCMD {command}\n',
+             'start.py': 'print(1)\n'}
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] is None
+
+
+@pytest.mark.parametrize('command', [
+    '["python", "/start.py", "--pattern", "foo|bar"]',
+    "python /start.py --pattern 'foo|bar'",
+])
+def test_compose_literal_argument_operators_remain_data(make_repo, command):
+    files = {
+        'Dockerfile': 'FROM python\nCOPY start.py /start.py\n',
+        'start.py': 'print(1)\n',
+        'compose.yaml': f'services:\n  api:\n    build: .\n    command: {command}\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.compose(ws)[0][0]['entries'][0][1] == 'start.py'
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'start.py'
+
+
+def test_exec_entrypoint_keeps_literal_command_argument_operators(make_repo):
+    files = {
+        'Dockerfile': 'FROM python\nCOPY start.py /start.py\nENTRYPOINT ["python"]\n'
+                      'CMD ["/start.py", "--pattern", "foo|bar"]\n',
+        'start.py': 'print(1)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'][0][1] == 'start.py'

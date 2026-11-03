@@ -274,6 +274,81 @@ def _tokens(value):
         return (value or "").split()
 
 
+def _docker_command(value):
+    """Retain Docker's exec versus shell form until command resolution."""
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return value
+    return [str(part) for part in parsed] if isinstance(parsed, list) else value
+
+
+def _effective_command(commands):
+    entry, command = commands.get("ENTRYPOINT"), commands.get("CMD")
+    if isinstance(entry, str) and entry:
+        return entry  # a shell ENTRYPOINT ignores CMD arguments
+    if entry:
+        args = ["/bin/sh", "-c", command] if isinstance(command, str) and command else command or []
+        return entry + args
+    return command or []
+
+
+def _shell_argv(text):
+    """Read one literal shell command, preserving quoted/escaped operators as argument data.
+
+    Compound programs, redirections and substitutions stay unresolved. Nothing is executed.
+    """
+    tokens, word, quote, active, i = [], [], None, False, 0
+    while i < len(text):
+        char = text[i]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                word.append(char)
+        elif char == "\\":
+            if i + 1 == len(text):
+                return []
+            following = text[i + 1]
+            if quote == '"' and following not in '$`"\\\n':
+                word.append(char)
+                i += 1
+                continue
+            if following != "\n":
+                word.append(following)
+                active = True
+            i += 2
+            continue
+        elif quote == '"' and char == '"':
+            quote = None
+        elif quote is None and char in "\"'":
+            quote, active = char, True
+        elif quote is None and char in "\n;&|<>()":
+            if char == "\n" and not text[i:].strip():
+                break
+            return []
+        elif char == "`" or char == "$" and text[i:i + 2] == "$(":
+            return []
+        elif quote is None and char.isspace():
+            if active:
+                tokens.append("".join(word))
+                word, active = [], False
+        elif quote is None and char == "#" and not active:
+            end = text.find("\n", i)
+            if end >= 0 and text[end:].strip():
+                return []
+            break
+        else:
+            word.append(char)
+            active = True
+        i += 1
+    if quote:
+        return []
+    if active:
+        tokens.append("".join(word))
+    return tokens
+
+
 def _image_path(workdir, path):
     return posixpath.normpath(posixpath.join(workdir, path))
 
@@ -334,7 +409,7 @@ def _docker_state(ws, path, context, target=None):
             state["workdir"] = _image_path(state["workdir"], value)
             _remember_image_directory(state, state["workdir"])
         elif instruction in ("CMD", "ENTRYPOINT"):
-            state["commands"][instruction] = _tokens(value)
+            state["commands"][instruction] = _docker_command(value)
             if instruction == "CMD":
                 state["cmd_inherited"] = False
             if instruction == "ENTRYPOINT" and state["cmd_inherited"]:
@@ -466,7 +541,7 @@ def _shell_invocation(tokens):
 
 def _runtime_argv(command):
     """Keep argv boundaries and unwrap only literal exec, shell -c and project runners."""
-    tokens = _tokens(command)
+    tokens = _shell_argv(command) if isinstance(command, str) else _tokens(command)
     for _ in range(8):
         if not tokens:
             return []
@@ -477,17 +552,16 @@ def _runtime_argv(command):
                 return []
             mode, args = invocation
             if mode == "command":
-                tokens = _tokens(args[0])
+                tokens = _shell_argv(args[0])
             else:
                 tokens = [tokens[0], *args]
-                return [] if any(re.search(r"[;&|`\n]", token) for token in tokens) else tokens
+                return tokens
         elif tokens[0] == "exec":
             tokens = tokens[1:]
         elif executable in ("uv", "poetry") and tokens[1:2] == ["run"]:
             tokens = tokens[2:]
         else:
-            # Compound shell programs need a shell parser; do not guess their executable positions.
-            return [] if any(re.search(r"[;&|`\n]", token) for token in tokens) else tokens
+            return tokens
     return []
 
 
@@ -572,12 +646,12 @@ def dockerfile(ws):
         entries, artifacts = [], []
         for context, target in dict.fromkeys(builds.get(path) or [(here, None)]):
             state = _docker_state(ws, path, context, target)
-            tokens = state["commands"].get("ENTRYPOINT", []) + state["commands"].get("CMD", [])
-            raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
-            if _idle_command(tokens):
+            command = _effective_command(state["commands"])
+            raw = " ".join(_tokens(command)) or "no CMD or ENTRYPOINT"
+            if _idle_command(command):
                 artifacts.append(raw)
                 continue
-            resolved = _command_entries(ws, context, tokens, state) if tokens else _compose_image_entries(ws, path)
+            resolved = _command_entries(ws, context, command, state) if command else _compose_image_entries(ws, path)
             entries += resolved or [(raw, None)]
         deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
                             "ref": f"file:{ws.top(path)}",
@@ -660,8 +734,7 @@ def _service_entries(ws, svc, docker, context):
         commands.pop("CMD", None)
     if svc.get("command") is not None:
         commands["CMD"] = _tokens(svc["command"])
-    tokens = commands.get("ENTRYPOINT", []) + commands.get("CMD", [])
-    return _command_entries(ws, context, tokens, state)
+    return _command_entries(ws, context, _effective_command(commands), state)
 
 
 def _compose_image_entries(ws, docker):
