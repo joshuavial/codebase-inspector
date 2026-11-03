@@ -132,6 +132,10 @@ def _assigned(node):
             found.update(alias.asname or alias.name for alias in child.names)
         elif isinstance(child, ast.ExceptHandler) and child.name:
             found.add(child.name)
+        elif isinstance(child, (ast.MatchAs, ast.MatchStar)) and child.name:
+            found.add(child.name)
+        elif isinstance(child, ast.MatchMapping) and child.rest:
+            found.add(child.rest)
         if not isinstance(child, ast.Lambda):
             stack.extend(ast.iter_child_nodes(child))
     return found
@@ -235,7 +239,28 @@ def contexts(model, file_ids=None):
                     values.pop(name, None)
                     aliases[name] = None
                 return
-            if isinstance(node, (ast.If, ast.While, ast.Match)):
+            if isinstance(node, ast.Match):
+                yield from walk(node.subject, values, aliases)
+                for case in node.cases:
+                    inner, names = dict(values), dict(aliases)
+                    captures = set()
+                    for pattern in ast.walk(case.pattern):
+                        if isinstance(pattern, (ast.MatchAs, ast.MatchStar)) and pattern.name:
+                            captures.add(pattern.name)
+                        elif isinstance(pattern, ast.MatchMapping) and pattern.rest:
+                            captures.add(pattern.rest)
+                    for name in captures:
+                        inner.pop(name, None)
+                        names[name] = None
+                    if case.guard:
+                        yield from walk(case.guard, inner, names)
+                    for child in case.body:
+                        yield from walk(child, inner, names)
+                for name in _assigned(node):
+                    values.pop(name, None)
+                    aliases[name] = None
+                return
+            if isinstance(node, (ast.If, ast.While)):
                 # Conditional writes cannot become unconditional literal facts.
                 for _field, children in ast.iter_fields(node):
                     inner, names = dict(values), dict(aliases)

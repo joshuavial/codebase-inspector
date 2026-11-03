@@ -12,8 +12,8 @@ A read-only AST pass follows module and function-local literal constants,
 `os.path` joins, and literal string concatenation. It respects imported aliases,
 shadowed parameters, reassignment, and conditional scopes. Context-manager
 targets replace prior literals; exception handlers and `finally` blocks do not
-reuse values that preceding `try` regions may have overwritten. Literal
-assignments within each branch still bind in sequence. It uses the existing
+reuse values that preceding `try` regions may have overwritten. Each `match` case starts from its own incoming snapshot, and pattern captures
+replace prior literals. Literal assignments within each branch still bind in sequence. It uses the existing
 workspace module and tracked-file resolvers. It never imports or executes target
 code, evaluates arbitrary expressions, or walks directories outside the model.
 

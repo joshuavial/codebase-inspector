@@ -132,3 +132,37 @@ def test_finally_known(factory):
     assert not {(src, dst) for src, dst in bindings if src in {
         "test_with_path", "test_with_loader", "test_finally_path", "test_except_path", "test_finally_loader",
     }}
+
+
+def test_match_cases_do_not_share_targets_or_pattern_bindings(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/__init__.py": "",
+        "pkg/worker.py": "def run(): return 1\n",
+        "tests/test_match.py": '''import importlib
+
+def test_cases(choice):
+    match choice:
+        case "a":
+            target = "pkg.worker"
+        case "b":
+            importlib.import_module(target)
+
+def test_capture(choice):
+    target = "pkg.worker"
+    match choice:
+        case target:
+            importlib.import_module(target)
+
+def test_known(choice):
+    match choice:
+        case "a":
+            target = "pkg.worker"
+            importlib.import_module(target)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        targets = {src.rsplit("#", 1)[-1] for src, in conn.execute(
+            "SELECT src FROM edges WHERE kind='tests' AND dst LIKE '%:pkg/worker.py'")}
+    assert targets == {"test_known"}
