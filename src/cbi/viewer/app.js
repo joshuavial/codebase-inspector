@@ -1545,12 +1545,12 @@ function box(c, cls, startsHere = !!c.entry) {
   const tone = c.ext ? "kind-" + c.kind : "role-" + c.role;
   const mark = conceptClass(c.id);
   const tag = conceptTag(c.id);
-  if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(c.name, 500, 14) + 36, h: 38, name: c.name, lines: [], tag };
+  const tagW = tag ? textW(tag, 600, 10.5, true) + 18 : 0;
+  if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(c.name, 500, 14) + 42 + tagW, h: 38, name: c.name, lines: [], tag };
   const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
   const lines = wrap(c.summary || "", w - 32, 12, 3);
   const env = envOf(c).length, entry = !c.ext && startsHere;
-  const tagW = tag ? textW(tag, 600, 10.5, true) + 18 : 0;
-  const extra = (env ? 44 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0) + tagW;
+  const extra = (env ? textW(`env ${env}`, 600, 10.5, true) + 18 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0) + tagW;
   return { id: c.id, cls: `node ${cls} ${tone}${mark}`, w: w + extra, h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env, entry, tag };
 }
 

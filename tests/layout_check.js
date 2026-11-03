@@ -755,6 +755,23 @@ async function main() {
     assert.match(css, /#diff-scope\[hidden\] \{ display: none; \}/);
   }
 
+  // Use measured SVG header geometry for compact neighbours and full cards.
+  // A shared SVG transform preserves this separation at every zoom level.
+  vm.runInContext('DIFF = {};', app);
+  for (const name of ["Platform and tooling", "Funding engine", "Qwen pool"]) {
+    const concept = { id: "badge-test", name, role: "core", summary: "", env: [] };
+    app.__badgeConcept = concept;
+    vm.runInContext('byId["badge-test"] = __badgeConcept; CONCEPT_MARK.set("badge-test", "changed");', app);
+    for (const cls of ["ctx", ""]) {
+      const card = app.box(concept, cls, false);
+      const titleRight = (cls === "ctx" ? 24 : 16) + app.textW(name, cls === "ctx" ? 500 : 600, 14);
+      const badgeLeft = card.w - 10 - app.textW(card.tag, 600, 10.5, true) - 12;
+      for (const zoom of [0.2, 0.7, 1, 2, 4]) {
+        assert.ok((badgeLeft - titleRight) * zoom >= 8 * zoom,
+          `${name} (${cls || "full"}) must have an 8px title/badge gap at zoom ${zoom}`);
+      }
+    }
+  }
   console.log("layout checks passed");
 }
 

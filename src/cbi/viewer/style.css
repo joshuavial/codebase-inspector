@@ -547,6 +547,6 @@ button.link:focus-visible, .wf[role="button"]:focus-visible, #zoom button:focus-
 #layout-notice {
   position: absolute; top: 12px; left: 12px; max-width: min(420px, calc(100% - 24px));
   padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper, #fff); color: var(--muted); font-size: 12px;
+  background: var(--panel); color: var(--muted); font-size: 12px;
 }
 #layout-notice[hidden] { display: none; }
