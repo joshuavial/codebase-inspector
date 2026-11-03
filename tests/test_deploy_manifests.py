@@ -392,3 +392,19 @@ def test_unknown_image_command_stays_unresolved(make_repo):
     root = make_repo(files)
     ws = manifests._Workspace('local:repo', 'repo', root, set(files))
     assert manifests.dockerfile(ws)[0][0]['entries'] == [('sleep missing.py', None)]
+
+
+@pytest.mark.parametrize('replacement', [
+    'COPY --from=builder /serve /serve',
+    'COPY scripts/*.py /serve',
+])
+def test_unknown_copy_invalidates_previous_source(make_repo, replacement):
+    files = {
+        'Dockerfile': 'FROM alpine AS builder\nRUN generate /serve\nFROM python\n'
+                      f'COPY start.py /serve\n{replacement}\nCMD ["python", "/serve"]\n',
+        'start.py': 'print(1)\n',
+        'scripts/other.py': 'print(2)\n',
+    }
+    root = make_repo(files)
+    ws = manifests._Workspace('local:repo', 'repo', root, set(files))
+    assert manifests.dockerfile(ws)[0][0]['entries'] == [('python /serve', None)]

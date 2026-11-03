@@ -276,6 +276,12 @@ def _image_path(workdir, path):
     return posixpath.normpath(posixpath.join(workdir, path))
 
 
+def _forget_image_destination(state, dest):
+    """Unknown replacement content must not keep the source provenance it may overwrite."""
+    state["files"] = {f: tracked for f, tracked in state["files"].items()
+                      if f != dest and not f.startswith(dest.rstrip("/") + "/")}
+
+
 def _docker_state(ws, path, context, target=None):
     """Track literal files in each build stage; remote, dynamic and generated copies stay unknown."""
     stages, named = [], {}
@@ -314,25 +320,32 @@ def _docker_state(ws, path, context, target=None):
                 flags[key] = val
                 value = value.lstrip()
             words = _tokens(value)
-            if len(words) < 2 or any(re.search(r"[$*?]", w) for w in words):
+            if len(words) < 2:
                 continue
             sources, dest = words[:-1], words[-1]
+            if re.search(r"[$*?]", dest):
+                state["files"].clear()  # the destination could overwrite any mapped path
+                continue
             dest = _image_path(state["workdir"], dest)
+            if any(re.search(r"[$*?]", source) for source in sources):
+                _forget_image_destination(state, dest)
+                continue
             origin = named.get(flags["from"]) if "from" in flags else None
             if "from" in flags and origin is None:
-                # An unknown image can overwrite a previously mapped destination.
-                state["files"] = {f: tracked for f, tracked in state["files"].items()
-                                  if f != dest and not f.startswith(dest.rstrip("/") + "/")}
+                _forget_image_destination(state, dest)
                 continue
             available = dict(origin["files"]) if origin else {"/" + p: p for p in ws.paths
                 if not context or p.startswith(context + "/")}
             for source in sources:
                 if "://" in source:
+                    _forget_image_destination(state, dest)
                     continue
                 source = _image_path("/" if origin else "/" + context, source.lstrip("/"))
                 prefix = source.rstrip("/") + "/"
                 directory = any(f.startswith(prefix) for f in available)
                 matches = [(f, tracked) for f, tracked in available.items() if f == source or f.startswith(prefix)]
+                if not matches:
+                    _forget_image_destination(state, dest)
                 for f, tracked in matches:
                     suffix = f[len(prefix):] if directory else posixpath.basename(source)
                     dest_dir = (dest == state["workdir"] or words[-1].endswith("/")
