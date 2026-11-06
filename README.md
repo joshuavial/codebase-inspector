@@ -88,6 +88,14 @@ Coding agents connecting via MCP (such as Claude Code) can launch `cbi mcp` to r
 AI coding agents (Claude Code, Cursor, Gemini CLI, Antigravity, Windsurf, Codex) can interact with Codebase Inspector over stdio JSON-RPC 2.0 via `cbi mcp`:
 
 ```bash
+# Automatically install MCP server configuration for your AI coding client
+cbi mcp --install claude    # Claude Code (~/.claude.json) / Claude Desktop
+cbi mcp --install cursor    # Cursor (~/.cursor/mcp.json)
+cbi mcp --install gemini    # Gemini CLI / Antigravity (~/.gemini/antigravity-cli/mcp_config.json)
+cbi mcp --install windsurf  # Windsurf (~/.codeium/windsurf/mcp_config.json)
+cbi mcp --install vscode    # VS Code (.vscode/mcp.json)
+cbi mcp --install all       # All supported clients
+
 # Print ready-to-use client configuration snippet
 cbi mcp --config claude     # Claude Desktop
 cbi mcp --config cursor     # Cursor (.cursor/mcp.json)
@@ -98,6 +106,8 @@ cbi mcp --config all        # All client templates
 ```
 
 Exposed MCP tools:
+* `cbi_init`: Initialize .cbi directory and default ignore file in repository root (optional: `team`, `format`).
+* `cbi_ingest`: Ingest test coverage and result files (lcov, coverage.py JSON, JUnit XML) into codebase model (`files`: array of strings, optional `format`: text or json).
 * `cbi_scan`: Scan repository into model.db and open judgement tasks, with optional git ref scanning (`ref`: branch, tag, or commit SHA; `format`: text or json).
 * `cbi_status`: Scan state, task counts, and codebase diagnostics.
 * `cbi_context`: Markdown summary of any node (file, symbol, concept, package), or top-level system architecture overview when omitted or passed as 'system'.

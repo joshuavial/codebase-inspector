@@ -3,6 +3,7 @@
 import io
 import json
 import sqlite3
+import sys
 from pathlib import Path
 import pytest
 
@@ -111,10 +112,10 @@ def test_tools_list():
         "cbi_diff", "cbi_tasks", "cbi_submit", "cbi_query", "cbi_concepts",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
         "cbi_history", "cbi_review", "cbi_check", "cbi_worktrees",
-        "cbi_prime", "cbi_task",
+        "cbi_prime", "cbi_task", "cbi_ingest", "cbi_init",
     }
-    assert len(expected) == 23
-    assert len(tools) == 23
+    assert len(expected) == 25
+    assert len(tools) == 25
     assert expected == tool_names
 
     for tool in tools:
@@ -977,6 +978,7 @@ def test_concurrent_requests_stress(repo):
         "relationships": [],
     }
     (repo / ".cbi" / "concepts.json").write_text(json.dumps(concepts_doc))
+    (repo / "coverage.lcov").write_text("TN:\nSF:src/shapes/circle.ts\nDA:18,1\nend_of_record\n")
 
     server = MCPServer(root=repo)
 
@@ -1006,6 +1008,8 @@ def test_concurrent_requests_stress(repo):
         ("cbi_worktrees", {"format": "json"}),
         ("cbi_prime", {}),
         ("cbi_task", {"task_id": "test"}),
+        ("cbi_init", {"format": "json"}),
+        ("cbi_ingest", {"files": ["coverage.lcov"]}),
     ]
 
     def make_call(pair):
@@ -1585,6 +1589,202 @@ def test_tool_task(repo):
             res_p_bad = server.execute_tool("cbi_task", {"task_id": dc_id, "part": 99})
             assert res_p_bad["isError"]
             assert "outside 1.." in res_p_bad["content"][0]["text"]
+
+
+def test_tool_ingest(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Successful ingest of an lcov file in text format
+    lcov_content = """\
+TN:
+SF:src/shapes/circle.ts
+DA:18,1
+end_of_record
+"""
+    (repo / "coverage.lcov").write_text(lcov_content)
+
+    res_text = server.execute_tool("cbi_ingest", {"files": ["coverage.lcov"]})
+    assert not res_text["isError"]
+    text = res_text["content"][0]["text"]
+    assert "lcov" in text
+    assert "1 lines in 1 files" in text
+    assert "0 test results" in text
+
+    # 2. Ingest in JSON format
+    res_json = server.execute_tool("cbi_ingest", {"files": ["coverage.lcov"], "format": "json"})
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert data["total_lines"] == 1
+    assert data["total_files"] == 1
+    assert len(data["files"]) == 1
+    assert data["files"][0]["format"] == "lcov"
+    assert data["files"][0]["lines"] == 1
+    assert data["files"][0]["files"] == 1
+
+    # 3. Missing 'files' argument
+    res_err1 = server.execute_tool("cbi_ingest", {})
+    assert res_err1["isError"]
+    assert "Missing or invalid required argument: 'files'" in res_err1["content"][0]["text"]
+
+    # 4. Empty 'files' argument
+    res_err2 = server.execute_tool("cbi_ingest", {"files": []})
+    assert res_err2["isError"]
+
+    # 5. Non-existent file
+    res_err3 = server.execute_tool("cbi_ingest", {"files": ["nonexistent.lcov"]})
+    assert res_err3["isError"]
+    assert "not loaded" in res_err3["content"][0]["text"]
+
+    # 6. Invalid file format
+    (repo / "bad.txt").write_text("not coverage or test results data")
+    res_err4 = server.execute_tool("cbi_ingest", {"files": ["bad.txt"]})
+    assert res_err4["isError"]
+    assert "not loaded" in res_err4["content"][0]["text"]
+
+    # 7. Ingest with cwd argument
+    res_cwd = server.execute_tool("cbi_ingest", {"files": ["coverage.lcov"], "cwd": str(repo)})
+    assert not res_cwd["isError"]
+
+
+def test_tool_init(make_repo, tmp_path):
+    files_map = {"main.py": "print('hello')\n"}
+    root = make_repo(files_map)
+
+    server = MCPServer(root=root)
+
+    # 1. Execute cbi_init in default text mode
+    res_text = server.execute_tool("cbi_init", {})
+    assert not res_text["isError"]
+    text = res_text["content"][0]["text"]
+    assert "Created" in text or "ignore" in text
+    assert (root / ".cbi" / "ignore").is_file()
+    assert (root / ".cbi" / ".gitignore").is_file()
+
+    # 2. Execute cbi_init again in json mode (already initialised)
+    res_json = server.execute_tool("cbi_init", {"format": "json"})
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert data["status"] == "ok"
+    assert "already initialised" in data["output"]
+
+    # 3. Initialize in team mode
+    res_team = server.execute_tool("cbi_init", {"team": True, "format": "json"})
+    assert not res_team["isError"]
+    team_data = json.loads(res_team["content"][0]["text"])
+    assert team_data["team"] is True
+    assert (root / ".cbi" / "team.toml").is_file()
+
+
+def test_install_client_config(tmp_path, monkeypatch):
+    from cbi.mcp import install_client_config
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    root = tmp_path / "workspace"
+    root.mkdir()
+
+    # 1. Install cursor config
+    res_cursor = install_client_config("cursor", root=root)
+    assert res_cursor == 0
+    cursor_json = fake_home / ".cursor" / "mcp.json"
+    assert cursor_json.is_file()
+    c_data = json.loads(cursor_json.read_text())
+    assert "codebase-inspector" in c_data["mcpServers"]
+    assert c_data["mcpServers"]["codebase-inspector"]["command"] == "cbi"
+
+    # 2. Safe merge with existing custom config in cursor
+    c_data["mcpServers"]["my-custom-mcp"] = {"command": "custom", "args": ["serve"]}
+    c_data["otherSetting"] = True
+    cursor_json.write_text(json.dumps(c_data))
+
+    res_cursor2 = install_client_config("cursor", root=root)
+    assert res_cursor2 == 0
+    c_data2 = json.loads(cursor_json.read_text())
+    assert c_data2["otherSetting"] is True
+    assert "my-custom-mcp" in c_data2["mcpServers"]
+    assert "codebase-inspector" in c_data2["mcpServers"]
+
+    # 3. Install gemini / antigravity
+    res_gemini = install_client_config("gemini", root=root)
+    assert res_gemini == 0
+    gemini_json = fake_home / ".gemini" / "antigravity-cli" / "mcp_config.json"
+    assert gemini_json.is_file()
+    g_data = json.loads(gemini_json.read_text())
+    assert "codebase-inspector" in g_data["mcpServers"]
+    ag_json = fake_home / ".gemini" / "antigravity" / "mcp_config.json"
+    assert ag_json.is_file()
+    ag_data = json.loads(ag_json.read_text())
+    assert "codebase-inspector" in ag_data["mcpServers"]
+    gemini_settings = fake_home / ".gemini" / "settings.json"
+    assert gemini_settings.is_file()
+    s_data = json.loads(gemini_settings.read_text())
+    assert "codebase-inspector" in s_data["mcpServers"]
+
+    # 4. Install windsurf
+    res_windsurf = install_client_config("windsurf", root=root)
+    assert res_windsurf == 0
+    windsurf_json = fake_home / ".codeium" / "windsurf" / "mcp_config.json"
+    assert windsurf_json.is_file()
+    w_data = json.loads(windsurf_json.read_text())
+    assert "codebase-inspector" in w_data["mcpServers"]
+
+    # 5. Install vscode (both servers and mcpServers)
+    res_vscode = install_client_config("vscode", root=root)
+    assert res_vscode == 0
+    vscode_json = root / ".vscode" / "mcp.json"
+    assert vscode_json.is_file()
+    v_data = json.loads(vscode_json.read_text())
+    assert "codebase-inspector" in v_data["mcpServers"]
+    assert "codebase-inspector" in v_data["servers"]
+
+    # 5b. Safe merge into existing VS Code JSONC (comments and trailing commas)
+    jsonc_content = """{\n  // VS Code comment\n  "servers": {\n    "custom-server": { "command": "serve" },\n  },\n}"""
+    vscode_json.write_text(jsonc_content)
+    res_vscode_jsonc = install_client_config("vscode", root=root)
+    assert res_vscode_jsonc == 0
+    v_data_jsonc = json.loads(vscode_json.read_text())
+    assert "custom-server" in v_data_jsonc["servers"]
+    assert "codebase-inspector" in v_data_jsonc["servers"]
+
+    # 6. Install claude (Claude Code and Desktop when directory exists)
+    if sys.platform == "darwin":
+        desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
+    elif sys.platform == "win32":
+        desktop_dir = fake_home / "AppData" / "Roaming" / "Claude"
+    else:
+        desktop_dir = fake_home / ".config" / "Claude"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
+    res_claude = install_client_config("claude", root=root)
+    assert res_claude == 0
+    claude_json = fake_home / ".claude.json"
+    assert claude_json.is_file()
+    cl_data = json.loads(claude_json.read_text())
+    assert "codebase-inspector" in cl_data["mcpServers"]
+    desktop_json = desktop_dir / "claude_desktop_config.json"
+    assert desktop_json.is_file()
+    d_data = json.loads(desktop_json.read_text())
+    assert d_data["mcpServers"]["codebase-inspector"]["args"] == ["mcp", "--repo", str(root)]
+
+    # 7. Install all
+    res_all = install_client_config("all", root=root)
+    assert res_all == 0
+    assert len(res_all) >= 5
+
+    # 8. Unparseable/corrupted config is preserved, not overwritten, and returns failure
+    corrupt_file = fake_home / ".cursor" / "mcp.json"
+    corrupt_file.write_text("{bad json syntax")
+    res_corrupt = install_client_config("cursor", root=root)
+    assert res_corrupt != 0
+    assert corrupt_file.read_text() == "{bad json syntax"
+
+    # 9. Test CLI integration
+    monkeypatch.chdir(root)
+    assert main(["mcp", "--install", "cursor"]) == 1
+    # Restore valid config
+    corrupt_file.write_text(json.dumps({"mcpServers": {}}))
+    assert main(["mcp", "--install", "cursor"]) == 0
+    assert main(["mcp", "--install"]) == 0
+
 
 
 
