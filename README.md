@@ -79,6 +79,29 @@ cbi check              # CI gate: fail if committed map drifts from source
 
 Coding agents connecting via MCP (such as Claude Code) can launch `cbi mcp` to run a stdio Model Context Protocol server exposing repository search, symbol lookup, and test linkage directly to your agent.
 
+### Model Context Protocol (MCP) Server
+
+AI coding agents (Claude Code, Cursor, Gemini CLI, Antigravity, Windsurf, Codex) can interact with Codebase Inspector over stdio JSON-RPC 2.0 via `cbi mcp`:
+
+```bash
+# Print ready-to-use client configuration snippet
+cbi mcp --config claude     # Claude Desktop
+cbi mcp --config cursor     # Cursor (.cursor/mcp.json)
+cbi mcp --config gemini     # Gemini CLI / Antigravity
+cbi mcp --config windsurf   # Windsurf
+cbi mcp --config vscode     # VS Code
+cbi mcp --config all        # All client templates
+```
+
+Exposed MCP tools:
+* `cbi_status`: Scan state, task counts, and codebase diagnostics.
+* `cbi_context`: Markdown summary of any node (file, symbol, concept, package).
+* `cbi_tests_for`: Tests linked to a specific function, class, file, or folder.
+* `cbi_search`: Full-text search across all AST nodes in the codebase.
+* `cbi_hotspots`: Rank nodes by coupling (fan-in/fan-out), size (LOC), or symbol count.
+* `cbi_diff`: Architectural diff between commits, branches, or model databases.
+* `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
+
 ---
 
 ## Team mode and CI
