@@ -336,6 +336,10 @@ def test_windows_frozen_predicate_probes_both_create_and_write_permissions(tmp_p
 @pytest.mark.parametrize("target", ["model", "cache"])
 def test_frozen_candidate_rechecks_wal_before_connecting(
         make_repo, monkeypatch, capsys, target):
+    import errno
+    import sys
+    import tempfile
+
     root = make_repo(FILES)
     monkeypatch.chdir(root)
     assert main(["init"]) == 0 and main(["scan"]) == 0
@@ -346,10 +350,23 @@ def test_frozen_candidate_rechecks_wal_before_connecting(
     original_uri = store.read_uri
     writers = []
 
+    frozen_parent = True
+    if sys.platform == "win32":
+        original_mkstemp = tempfile.mkstemp
+
+        def win_mkstemp(*args, **kwargs):
+            if frozen_parent and Path(kwargs.get("dir", "")).resolve() == path.parent.resolve():
+                raise PermissionError(errno.EACCES, "directory ACL denies file creation")
+            return original_mkstemp(*args, **kwargs)
+
+        monkeypatch.setattr(tempfile, "mkstemp", win_mkstemp)
+
     def interleave_uri(candidate, **kwargs):
+        nonlocal frozen_parent
         uri = original_uri(candidate, **kwargs)
         if candidate == path:
             assert "immutable=1" in uri
+            frozen_parent = False
             path.chmod(0o644)
             path.parent.chmod(0o755)
             writer = sqlite3.connect(path)
