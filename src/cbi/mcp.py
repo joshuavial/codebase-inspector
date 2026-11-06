@@ -685,6 +685,51 @@ PROMPTS = [
 
 
 
+MAX_MULTILINE_LINES = 1000
+MAX_MULTILINE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class MessageParseError(json.JSONDecodeError):
+    """Raised when an incoming MCP message cannot be parsed.
+
+    Inherits from json.JSONDecodeError and ValueError for backwards compatibility.
+    Includes the framing type (is_content_length) to enable matching error framing.
+    """
+
+    def __init__(self, msg: str, doc: str = "", pos: int = 0, is_content_length: bool = False):
+        super().__init__(msg, doc, pos)
+        self.is_content_length = is_content_length
+
+
+class _NullPayload:
+    """Sentinel representing a valid JSON 'null' input.
+
+    Distinguishes parsed 'null' from an EOF (None) on the stream.
+    """
+
+    def __repr__(self) -> str:
+        return "NullPayload"
+
+
+NULL_PAYLOAD = _NullPayload()
+
+
+def _is_incomplete_json(err: json.JSONDecodeError, text: str) -> bool:
+    """Return True only if text could be valid JSON cut off across multiple lines.
+
+    Fails fast if the error occurred before the end of the input (indicating an unparseable
+    token on the current line), if the input does not start with an opening bracket/brace,
+    or if the error is due to an illegal control character (e.g. unescaped newline in a string).
+    """
+    stripped = text.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return False
+    if "Invalid control character" in err.msg:
+        return False
+    content_len = len(text.rstrip("\r\n"))
+    return err.pos >= content_len
+
+
 def read_message(stream):
     """Read one JSON-RPC message from a text or binary stream.
 
@@ -703,37 +748,99 @@ def read_message(stream):
         if not line:
             return None, False
 
-    line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+    line_str = line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
     line_lower = line_str.lower().strip()
 
     if line_lower.startswith("content-length:"):
-        length = int(line_str.split(":", 1)[1].strip())
+        try:
+            length = int(line_str.split(":", 1)[1].strip())
+        except (ValueError, IndexError) as err:
+            raise MessageParseError(
+                f"Invalid Content-Length header: {line_str.strip()}",
+                doc=line_str,
+                pos=0,
+                is_content_length=True,
+            ) from err
+
         # Consume any extra headers until the empty line
+        header_lines = 0
         while True:
             hdr = raw.readline()
-            hdr_str = hdr.decode("utf-8") if isinstance(hdr, bytes) else hdr
+            if not hdr:
+                raise MessageParseError(
+                    "Unexpected EOF while reading headers",
+                    doc="",
+                    pos=0,
+                    is_content_length=True,
+                )
+            hdr_str = hdr.decode("utf-8", errors="replace") if isinstance(hdr, bytes) else hdr
             if hdr_str in ("\r\n", "\n", ""):
                 break
+            header_lines += 1
+            if header_lines > 100:
+                raise MessageParseError(
+                    "Too many header lines",
+                    doc="",
+                    pos=0,
+                    is_content_length=True,
+                )
+
         payload_raw = raw.read(length)
-        payload_str = payload_raw.decode("utf-8") if isinstance(payload_raw, bytes) else payload_raw
-        return json.loads(payload_str), True
+        payload_str = payload_raw.decode("utf-8", errors="replace") if isinstance(payload_raw, bytes) else payload_raw
+        if len(payload_raw) < length:
+            raise MessageParseError(
+                f"Unexpected EOF: expected {length} bytes, received {len(payload_raw)}",
+                doc=payload_str,
+                pos=len(payload_str),
+                is_content_length=True,
+            )
+        try:
+            parsed = json.loads(payload_str)
+        except json.JSONDecodeError as err:
+            raise MessageParseError(str(err), doc=err.doc, pos=err.pos, is_content_length=True) from err
+
+        if parsed is None:
+            return NULL_PAYLOAD, True
+        return parsed, True
 
     # Newline-delimited JSON
     try:
-        return json.loads(line_str), False
-    except json.JSONDecodeError:
-        # If pretty-printed across multiple lines, read until complete JSON or EOF
+        parsed = json.loads(line_str)
+        if parsed is None:
+            return NULL_PAYLOAD, False
+        return parsed, False
+    except json.JSONDecodeError as err:
+        # Fail fast if this line has unparseable non-multiline tokens
+        if not _is_incomplete_json(err, line_str):
+            raise MessageParseError(str(err), doc=err.doc, pos=err.pos, is_content_length=False) from err
+
+        # If pretty-printed across multiple lines, read until complete JSON or limit
         lines = [line_str]
-        while True:
+        total_bytes = len(line_str.encode("utf-8") if isinstance(line_str, str) else line_str)
+        while len(lines) < MAX_MULTILINE_LINES and total_bytes < MAX_MULTILINE_BYTES:
             extra = raw.readline()
             if not extra:
                 break
-            lines.append(extra.decode("utf-8") if isinstance(extra, bytes) else extra)
+            extra_str = extra.decode("utf-8", errors="replace") if isinstance(extra, bytes) else extra
+            lines.append(extra_str)
+            total_bytes += len(extra_str.encode("utf-8"))
+            combined = "".join(lines)
             try:
-                return json.loads("".join(lines)), False
-            except json.JSONDecodeError:
+                parsed = json.loads(combined)
+                if parsed is None:
+                    return NULL_PAYLOAD, False
+                return parsed, False
+            except json.JSONDecodeError as extra_err:
+                if not _is_incomplete_json(extra_err, combined):
+                    raise MessageParseError(
+                        str(extra_err),
+                        doc=extra_err.doc,
+                        pos=extra_err.pos,
+                        is_content_length=False,
+                    ) from extra_err
                 continue
-        raise
+
+        raise MessageParseError(str(err), doc=err.doc, pos=err.pos, is_content_length=False)
 
 
 def write_message(stream, message, content_length=False):
@@ -847,6 +954,20 @@ class MCPServer:
 
         req_id = request.get("id")
         method = request.get("method")
+        if not isinstance(method, str):
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32600, "message": "Invalid Request: 'method' must be a string"},
+            }
+
+        if "params" in request and request["params"] is not None and not isinstance(request["params"], dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32602, "message": "Invalid params: 'params' must be an object"},
+            }
+
         params = request.get("params") or {}
 
         if method == "initialize":
@@ -886,7 +1007,20 @@ class MCPServer:
 
         if method == "tools/call":
             tool_name = params.get("name")
-            arguments = params.get("arguments") or {}
+            if tool_name is None or not isinstance(tool_name, str) or not tool_name.strip():
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": "Missing required argument: 'name'"},
+                }
+            arguments = params.get("arguments")
+            if arguments is not None and not isinstance(arguments, dict):
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": "Invalid params: 'arguments' must be an object"},
+                }
+            arguments = arguments or {}
             result = self.execute_tool(tool_name, arguments)
             return {
                 "jsonrpc": "2.0",
@@ -912,7 +1046,7 @@ class MCPServer:
             uri = params.get("uri")
             if not uri and "arguments" in params and isinstance(params["arguments"], dict):
                 uri = params["arguments"].get("uri")
-            if not uri:
+            if uri is None or not isinstance(uri, str) or not uri.strip():
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -949,13 +1083,20 @@ class MCPServer:
             prompt_name = params.get("name")
             if not prompt_name and "arguments" in params and isinstance(params["arguments"], dict):
                 prompt_name = params["arguments"].get("name")
-            if not prompt_name:
+            if prompt_name is None or not isinstance(prompt_name, str) or not prompt_name.strip():
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "error": {"code": -32602, "message": "Missing required argument: 'name'"},
                 }
-            arguments = params.get("arguments") or {}
+            prompt_args = params.get("arguments")
+            if prompt_args is not None and not isinstance(prompt_args, dict):
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": "Invalid params: 'arguments' must be an object"},
+                }
+            arguments = prompt_args or {}
             try:
                 result = self.get_prompt(prompt_name, arguments)
                 return {
@@ -1007,6 +1148,17 @@ class MCPServer:
 
     def read_resource(self, uri: str) -> list[dict]:
         """Read an MCP resource by URI, returning a list of resource contents."""
+        if not isinstance(uri, str):
+            raise ValueError(f"Resource URI must be a string, got {type(uri).__name__}")
+        uri = uri.strip()
+        if not uri:
+            raise ValueError("Resource URI cannot be empty")
+
+        parsed = urllib.parse.urlsplit(uri)
+        if parsed.scheme != "cbi" or not uri.startswith("cbi://"):
+            scheme_display = parsed.scheme or "none"
+            raise ValueError(f"Unsupported URI scheme: '{scheme_display}'. Only 'cbi://' URIs are supported.")
+
         if uri == "cbi://system/overview":
             text = self.handle_context({"node": "system"})
             return [{"uri": uri, "mimeType": "text/markdown", "text": text}]
@@ -1066,6 +1218,13 @@ class MCPServer:
 
     def get_prompt(self, name: str, arguments: dict | None = None) -> dict:
         """Get an MCP prompt by name and arguments."""
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Invalid prompt name: {name!r}")
+        name = name.strip()
+
+        if arguments is not None and not isinstance(arguments, dict):
+            raise ValueError("Prompt 'arguments' must be an object")
+
         args = arguments or {}
 
         if name == "cbi_architecture_orientation":
@@ -1133,8 +1292,9 @@ class MCPServer:
 
         if name == "cbi_judgement_task":
             task_id = args.get("task_id") or args.get("id")
-            if not task_id:
+            if not task_id or not str(task_id).strip():
                 raise ValueError("Missing required argument: 'task_id'")
+            task_id = str(task_id).strip()
             description = (
                 "Investigate and answer an open architectural judgement task in the codebase."
             )
@@ -2124,6 +2284,14 @@ class MCPServer:
         while True:
             try:
                 req, is_content_length = read_message(stdin)
+            except MessageParseError as err:
+                err_resp = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": f"Parse error: {err}"},
+                }
+                write_message(stdout, err_resp, content_length=err.is_content_length)
+                continue
             except Exception as err:
                 err_resp = {
                     "jsonrpc": "2.0",

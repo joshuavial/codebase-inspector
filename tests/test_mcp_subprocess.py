@@ -541,10 +541,15 @@ def test_error_handling_and_recovery_over_pipes(spawn_mcp_client):
     """Verify JSON parse error, method not found, and invalid params do not kill the server."""
     client = spawn_mcp_client()
 
-    # 1. Send malformed JSON body with Content-Length header
+    # 1a. Send malformed JSON body with Content-Length header
     bad_payload = b"{not: valid json"
     hdr = f"Content-Length: {len(bad_payload)}\r\n\r\n".encode("utf-8")
     client.send_raw(hdr + bad_payload)
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32700  # Parse error
+
+    # 1b. Send malformed newline-delimited JSON body over live pipe
+    client.send_raw(b"{invalid json\n")
     resp, _ = client.receive(timeout=5.0)
     assert resp["error"]["code"] == -32700  # Parse error
 
@@ -576,6 +581,154 @@ def test_error_handling_and_recovery_over_pipes(spawn_mcp_client):
     # 6. Valid request succeeds after errors
     resp, _ = client.request("ping", req_id=45, content_length=False)
     assert resp["id"] == 45
+    assert resp["result"] == {}
+
+    # 7. Clean shutdown
+    exit_code = client.wait_clean_shutdown()
+    assert exit_code == 0
+    _assert_process_terminated(client.proc)
+
+
+def test_newline_parse_error_recovery_over_pipes(spawn_mcp_client):
+    """Verify malformed newline-delimited JSON does not hang and server recovers immediately."""
+    client = spawn_mcp_client()
+
+    # 1. Send malformed newline JSON on live persistent pipe
+    client.send_raw(b"{invalid json\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32700
+    assert "Parse error" in resp["error"]["message"]
+
+    # 2. Server remains fully responsive immediately on same pipe
+    resp, _ = client.request("ping", req_id=101, content_length=False)
+    assert resp["id"] == 101
+    assert resp["result"] == {}
+
+    # 3. Non-JSON unparseable token on newline framing fails fast
+    client.send_raw(b"not valid json at all\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32700
+
+    # 4. Server processes subsequent tools/list request
+    resp, _ = client.request("tools/list", req_id=102, content_length=False)
+    assert resp["id"] == 102
+    assert "tools" in resp["result"]
+
+    # 5. Multiline unparseable token fails fast
+    client.send_raw(b"{\n  invalid multiline syntax\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32700
+
+    # 6. Valid ping succeeds
+    resp, _ = client.request("ping", req_id=103, content_length=False)
+    assert resp["id"] == 103
+    assert resp["result"] == {}
+
+    # 7. Clean shutdown
+    exit_code = client.wait_clean_shutdown()
+    assert exit_code == 0
+    _assert_process_terminated(client.proc)
+
+
+def test_non_dict_json_payloads_over_pipes(spawn_mcp_client):
+    """Verify non-dict JSON-RPC inputs return -32600 Invalid Request without crashing or exiting."""
+    client = spawn_mcp_client()
+
+    # 1. 'null' JSON input should return -32600 and NOT be treated as EOF
+    client.send_raw(b"null\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32600
+    assert "Invalid Request" in resp["error"]["message"]
+
+    # 2. Number JSON input
+    client.send_raw(b"12345\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32600
+
+    # 3. String JSON input
+    client.send_raw(b'"plain string payload"\n')
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32600
+
+    # 4. Boolean JSON input
+    client.send_raw(b"true\n")
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32600
+
+    # 5. Array JSON input
+    client.send_raw(b'["item1", "item2"]\n')
+    resp, _ = client.receive(timeout=5.0)
+    assert resp["error"]["code"] == -32600
+
+    # 6. Server remains alive and responsive
+    resp, _ = client.request("ping", req_id=201, content_length=False)
+    assert resp["id"] == 201
+    assert resp["result"] == {}
+
+    # 7. Clean shutdown
+    exit_code = client.wait_clean_shutdown()
+    assert exit_code == 0
+    _assert_process_terminated(client.proc)
+
+
+def test_unsupported_uri_schemes_and_invalid_prompts_over_pipes(spawn_mcp_client):
+    """Verify unsupported URI schemes and invalid prompt requests return clean -32602 errors over pipes."""
+    client = spawn_mcp_client()
+
+    # 1. Unsupported URI scheme file:///
+    resp, _ = client.request(
+        "resources/read",
+        {"uri": "file:///etc/passwd"},
+        req_id=301,
+        content_length=False,
+    )
+    assert resp["id"] == 301
+    assert resp["error"]["code"] == -32602
+    assert "Unsupported URI scheme" in resp["error"]["message"]
+
+    # 2. Unsupported URI scheme http://
+    resp, _ = client.request(
+        "resources/read",
+        {"uri": "http://example.com/resource"},
+        req_id=302,
+        content_length=False,
+    )
+    assert resp["id"] == 302
+    assert resp["error"]["code"] == -32602
+
+    # 3. Empty URI
+    resp, _ = client.request(
+        "resources/read",
+        {"uri": ""},
+        req_id=303,
+        content_length=False,
+    )
+    assert resp["id"] == 303
+    assert resp["error"]["code"] == -32602
+
+    # 4. Invalid prompt: nonexistent name
+    resp, _ = client.request(
+        "prompts/get",
+        {"name": "nonexistent_prompt"},
+        req_id=304,
+        content_length=False,
+    )
+    assert resp["id"] == 304
+    assert resp["error"]["code"] == -32602
+
+    # 5. Invalid prompt: missing required argument for judgement task
+    resp, _ = client.request(
+        "prompts/get",
+        {"name": "cbi_judgement_task", "arguments": {}},
+        req_id=305,
+        content_length=False,
+    )
+    assert resp["id"] == 305
+    assert resp["error"]["code"] == -32602
+
+    # 6. Server remains responsive
+    resp, _ = client.request("ping", req_id=306, content_length=False)
+    assert resp["id"] == 306
     assert resp["result"] == {}
 
     # 7. Clean shutdown

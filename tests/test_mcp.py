@@ -11,7 +11,10 @@ import pytest
 from cbi import prime
 from cbi.cli import main
 from cbi.mcp import (
+    MAX_MULTILINE_LINES,
     MCPServer,
+    MessageParseError,
+    NULL_PAYLOAD,
     PROMPTS,
     PROTOCOL_VERSION,
     RESOURCE_TEMPLATES,
@@ -789,6 +792,167 @@ def test_framing_content_length():
     parsed, is_cl = read_message(buf)
     assert parsed == msg
     assert is_cl is True
+
+
+def test_read_message_malformed_newline_fails_fast():
+    """Verify malformed newline-delimited JSON raises MessageParseError without consuming subsequent lines."""
+    raw_stream = io.BytesIO(
+        b"{invalid json\n"
+        b'{"jsonrpc": "2.0", "id": 1, "method": "ping"}\n'
+    )
+    with pytest.raises(MessageParseError) as exc_info:
+        read_message(raw_stream)
+    assert exc_info.value.is_content_length is False
+
+    # The next line on the stream remains intact and parses cleanly
+    parsed, is_cl = read_message(raw_stream)
+    assert parsed == {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    assert is_cl is False
+
+
+def test_read_message_multiline_buffering_and_limits():
+    """Verify multiline pretty-printed JSON parses and buffering limits are enforced."""
+    # 1. Valid multiline pretty-printed JSON
+    pretty_json = (
+        b"{\n"
+        b'  "jsonrpc": "2.0",\n'
+        b'  "id": 10,\n'
+        b'  "method": "ping"\n'
+        b"}\n"
+    )
+    buf = io.BytesIO(pretty_json)
+    parsed, is_cl = read_message(buf)
+    assert parsed == {"jsonrpc": "2.0", "id": 10, "method": "ping"}
+    assert is_cl is False
+
+    # 2. Multiline with unparseable token on line 2 fails fast without reading line 3
+    bad_multiline = io.BytesIO(
+        b"{\n"
+        b"  invalid: token\n"
+        b'{"jsonrpc": "2.0", "id": 11, "method": "ping"}\n'
+    )
+    with pytest.raises(MessageParseError) as exc_info:
+        read_message(bad_multiline)
+    assert exc_info.value.is_content_length is False
+
+    # 3. Multiline exceeding MAX_MULTILINE_LINES raises MessageParseError
+    unclosed = io.BytesIO(b"[\n" + (b"  1,\n" * (MAX_MULTILINE_LINES + 5)))
+    with pytest.raises(MessageParseError):
+        read_message(unclosed)
+
+
+def test_read_message_null_and_non_dict_payloads():
+    """Verify 'null' payload returns NULL_PAYLOAD and non-dict inputs produce -32600."""
+    server = MCPServer()
+
+    # 1. 'null' newline input returns NULL_PAYLOAD
+    buf = io.BytesIO(b"null\n")
+    parsed, is_cl = read_message(buf)
+    assert parsed is NULL_PAYLOAD
+    assert is_cl is False
+
+    # handle_request on NULL_PAYLOAD returns -32600 Invalid Request
+    resp = server.handle_request(parsed)
+    assert resp["error"]["code"] == -32600
+    assert "Invalid Request" in resp["error"]["message"]
+
+    # 2. Number input
+    buf = io.BytesIO(b"9999\n")
+    parsed, _ = read_message(buf)
+    assert parsed == 9999
+    resp = server.handle_request(parsed)
+    assert resp["error"]["code"] == -32600
+
+    # 3. String input
+    buf = io.BytesIO(b'"just a string"\n')
+    parsed, _ = read_message(buf)
+    assert parsed == "just a string"
+    resp = server.handle_request(parsed)
+    assert resp["error"]["code"] == -32600
+
+    # 4. List input
+    buf = io.BytesIO(b'["list", "not", "dict"]\n')
+    parsed, _ = read_message(buf)
+    assert isinstance(parsed, list)
+    resp = server.handle_request(parsed)
+    assert resp["error"]["code"] == -32600
+
+    # 5. Missing or invalid 'method' member in request object
+    resp = server.handle_request({"jsonrpc": "2.0", "id": 1})
+    assert resp["error"]["code"] == -32600
+    assert "method" in resp["error"]["message"]
+
+    resp = server.handle_request({"jsonrpc": "2.0", "id": 2, "method": 1234})
+    assert resp["error"]["code"] == -32600
+
+    # 6. Non-dict 'params' member returns -32602
+    resp = server.handle_request({"jsonrpc": "2.0", "id": 3, "method": "ping", "params": "not a dict"})
+    assert resp["error"]["code"] == -32602
+    assert "params" in resp["error"]["message"]
+
+
+def test_resources_read_unsupported_schemes_and_edge_cases(repo):
+    """Verify unsupported URI schemes and empty URIs return clean -32602 errors."""
+    server = MCPServer(root=repo)
+
+    for bad_uri in [
+        "file:///etc/passwd",
+        "file:///path/to/repo/src/calc.py",
+        "http://example.com/api",
+        "https://example.com/resource",
+        "ftp://ftp.example.com/file",
+        "custom://scheme/foo",
+        "cbi:no-slashes",
+        "",
+        "   ",
+    ]:
+        req = {"jsonrpc": "2.0", "id": 50, "method": "resources/read", "params": {"uri": bad_uri}}
+        resp = server.handle_request(req)
+        assert resp["id"] == 50
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
+
+    # Non-string URI
+    req = {"jsonrpc": "2.0", "id": 51, "method": "resources/read", "params": {"uri": 12345}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 51
+    assert resp["error"]["code"] == -32602
+
+
+def test_prompts_get_invalid_parameters_hardening():
+    """Verify prompt parameter validation for invalid names and arguments."""
+    server = MCPServer()
+
+    # 1. Non-string prompt names
+    for bad_name in [1234, None, "", "   "]:
+        req = {"jsonrpc": "2.0", "id": 60, "method": "prompts/get", "params": {"name": bad_name}}
+        resp = server.handle_request(req)
+        assert resp["id"] == 60
+        assert resp["error"]["code"] == -32602
+
+    # 2. Non-dict arguments parameter
+    req = {
+        "jsonrpc": "2.0",
+        "id": 61,
+        "method": "prompts/get",
+        "params": {"name": "cbi_architecture_orientation", "arguments": "not-a-dict"},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 61
+    assert resp["error"]["code"] == -32602
+
+    # 3. cbi_judgement_task with missing or empty task_id
+    for bad_id in [None, "", "   "]:
+        args = {"task_id": bad_id} if bad_id is not None else {}
+        req = {
+            "jsonrpc": "2.0",
+            "id": 62,
+            "method": "prompts/get",
+            "params": {"name": "cbi_judgement_task", "arguments": args},
+        }
+        resp = server.handle_request(req)
+        assert resp["id"] == 62
+        assert resp["error"]["code"] == -32602
 
 
 def test_stdio_loop(repo):
