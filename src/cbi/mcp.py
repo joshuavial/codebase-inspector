@@ -17,6 +17,7 @@ import sqlite3
 import sys
 import threading
 import time
+import urllib.parse
 from pathlib import Path
 
 from cbi import (
@@ -599,6 +600,90 @@ TOOLS = [
     },
 ]
 
+RESOURCES = [
+    {
+        "uri": "cbi://system/overview",
+        "name": "System Architecture Overview",
+        "description": "High-level architecture overview, concepts, key components, and boundaries",
+        "mimeType": "text/markdown",
+    },
+    {
+        "uri": "cbi://model/status",
+        "name": "CBI Model Status",
+        "description": "Codebase scan state, task counts, and codebase diagnostics",
+        "mimeType": "application/json",
+    },
+    {
+        "uri": "cbi://model/schema",
+        "name": "CBI Database Schema",
+        "description": "SQLite schema of model.db",
+        "mimeType": "text/plain",
+    },
+    {
+        "uri": "cbi://concepts",
+        "name": "Architecture Concepts Map",
+        "description": "List of architectural concepts and mapped nodes",
+        "mimeType": "application/json",
+    },
+]
+
+RESOURCE_TEMPLATES = [
+    {
+        "uriTemplate": "cbi://node/{id}",
+        "name": "Node Details",
+        "description": "Detailed architecture information, relationships, tests, and diagnostics for any node",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "cbi://context/{node}",
+        "name": "Node Context Brief",
+        "description": "Context brief for an agent working on a file, symbol, or concept",
+        "mimeType": "text/markdown",
+    },
+]
+
+PROMPTS = [
+    {
+        "name": "cbi_architecture_orientation",
+        "description": "Guide an agent through onboarding and understanding this codebase architecture using CBI.",
+        "arguments": [
+            {
+                "name": "focus",
+                "description": "Optional architectural concept, component, or area to focus on",
+                "required": False,
+            }
+        ],
+    },
+    {
+        "name": "cbi_review_pr",
+        "description": "Perform an architectural code review of changes between git base and head.",
+        "arguments": [
+            {
+                "name": "base",
+                "description": "Base git ref (e.g. main)",
+                "required": False,
+            },
+            {
+                "name": "head",
+                "description": "Head git ref or working tree",
+                "required": False,
+            },
+        ],
+    },
+    {
+        "name": "cbi_judgement_task",
+        "description": "Investigate and answer an open architectural judgement task in the codebase.",
+        "arguments": [
+            {
+                "name": "task_id",
+                "description": "ID of the judgement task to investigate",
+                "required": True,
+            }
+        ],
+    },
+]
+
+
 
 def read_message(stream):
     """Read one JSON-RPC message from a text or binary stream.
@@ -770,7 +855,11 @@ class MCPServer:
                 "id": req_id,
                 "result": {
                     "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {"tools": {}},
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {"subscribe": False, "listChanged": False},
+                        "prompts": {"listChanged": False},
+                    },
                     "serverInfo": {
                         "name": SERVER_NAME,
                         "version": SERVER_VERSION,
@@ -805,6 +894,88 @@ class MCPServer:
                 "result": result,
             }
 
+        if method == "resources/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"resources": RESOURCES},
+            }
+
+        if method == "resources/templates/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"resourceTemplates": RESOURCE_TEMPLATES},
+            }
+
+        if method == "resources/read":
+            uri = params.get("uri")
+            if not uri and "arguments" in params and isinstance(params["arguments"], dict):
+                uri = params["arguments"].get("uri")
+            if not uri:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": "Missing required argument: 'uri'"},
+                }
+            try:
+                contents = self.read_resource(uri)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"contents": contents},
+                }
+            except (ValueError, FileNotFoundError) as err:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": str(err)},
+                }
+            except Exception as err:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32603, "message": f"Error reading resource: {err}"},
+                }
+
+        if method == "prompts/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"prompts": PROMPTS},
+            }
+
+        if method == "prompts/get":
+            prompt_name = params.get("name")
+            if not prompt_name and "arguments" in params and isinstance(params["arguments"], dict):
+                prompt_name = params["arguments"].get("name")
+            if not prompt_name:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": "Missing required argument: 'name'"},
+                }
+            arguments = params.get("arguments") or {}
+            try:
+                result = self.get_prompt(prompt_name, arguments)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": result,
+                }
+            except (ValueError, FileNotFoundError) as err:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": str(err)},
+                }
+            except Exception as err:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32603, "message": f"Error getting prompt: {err}"},
+                }
+
         # If it's a notification, ignore unknown methods without responding
         if req_id is None:
             return None
@@ -833,6 +1004,172 @@ class MCPServer:
                 "content": [{"type": "text", "text": f"Error: {err}"}],
                 "isError": True,
             }
+
+    def read_resource(self, uri: str) -> list[dict]:
+        """Read an MCP resource by URI, returning a list of resource contents."""
+        if uri == "cbi://system/overview":
+            text = self.handle_context({"node": "system"})
+            return [{"uri": uri, "mimeType": "text/markdown", "text": text}]
+
+        if uri == "cbi://model/status":
+            text = self.handle_status({"format": "json"})
+            return [{"uri": uri, "mimeType": "application/json", "text": text}]
+
+        if uri == "cbi://model/schema":
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT sql FROM sqlite_master
+                    WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+                    ORDER BY
+                        CASE type
+                            WHEN 'table' THEN 1
+                            WHEN 'index' THEN 2
+                            WHEN 'view' THEN 3
+                            ELSE 4
+                        END,
+                        name ASC
+                    """
+                ).fetchall()
+                statements = []
+                for r in rows:
+                    sql = (r[0] or "").strip()
+                    if sql:
+                        if not sql.endswith(";"):
+                            sql += ";"
+                        statements.append(sql)
+                ddl_text = "\n\n".join(statements)
+                return [{"uri": uri, "mimeType": "text/plain", "text": ddl_text}]
+            finally:
+                conn.close()
+
+        if uri == "cbi://concepts":
+            text = self.handle_concepts({"format": "json"})
+            return [{"uri": uri, "mimeType": "application/json", "text": text}]
+
+        if uri.startswith("cbi://node/"):
+            node_id = urllib.parse.unquote(uri[len("cbi://node/"):])
+            if not node_id.strip():
+                raise ValueError(f"Unknown resource URI: {uri}")
+            text = self.handle_show({"node": node_id, "format": "json"})
+            return [{"uri": uri, "mimeType": "application/json", "text": text}]
+
+        if uri.startswith("cbi://context/"):
+            node = urllib.parse.unquote(uri[len("cbi://context/"):])
+            if not node.strip():
+                raise ValueError(f"Unknown resource URI: {uri}")
+            text = self.handle_context({"node": node})
+            return [{"uri": uri, "mimeType": "text/markdown", "text": text}]
+
+        raise ValueError(f"Unknown resource URI: {uri}")
+
+    def get_prompt(self, name: str, arguments: dict | None = None) -> dict:
+        """Get an MCP prompt by name and arguments."""
+        args = arguments or {}
+
+        if name == "cbi_architecture_orientation":
+            focus = args.get("focus")
+            description = (
+                "Guide an agent through onboarding and understanding this codebase architecture using CBI."
+            )
+            text_lines = [
+                "Welcome! You are onboarding to this codebase. Use Codebase Inspector (CBI) to understand its architecture.",
+                "",
+                "Recommended orientation workflow:",
+                "1. Start by calling `cbi_prime` (or reading resource `cbi://system/overview`) for the architecture overview, core concepts, and scan status.",
+                "2. Check `cbi_status` (or resource `cbi://model/status`) to see scan state, component counts, diagnostics, and open tasks.",
+                "3. Inspect `cbi_concepts` (or resource `cbi://concepts`) to discover architectural concepts, module boundaries, and relationships.",
+                "4. Use `cbi_context` (or resource `cbi://context/{node}`) to drill into specific files, symbols, or concepts.",
+                "5. Detect structural patterns and health with `cbi_cycles`, `cbi_orphans`, `cbi_deps`, and `cbi_endpoints`.",
+            ]
+            if focus:
+                text_lines.extend([
+                    "",
+                    f"Focus Area: '{focus}'",
+                    f"You have been asked to focus specifically on '{focus}'.",
+                    f"Begin by inspecting `cbi_context(node='{focus}')` and `cbi_concepts(concept_id='{focus}')` to understand its role and dependencies.",
+                ])
+            return {
+                "description": description,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "text",
+                            "text": "\n".join(text_lines),
+                        },
+                    }
+                ],
+            }
+
+        if name == "cbi_review_pr":
+            base = args.get("base") or "main"
+            head = args.get("head") or "HEAD"
+            description = "Perform an architectural code review of changes between git base and head."
+            text_lines = [
+                f"Perform an architectural code review comparing base '{base}' and head '{head}'.",
+                "",
+                "Review checklist:",
+                f"1. Run `cbi_diff(base='{base}', head='{head}')` to inspect architectural changes across concepts, components, and untested changes.",
+                f"2. Run `cbi_review(target='{head}', base='{base}')` to generate the visual Mermaid change diagram and concept-level summary.",
+                f"3. Run `cbi_check(base='{base}')` to verify that architectural maps and judgements are consistent with changed files (when checked out on '{head}'; use `cbi_worktrees` if an isolated worktree is needed for that head).",
+                f"4. Check for boundary violations or unwanted dependencies across concepts using `cbi_deps` (on the model corresponding to '{head}').",
+                "5. Verify test coverage for all modified or newly introduced code paths.",
+                "6. Provide a concise architectural review summary highlighting risks, untested areas, and suggested improvements.",
+            ]
+            return {
+                "description": description,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "text",
+                            "text": "\n".join(text_lines),
+                        },
+                    }
+                ],
+            }
+
+        if name == "cbi_judgement_task":
+            task_id = args.get("task_id") or args.get("id")
+            if not task_id:
+                raise ValueError("Missing required argument: 'task_id'")
+            description = (
+                "Investigate and answer an open architectural judgement task in the codebase."
+            )
+            try:
+                task_info = self.handle_task({"id": task_id, "format": "text"})
+            except Exception as err:
+                task_info = f"(Unable to retrieve task details: {err})"
+
+            text_lines = [
+                f"You are assigned to investigate and resolve architectural judgement task '{task_id}'.",
+                "",
+                "Task Brief and Information:",
+                task_info,
+                "",
+                "Resolution steps:",
+                "1. Read the brief, questions, and required answer schema above.",
+                "2. Investigate the codebase using `cbi_show`, `cbi_context`, `cbi_search`, or reading files.",
+                f"3. If this task has large briefs or parts, use `cbi_task(task_id='{task_id}', parts=True)` to inspect parts.",
+                f"4. Pre-validate your answer format with `cbi_task(task_id='{task_id}', check=...)` before submitting.",
+                f"5. Submit your final answer using `cbi_submit(task_id='{task_id}', answer=...)`.",
+            ]
+            return {
+                "description": description,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "text",
+                            "text": "\n".join(text_lines),
+                        },
+                    }
+                ],
+            }
+
+        raise ValueError(f"Unknown prompt: {name}")
 
     def handle_scan(self, args: dict) -> str:
         from cbi import cli
@@ -1087,7 +1424,7 @@ class MCPServer:
     def handle_tasks(self, args: dict) -> str:
         conn = self._get_connection()
         try:
-            task_id = args.get("task_id")
+            task_id = args.get("task_id") or args.get("id")
             fmt = args.get("format", "text")
             as_json = fmt == "json"
 
@@ -1118,7 +1455,7 @@ class MCPServer:
             conn.close()
 
     def handle_submit(self, args: dict) -> str:
-        task_id = args.get("task_id")
+        task_id = args.get("task_id") or args.get("id")
         if not task_id:
             raise ValueError("Missing required argument: 'task_id'")
 
@@ -1603,7 +1940,7 @@ class MCPServer:
             conn.close()
 
     def handle_task(self, args: dict) -> str:
-        task_id = args.get("task_id")
+        task_id = args.get("task_id") or args.get("id")
         if not task_id:
             raise ValueError("Missing required argument: 'task_id'")
 
