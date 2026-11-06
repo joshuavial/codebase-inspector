@@ -36,3 +36,25 @@ def quiet(): pass
     assert result['diagnostics']['unmatched_http_call']['resolution_boundaries'] == {
         'dynamic_client': 2, 'external_callback_candidate': 1, 'static_unresolved': 1,
     }
+
+
+def test_external_http_calls_not_flagged_as_unmatched(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        'client.py': '''import requests
+
+RELEASES_URL = "https://api.github.com/repos/org/repo/releases/latest"
+
+def check_updates():
+    return requests.get(RELEASES_URL)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0
+    assert main(['scan']) == 0
+    capsys.readouterr()
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        diags = conn.execute("SELECT detail FROM diagnostics WHERE kind='unmatched_http_call'").fetchall()
+    assert diags == []
+    assert main(['status', '--json']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert 'unmatched_http_call' not in result['diagnostics']

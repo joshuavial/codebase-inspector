@@ -7,7 +7,7 @@ Test files yield empty lists: mock fetches are not client calls.
 
 from urllib.parse import urlsplit
 
-from cbi.parse.http_paths import from_pieces, has_literal, is_api_href, join_path, normalise
+from cbi.parse.http_paths import from_pieces, has_literal, is_api_href, is_external_origin, join_path, normalise
 
 VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
 CLIENTS = {"fetch", "axios", "ky", "httpx", "requests"}
@@ -1255,12 +1255,14 @@ def _value_pieces(node, lang, frame):
 
 
 def _without_origin(text):
-    """A literal URL origin does not consume segments in the server route."""
+    """A literal URL origin does not consume segments in the server route, unless targeting an external service."""
     try:
         absolute = urlsplit(text)
     except ValueError:
         return text
     if absolute.scheme not in ("http", "https") or not absolute.netloc:
+        return text
+    if is_external_origin(absolute.netloc):
         return text
     path = absolute.path or "/"
     if absolute.query:

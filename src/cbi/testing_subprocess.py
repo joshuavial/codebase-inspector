@@ -2,6 +2,7 @@
 import ast
 import posixpath
 
+from cbi.testing_paths import PathValue, evaluate
 from cbi.testing_static import owner, python_modules
 
 OPERATIONS = {'run', 'Popen', 'call', 'check_call', 'check_output'}
@@ -63,11 +64,66 @@ def _local_names(scope):
     return found
 
 
+def _target_file(model, fid, value):
+    if isinstance(value, PathValue):
+        if value.anchored:
+            wid = model.files[fid][0]
+            found = model.by_path[wid].get(value.path)
+            if found:
+                return found
+        value = value.path
+    if isinstance(value, str) and value:
+        return model.read_target(fid, value)
+    return None
+
+
+def _file_bindings(tree, own):
+    values = {}
+    aliases = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Import):
+            for item in stmt.names:
+                aliases[item.asname or item.name.split('.')[0]] = item.name if item.asname else item.name.split('.')[0]
+        elif isinstance(stmt, ast.ImportFrom):
+            for item in stmt.names:
+                aliases[item.asname or item.name] = f"{stmt.module}.{item.name}"
+        elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            val = evaluate(stmt.value, values, aliases, own)
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    values[target.id] = val
+    return values, aliases
+
+
+def _scope_bindings(scope, line, values, aliases, own):
+    local_values = dict(values)
+    local_aliases = dict(aliases)
+    for stmt in scope.body:
+        if getattr(stmt, 'lineno', 0) >= line:
+            break
+        if isinstance(stmt, ast.Import):
+            for item in stmt.names:
+                local_aliases[item.asname or item.name.split('.')[0]] = item.name if item.asname else item.name.split('.')[0]
+        elif isinstance(stmt, ast.ImportFrom):
+            for item in stmt.names:
+                local_aliases[item.asname or item.name] = f"{stmt.module}.{item.name}"
+        elif isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            val = evaluate(stmt.value, local_values, local_aliases, own)
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    local_values[target.id] = val
+    return local_values, local_aliases
+
+
 def link(model, edges, add):
     diagnostics = []
     for fid, tree in python_modules(model).items():
         if model.files[fid][2] != 'test':
             continue
+        own = model.files[fid][1]
+        module_values, module_aliases = _file_bindings(tree, own)
         aliases = _scope_imports(tree)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         for call in ast.walk(tree):
@@ -105,6 +161,10 @@ def link(model, edges, add):
             name = local_aliases.get(first, first) + (dot + rest if dot else '')
             if name not in {'subprocess.' + operation for operation in OPERATIONS}:
                 continue
+            call_values = dict(module_values)
+            call_path_aliases = dict(module_aliases)
+            for scope in reversed(scopes):
+                call_values, call_path_aliases = _scope_bindings(scope, call.lineno, call_values, call_path_aliases, own)
             args = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == 'args'), None)
             src = model.test_owner(owner(model, fid, call))
             targets = set()
@@ -142,11 +202,19 @@ def link(model, edges, add):
                                     targets.add(dst)
                     # Inline code may use runtime paths/imports: visible imports are only partial evidence.
                     supported = False
-                elif program and not program.startswith('-'):
-                    dst = model.read_target(fid, program)
-                    if dst:
-                        targets.add(dst)
-                    supported = bool(dst)
+                else:
+                    for elt in argv[offset:]:
+                        lit = _literal(elt)
+                        val = lit if lit is not None else evaluate(elt, call_values, call_path_aliases, own)
+                        if isinstance(val, (str, PathValue)):
+                            path_str = val.path if isinstance(val, PathValue) else val
+                            if path_str.startswith('-'):
+                                continue
+                            dst = _target_file(model, fid, val)
+                            if dst:
+                                targets.add(dst)
+                                supported = True
+                                break
             for dst in sorted(targets):
                 if dst != fid:
                     add(src, dst, 'tests', 'treesitter', 0.8, {'via': 'subprocess'})

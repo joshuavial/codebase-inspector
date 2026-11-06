@@ -10,7 +10,7 @@ It does not import `resolve` (that module imports this one).
 import json
 from collections import defaultdict
 
-from cbi.parse.http_paths import from_pieces, has_literal, is_api_href, is_param, join_path, normalise, segments
+from cbi.parse.http_paths import from_pieces, has_literal, is_api_href, is_external_url, is_param, join_path, normalise, segments
 
 VERBS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 TEST_DIRS = {"test", "tests", "__tests__"}
@@ -184,7 +184,7 @@ def _dynamic_consumer(client, server):
 
 
 def _route_boundary(route, calls):
-    if any(method == route["method"] and _dynamic_consumer(path, route["path"])
+    if any(method == route["method"] and not is_external_url(path) and _dynamic_consumer(path, route["path"])
            for _caller, method, path in calls):
         return "dynamic_client", "a dynamic/generic client may consume this route; binding unresolved"
     words = {part.lower().replace("-", "_") for part in segments(route["path"])}
@@ -280,6 +280,8 @@ def link(model):
     edges = []
     diagnostics = sorted(unresolved_calls)
     for (caller, method, path), weight in sorted(grouped.items()):
+        if is_external_url(path):
+            continue
         best = None
         best_rank = None
         for route in by_method.get(method, ()):

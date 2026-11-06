@@ -1,8 +1,41 @@
 """Normalise HTTP paths and extract path segments."""
 
+from urllib.parse import urlsplit
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+LOCAL_TLDS = (".local", ".test", ".example", ".invalid", ".localhost")
+
+
+def is_external_origin(netloc):
+    if not netloc:
+        return False
+    host = netloc.split(":")[0].lower()
+    if host in LOCAL_HOSTS or any(host.endswith(tld) for tld in LOCAL_TLDS):
+        return False
+    return True
+
+
+def is_external_url(path):
+    if not path or not isinstance(path, str):
+        return False
+    try:
+        absolute = urlsplit(path)
+    except ValueError:
+        return False
+    return (absolute.scheme in ("http", "https") and bool(absolute.netloc)
+            and is_external_origin(absolute.netloc))
+
 
 def segments(path):
-    return [part for part in (path or "").split("/") if part]
+    if not path:
+        return []
+    try:
+        absolute = urlsplit(path)
+    except ValueError:
+        absolute = None
+    if absolute and absolute.scheme in ("http", "https") and absolute.netloc:
+        path = absolute.path or "/"
+    return [part for part in path.split("/") if part]
 
 
 def is_param(segment):
@@ -39,29 +72,48 @@ def normalise(path):
     text = str(path).split("?", 1)[0].split("#", 1)[0].strip()
     if not text:
         return None
+    origin = ""
+    try:
+        absolute = urlsplit(text)
+    except ValueError:
+        absolute = None
+    if absolute and absolute.scheme in ("http", "https") and absolute.netloc:
+        origin = f"{absolute.scheme}://{absolute.netloc}"
+        text = absolute.path or ""
     if not text.startswith("/"):
         text = "/" + text
     parts = [_norm_seg(part) for part in text.split("/") if part]
     if not parts:
-        return "/"
-    return "/" + "/".join(parts)
+        return f"{origin}/" if origin else "/"
+    return f"{origin}/" + "/".join(parts) if origin else "/" + "/".join(parts)
 
 
 def join_path(*parts):
     """Join prefix pieces. `""` and `"/"` add no segment, so a bare slash is not a segment."""
-    segs = []
+    origin = ""
+    cleaned_parts = []
     for part in parts:
         if part is None:
             continue
         text = str(part).strip()
         if not text or text == "/":
             continue
+        if not origin and not cleaned_parts:
+            try:
+                absolute = urlsplit(text)
+            except ValueError:
+                absolute = None
+            if absolute and absolute.scheme in ("http", "https") and absolute.netloc:
+                origin = f"{absolute.scheme}://{absolute.netloc}"
+                text = absolute.path or ""
+        cleaned_parts.append(text)
+    segs = []
+    for text in cleaned_parts:
         for seg in text.split("/"):
             if seg:
                 segs.append(_norm_seg(seg))
-    if not segs:
-        return "/"
-    return "/" + "/".join(segs)
+    path = "/" + "/".join(segs) if segs else "/"
+    return f"{origin}{path}" if origin else path
 
 
 def from_pieces(pieces):

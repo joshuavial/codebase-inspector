@@ -67,7 +67,7 @@ def evaluate(node, values, aliases, own):
         return None
     name = dotted(node.func, aliases)
     args = [evaluate(arg, values, aliases, own) for arg in node.args]
-    if name in {"pathlib.Path", "pathlib.PurePath", "pathlib.PurePosixPath"} and args:
+    if name in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and args:
         base = args[0] if isinstance(args[0], PathValue) else PathValue(args[0]) if isinstance(args[0], str) else None
         if base and all(isinstance(arg, str) for arg in args[1:]):
             return PathValue(posixpath.normpath(posixpath.join(base.path, *args[1:])), base.anchored)
@@ -87,6 +87,10 @@ def evaluate(node, values, aliases, own):
         if isinstance(base, PathValue):
             if node.func.attr in {"resolve", "absolute"} and not args:
                 return base
+            if node.func.attr == "with_name" and len(args) == 1 and isinstance(args[0], str):
+                return PathValue(posixpath.normpath(posixpath.join(posixpath.dirname(base.path), args[0])), base.anchored)
+            if node.func.attr == "with_suffix" and len(args) == 1 and isinstance(args[0], str):
+                return PathValue(posixpath.splitext(base.path)[0] + args[0], base.anchored)
             if node.func.attr == "joinpath" and args and all(isinstance(arg, str) for arg in args):
                 return PathValue(posixpath.normpath(posixpath.join(base.path, *args)), base.anchored)
             if node.func.attr in {"glob", "rglob"} and len(args) == 1 and isinstance(args[0], str):
