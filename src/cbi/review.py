@@ -103,7 +103,7 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
     spec = resolve_target(root, target, base)
     base_sha = files.resolve_commit(root, spec["base"])
     head_sha = files.resolve_commit(root, spec["head"])
-    from cbi.cli import scan_ref
+    from cbi.scan import scan_ref
     scan_ref(root, model, base_sha)
     scan_ref(root, model, head_sha)
     base_conn = diff.open_model(model / "refs" / base_sha)

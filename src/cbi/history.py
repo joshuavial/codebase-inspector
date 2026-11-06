@@ -257,7 +257,7 @@ def _narrative(conn, entry):
 
 def _project_model(root, out, sha, current_text, current_conn):
     """Scan one immutable ref, then apply today's concepts to its file set."""
-    from cbi.cli import scan_ref
+    from cbi.scan import scan_ref
 
     resolved, reused, _counts, _open = scan_ref(root, out, sha)
     home = out / "refs" / resolved

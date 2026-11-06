@@ -143,6 +143,7 @@
             "src/cbi/cli.py",
             "src/cbi/editor.py",
             "src/cbi/mcp.py",
+            "src/cbi/scan.py",
             "tests/test_bug_report.py",
             "tests/test_check.py",
             "tests/test_cli.py",

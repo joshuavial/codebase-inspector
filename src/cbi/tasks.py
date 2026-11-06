@@ -1203,6 +1203,33 @@ def format_brief(b):
     return _format_tail(b, lines)
 
 
+def brief_text(b):
+    """Full formatted brief text for any task kind, including define-concepts and summarise-files."""
+    if b["kind"] == "define-concepts":
+        return concepts.format_brief(b)
+    if b["kind"] == "sketch-screens":
+        return screens.format_brief(b)
+    if b["kind"] != "summarise-files":
+        return format_brief(b)
+    lines = [f"# Task {b['id']}: {b['kind']} ({b['state']})", f"node: {b['node_id']}", f"input_hash: {b['input_hash']}", "",
+             b["instructions"], ""]
+    for f in b["files"]:
+        lines.append(f"## {f['path']}  (content {f['content_hash'][:12]})")
+        for o in f["outline"]:
+            lines.append(f"  {o['display_kind']:<12} L{o['lines']:<9} {o['signature']}")
+            if o["doc"]:
+                lines.append(f"  {'':<12} {'':<10} {o['doc'].splitlines()[0]}")
+        lines.append("")
+    example = {"input_hash": b["input_hash"], "files": [{"path": f["path"], "summary": "..."} for f in b["files"]]}
+    lines += ["## Answer schema", json.dumps(b["answer_schema"], indent=2), "", "## Answer template",
+              json.dumps(example, indent=2), "",
+              f"Submit with: cbi submit {b['id']} answer.json   (or pipe the JSON to `cbi submit {b['id']} -`)"]
+    return "\n".join(lines)
+
+
+_brief_text = brief_text
+
+
 def _check(value, schema, path, errors, root=None):
     """Collect `<json path>: <problem>` strings for value against a small JSON Schema subset."""
     root = schema if root is None else root

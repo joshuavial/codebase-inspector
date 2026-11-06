@@ -172,8 +172,7 @@ def models_for_refs(base_ref, head_ref, root=None, out=None):
     Models land at <out>/refs/<sha>/model.db. out defaults to <root>/.cbi.
     The directory must already contain an ignore file (`cbi init`).
     """
-    # cli imports this module, so the scan entry point is imported here.
-    from cbi.cli import scan_ref
+    from cbi.scan import scan_ref
 
     root = Path(root) if root else files.repo_root(Path.cwd())
     out = Path(out) if out else root / ".cbi"

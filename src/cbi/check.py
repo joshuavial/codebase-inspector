@@ -52,7 +52,7 @@ _TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{24,}")
 
 
 def run(root, out, base_ref, fmt, scan):
-    """Scan, report, and restore judgement files. `scan` is `cbi.cli.scan`."""
+    """Scan, report, and restore judgement files. `scan` is `cbi.scan.scan`."""
     root, out = Path(root), Path(out)
     if not (out / "ignore").exists():
         print(f"{out} is not initialised. Run `cbi init` first.", file=sys.stderr)
@@ -85,8 +85,8 @@ def verify(root, out, base_ref=None, scan=None):
         raise FileNotFoundError(f"{out} is not initialised. Run `cbi init` first.")
     base = base_sha(root, base_ref)
     if scan is None:
-        from cbi import cli
-        scan = cli.scan
+        from cbi import scan as scan_pipeline
+        scan = scan_pipeline.scan
     saved = snapshot(out)
     try:
         scan(root, out)

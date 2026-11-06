@@ -1172,7 +1172,7 @@ class MCPServer:
         raise ValueError(f"Unknown prompt: {name}")
 
     def handle_scan(self, args: dict) -> str:
-        from cbi import cli
+        from cbi import scan as scan_pipeline
 
         ref = args.get("ref")
         fmt = args.get("format", "text")
@@ -1202,10 +1202,10 @@ class MCPServer:
             start = time.perf_counter()
             try:
                 if ref:
-                    sha, shortcut, counts, task_counts = cli.scan_ref(root, out, ref)
+                    sha, shortcut, counts, task_counts = scan_pipeline.scan_ref(root, out, ref)
                 else:
                     sha = None
-                    shortcut, counts, task_counts = cli.scan(root, out)
+                    shortcut, counts, task_counts = scan_pipeline.scan(root, out)
             except (files.NotARepo, files.BadRef) as err:
                 raise ValueError(str(err)) from err
 
@@ -1226,7 +1226,7 @@ class MCPServer:
                 lines.append(sha)
                 status = "reused" if shortcut else "scanned"
             else:
-                excluded = files.excluded_source_files(root, files.Ignore(cli._read(out / "ignore") or ""))
+                excluded = files.excluded_source_files(root, files.Ignore(scan_pipeline._read(out / "ignore") or ""))
                 lines.append(f"Excluded tracked executable files: {len(excluded)} (by ignore rules)")
                 status = "no changes since the last scan" if shortcut else "scanned"
             lines.append(f"{status} in {elapsed:.1f} s")
@@ -1435,8 +1435,7 @@ class MCPServer:
                     return f"Unknown task: {err}"
                 if as_json:
                     return json.dumps(b, indent=2)
-                from cbi.cli import _brief_text
-                return _brief_text(b).rstrip()
+                return tasks.brief_text(b).rstrip()
 
             kind = args.get("kind")
             limit = args.get("limit", 20)
@@ -2007,8 +2006,7 @@ class MCPServer:
                     return parts.json_part(part["brief"]).rstrip()
                 return part["text"].rstrip()
 
-            from cbi.cli import _brief_text
-            text = _brief_text(b)
+            text = tasks.brief_text(b)
             stamped = tasks.sized(parts.insert_note(text, parts.over_note(b, text)))
             if as_json:
                 payload = dict(b)
@@ -2091,7 +2089,7 @@ class MCPServer:
             return "\n".join(lines)
 
     def handle_init(self, args: dict) -> str:
-        from cbi import cli
+        from cbi import scan as scan_pipeline
 
         team = bool(args.get("team", False))
         fmt = args.get("format", "text")
@@ -2101,7 +2099,7 @@ class MCPServer:
         with self._scan_lock, self._stdout_lock:
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                cli.init_repo(self.root, self.out, team_mode=team)
+                scan_pipeline.init_repo(self.root, self.out, team_mode=team)
             output = buf.getvalue().strip()
 
             if fmt == "json":
