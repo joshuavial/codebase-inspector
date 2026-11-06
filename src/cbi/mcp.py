@@ -67,6 +67,33 @@ TOOLS = [
         },
     },
     {
+        "name": "cbi_show",
+        "description": "Show detailed information about a node (file, function, class, concept, endpoint, etc.) including attributes, children, relationships, tests, and diagnostics.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "node": {
+                    "type": "string",
+                    "description": "Node ID, repo-relative path, path#qualified.name, or symbol name.",
+                },
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Minimum edge confidence floor (e.g. 0.8).",
+                },
+                "all": {
+                    "type": "boolean",
+                    "description": "Do not cap relationships or tests at 10 (default: false).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": ["node"],
+        },
+    },
+    {
         "name": "cbi_tests_for",
         "description": "List the tests linked to a node (file, function, class, or folder).",
         "inputSchema": {
@@ -181,6 +208,23 @@ TOOLS = [
                 },
             },
             "required": [],
+        },
+    },
+    {
+        "name": "cbi_submit",
+        "description": "Submit an answer for an open judgement task (e.g. summarise-architecture-change, summarise-files, define-concepts).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "ID of the open judgement task.",
+                },
+                "answer": {
+                    "description": "Answer JSON object or serialized string matching the task's answer schema.",
+                },
+            },
+            "required": ["task_id", "answer"],
         },
     },
     {
@@ -491,11 +535,13 @@ class MCPServer:
         self.handlers = {
             "cbi_status": self.handle_status,
             "cbi_context": self.handle_context,
+            "cbi_show": self.handle_show,
             "cbi_tests_for": self.handle_tests_for,
             "cbi_search": self.handle_search,
             "cbi_hotspots": self.handle_hotspots,
             "cbi_diff": self.handle_diff,
             "cbi_tasks": self.handle_tasks,
+            "cbi_submit": self.handle_submit,
             "cbi_query": self.handle_query,
             "cbi_concepts": self.handle_concepts,
             "cbi_cycles": self.handle_cycles,
@@ -520,6 +566,19 @@ class MCPServer:
                 f"{self.model_path} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
             )
         tasks.attach_cache(conn, readonly=True)
+        return conn
+
+    def _get_write_connection(self):
+        if not self.model_path.is_file():
+            raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
+        conn = store.open_db(self.model_path)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != store.SCHEMA_VERSION:
+            conn.close()
+            raise sqlite3.DatabaseError(
+                f"{self.model_path} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
+            )
+        tasks.attach_cache(conn, readonly=False)
         return conn
 
     def handle_request(self, request: dict) -> dict | None:
@@ -647,6 +706,55 @@ class MCPServer:
         finally:
             conn.close()
 
+    def handle_show(self, args: dict) -> str:
+        node_ref = args.get("node")
+        if not node_ref:
+            raise ValueError("Missing required argument: 'node'")
+
+        min_confidence = args.get("min_confidence")
+        if min_confidence is not None:
+            try:
+                min_confidence = float(min_confidence)
+            except (TypeError, ValueError) as err:
+                raise ValueError(f"Invalid min_confidence: {min_confidence}") from err
+            if not (0.0 <= min_confidence <= 1.0):
+                raise ValueError("min_confidence must be between 0 and 1")
+
+        all_flag = bool(args.get("all", False))
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+        as_json = fmt == "json"
+
+        conn = self._get_connection()
+        try:
+            err_buf = io.StringIO()
+            with self._stdout_lock:
+                with contextlib.redirect_stderr(err_buf):
+                    found = query._one(conn, node_ref, as_json=False)
+            if not found:
+                err_msg = err_buf.getvalue().strip()
+                raise ValueError(err_msg or f"No node matches {node_ref!r}")
+
+            out_buf = io.StringIO()
+            err_buf = io.StringIO()
+            ns = argparse.Namespace(
+                node=found,
+                min_confidence=min_confidence,
+                all=all_flag,
+                json=as_json,
+            )
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                    code = query.show(conn, ns)
+            out = out_buf.getvalue()
+            err = err_buf.getvalue()
+            if code != 0 and err and not out:
+                raise ValueError(err.strip())
+            return (out or err).rstrip()
+        finally:
+            conn.close()
+
     def handle_tests_for(self, args: dict) -> str:
         target = args.get("target") or args.get("node")
         if not target:
@@ -770,6 +878,32 @@ class MCPServer:
             return "\n".join(lines)
         finally:
             conn.close()
+
+    def handle_submit(self, args: dict) -> str:
+        task_id = args.get("task_id")
+        if not task_id:
+            raise ValueError("Missing required argument: 'task_id'")
+
+        if "answer" not in args or args["answer"] is None:
+            raise ValueError("Missing required argument: 'answer'")
+
+        answer = args["answer"]
+        if isinstance(answer, (dict, list)):
+            text = json.dumps(answer)
+        elif isinstance(answer, str):
+            text = answer
+        else:
+            text = json.dumps(answer)
+
+        with self._scan_lock:
+            conn = self._get_write_connection()
+            try:
+                report = tasks.submit(conn, task_id, text, self.root, self.out)
+                return report
+            except (tasks.AnswerError, tasks.UnknownTask) as err:
+                raise ValueError(str(err)) from err
+            finally:
+                conn.close()
 
     def handle_query(self, args: dict) -> str:
         sql = (args.get("sql") or "").strip()
