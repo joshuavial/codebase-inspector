@@ -1,13 +1,7 @@
 # Codebase Inspector (cbi)
 
-<!-- SWAPPABLE HEADLINE START -->
-<!-- Option A (Recommended based on demand evidence): Agent Codebase Map -->
-> **The deterministic, local codebase map for AI coding agents.**
-> Give Claude Code, Codex, and Gemini an instant structural index of your repository. 100% local AST parsing, tests linked to code, zero LLM tokens to scan.
-<!-- Option B (Alternative): Deterministic Architecture PR Review -->
-<!-- > **Deterministic architecture review for pull requests and CI.** -->
-<!-- > See what a PR changed in your system's shape with Mermaid diagrams, before/after visual maps, and zero-token CI gates. -->
-<!-- SWAPPABLE HEADLINE END -->
+> **Fast, deterministic codebase map for AI coding agents.**
+> 100% local, links tests to code, eliminates grep loops, zero LLM tokens.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
@@ -16,7 +10,6 @@
 
 ## 30-Second Demo
 
-<!-- Placeholder for docs/images/cbi-demo.gif (see docs/launch-metadata.md for storyboard) -->
 ```
 $ cbi scan
 scanned in 6.9 s (95 classes, 122 functions, 393 methods, 539 test cases)
@@ -73,6 +66,7 @@ From any repository root:
 ```bash
 cbi prime              # Orientation guide for your agent
 cbi scan               # Map repository into .cbi/model.db
+cbi mcp                # Run stdio Model Context Protocol server for coding agents
 cbi search <symbol>    # Fast full-text search across all AST nodes
 cbi show <node-id>     # Detailed symbol info, callers, and children
 cbi tests-for <symbol> # Find all tests exercising this symbol
@@ -82,6 +76,8 @@ cbi review BASE..HEAD  # Generate architectural PR review & Mermaid graph
 cbi build              # Export interactive static HTML viewer
 cbi check              # CI gate: fail if committed map drifts from source
 ```
+
+Coding agents connecting via MCP (such as Claude Code) can launch `cbi mcp` to run a stdio Model Context Protocol server exposing repository search, symbol lookup, and test linkage directly to your agent.
 
 ---
 

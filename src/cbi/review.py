@@ -43,9 +43,18 @@ from or to a test file does not.
 
 New head files that no concept owns are given a provisional owner (see
 `cbi diff --help`) and a define-concepts task opens on the head model for
-those files only. summarise-change takes the change list and returns a
-short narrative, cached by the two commit ids. The narrative is included
-when an agent has submitted it, and is never required.
+those files only. summarise-architecture-change opens grounded judgement
+tasks for each changed concept and for the overall diff in the ordinary
+task inbox. Agents interact with them using `cbi tasks --kind summarise-architecture-change`,
+inspect the brief and allowed citations using `cbi task <id>`, and submit
+answers with `cbi submit <id> <answer.json>`. Each answer must provide a
+grounded narrative paragraph explaining what changed, why it matters,
+affected callers/users, and risk, with citations copied from the allowed
+symbols and files; citations outside the diff evidence are rejected.
+Submitted explanations are cached by semantic model hashes across review,
+diff, and viewer comparisons, and are rendered into review.md. Unanswered
+summaries show a pending notice. The legacy summarise-change diff narrative
+remains supported.
 
 --post publishes review.md with `gh pr comment`. A later run finds that
 comment by the hidden marker <!-- cbi-review --> and edits it with
