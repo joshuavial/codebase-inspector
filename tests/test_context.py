@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from cbi import build, context
-from cbi.cli import main
+from cbi.cli import build_parser, main
 
 _spec = importlib.util.spec_from_file_location(
     "context_fixture_viewer", Path(__file__).with_name("test_viewer.py"))
@@ -325,6 +325,29 @@ def test_render_system_context(tmp_path):
     assert "cbi context '<concept_or_file>'" in text
     assert "cbi hotspots --by fan-in" in text
     assert "cbi mcp --config" in text
+
+
+def test_render_system_context_ref_and_compare(tmp_path):
+    conn = concept_model(tmp_path)
+    # Ref overview
+    place_ref = _place(tmp_path, ref="HEAD")
+    text_ref = context.render_system(conn, place_ref)
+    assert "--ref HEAD" in text_ref
+    assert "cbi mcp --config" in text_ref
+    assert "cbi mcp --config --ref" not in text_ref
+    for line in text_ref.splitlines():
+        if line.startswith("cbi "):
+            build_parser().parse_args(shlex.split(line)[1:])
+
+    # Comparison overview
+    place_cmp = _place(tmp_path, compare=("base", "head"))
+    text_cmp = context.render_system(conn, place_cmp)
+    assert "--ref head" in text_cmp
+    assert "cbi mcp --config" in text_cmp
+    assert "cbi mcp --config --ref" not in text_cmp
+    for line in text_cmp.splitlines():
+        if line.startswith("cbi "):
+            build_parser().parse_args(shlex.split(line)[1:])
 
 
 def test_context_cli_system_and_no_arg(make_repo, monkeypatch, capsys):

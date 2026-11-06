@@ -240,7 +240,7 @@ def render_system(conn, place, facts=None):
         _cbi(place, "search", "<symbol_or_path>"),
         _cbi(place, "context", "<concept_or_file>"),
         _cbi(place, "hotspots", "--by", "fan-in"),
-        _cbi(place, "mcp", "--config"),
+        _join(["cbi", "mcp", "--config", *_out_flag(place)]),
         "```",
     ]
     return "\n".join(lines) + "\n"
