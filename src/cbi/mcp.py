@@ -5,6 +5,7 @@ CBI's local codebase model directly via stdio JSON-RPC.
 """
 
 import argparse
+import calendar
 import contextlib
 import datetime as dt
 import io
@@ -1041,7 +1042,9 @@ class MCPServer:
             pass
         now = dt.datetime.now().astimezone()
         lower = val.lower()
-        if lower in ("now", "today"):
+        if lower == "now":
+            return now.isoformat()
+        if lower == "today":
             return now.date().isoformat()
         if lower == "yesterday":
             return (now - dt.timedelta(days=1)).date().isoformat()
@@ -1050,15 +1053,25 @@ class MCPServer:
             n = int(m.group(1))
             unit = m.group(2)
             if "hour" in unit:
-                return (now - dt.timedelta(hours=n)).date().isoformat()
+                return (now - dt.timedelta(hours=n)).isoformat()
             if "day" in unit:
                 return (now - dt.timedelta(days=n)).date().isoformat()
             if "week" in unit:
                 return (now - dt.timedelta(weeks=n)).date().isoformat()
             if "month" in unit:
-                return (now - dt.timedelta(days=n * 30)).date().isoformat()
+                year = now.year
+                month = now.month - n
+                while month <= 0:
+                    month += 12
+                    year -= 1
+                max_day = calendar.monthrange(year, month)[1]
+                day = min(now.day, max_day)
+                return now.replace(year=year, month=month, day=day).date().isoformat()
             if "year" in unit:
-                return (now - dt.timedelta(days=n * 365)).date().isoformat()
+                year = now.year - n
+                max_day = calendar.monthrange(year, now.month)[1]
+                day = min(now.day, max_day)
+                return now.replace(year=year, day=day).date().isoformat()
         return val
 
     def handle_history(self, args: dict) -> str:
