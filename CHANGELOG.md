@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
+### Added
+
+- Native stdio JSON-RPC Model Context Protocol (MCP) server under `cbi mcp`, enabling AI coding agents (Claude Code, Cursor, Codex, Antigravity) to query the local codebase model directly. Exposes tools `cbi_status`, `cbi_context`, `cbi_tests_for`, `cbi_search`, and `cbi_hotspots` with dual newline-delimited and Content-Length transport framing.
+- Grounded `summarise-architecture-change` judgement tasks with diff evidence enforcement and citation checking across changed concepts and PR reviews.
+- Option A launch headline and streamlined agent documentation.
+
+### Changed
+
+- Updated Electron to ~44.10.2 and resolved npm audit alerts.
+- Polished CLI and review task guidance for coding agents.
+
+### Fixed
+
+- Preserved historical model projections during commit scans when ref models carry committed maps.
+- Repaired GitHub Actions workflow artifact download permissions.
+
+
 ## [0.2.0] - 2026-10-29
 
 ### Added

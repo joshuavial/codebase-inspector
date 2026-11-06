@@ -16,7 +16,7 @@ from cbi import context, files, graph, query, store, tasks
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "cbi"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 
 TOOLS = [
     {
