@@ -74,40 +74,47 @@ def _intro(out_flag):
     return text + "\n"
 
 
-def run(out=None, ref=None):
-    """Print the guide for the repo containing the current directory. Returns the exit code."""
-    try:
-        root = files.repo_root(Path.cwd())
-    except files.NotARepo:
-        print(NOT_INITIALISED, end="")
-        return 0
-    base = out.resolve() if out else root / ".cbi"
+def render(root=None, out=None, ref=None) -> str:
+    """Return the guide for the repository as a string."""
+    if root is None:
+        try:
+            root = files.repo_root(Path.cwd())
+        except files.NotARepo:
+            return NOT_INITIALISED
+    else:
+        root = Path(root).resolve()
+    base = Path(out).resolve() if out else root / ".cbi"
     sha = files.resolve_commit(root, ref) if ref else None
     model_dir = base / "refs" / sha if sha else base
     db = model_dir / "model.db"
     if not db.exists():
-        print(NOT_INITIALISED, end="")
-        return 0
+        return NOT_INITIALISED
     conn = store.open_db(db)
     token = parts.bind(db.parent)
     try:
         tasks.attach_cache(conn)
         if not conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone():
-            print(NOT_INITIALISED, end="")
-            return 0
+            return NOT_INITIALISED
         counts = conn.execute(
             "SELECT kind, sum(state = 'open'), sum(state = 'blocked') FROM tasks GROUP BY kind ORDER BY kind"
         ).fetchall()
         pending = [c for c in counts if c[1] or c[2]]
         if sha:
             flag = " --ref " + shlex.quote(sha)
+        elif out and Path(out).resolve() != (root / ".cbi").resolve():
+            flag = " --out " + shlex.quote(str(db.parent))
         else:
-            flag = "" if out is None else " --out " + shlex.quote(str(db.parent))
-        guide = pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
-        print(guide, end="")
+            flag = ""
+        return pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
     finally:
         parts.unbind(token)
         conn.close()
+
+
+def run(out=None, ref=None):
+    """Print the guide for the repo containing the current directory. Returns the exit code."""
+    guide = render(out=out, ref=ref)
+    print(guide, end="")
     return 0
 
 
