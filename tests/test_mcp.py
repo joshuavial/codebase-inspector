@@ -1251,6 +1251,29 @@ def test_tool_prime(repo, tmp_path):
     assert not res_unmapped["isError"]
     assert "This repo is not mapped yet" in res_unmapped["content"][0]["text"]
 
+    # 5. Incompatible schema returns error and does not erase the database
+    incompat_dir = tmp_path / "incompat"
+    (incompat_dir / ".cbi").mkdir(parents=True)
+    db_path = incompat_dir / ".cbi" / "model.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE sentinel(val TEXT)")
+    conn.execute("INSERT INTO sentinel VALUES ('keep-me')")
+    conn.execute("PRAGMA user_version = 999")
+    conn.commit()
+    conn.close()
+
+    incompat_server = MCPServer(root=incompat_dir)
+    res_incompat = incompat_server.execute_tool("cbi_prime", {})
+    assert res_incompat["isError"]
+    assert "schema 999" in res_incompat["content"][0]["text"]
+
+    conn_check = sqlite3.connect(db_path)
+    try:
+        rows = conn_check.execute("SELECT val FROM sentinel").fetchall()
+        assert rows == [("keep-me",)]
+    finally:
+        conn_check.close()
+
 
 def test_tool_task(repo):
     server = MCPServer(root=repo)

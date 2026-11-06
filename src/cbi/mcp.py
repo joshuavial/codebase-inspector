@@ -1443,7 +1443,13 @@ class MCPServer:
         return "\n".join(lines)
 
     def handle_prime(self, args: dict) -> str:
-        return prime.render(self.root, self.out).rstrip()
+        if not self.model_path.is_file():
+            return prime.NOT_INITIALISED.rstrip()
+        conn = self._get_connection()
+        try:
+            return prime.render(self.root, self.out, conn=conn).rstrip()
+        finally:
+            conn.close()
 
     def handle_task(self, args: dict) -> str:
         task_id = args.get("task_id")

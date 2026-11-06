@@ -5,6 +5,7 @@ Three states: not initialised or not scanned, judgement tasks pending, and compl
 
 import json
 import shlex
+import sqlite3
 from pathlib import Path
 
 from cbi import files, ingest, parts, store, tasks
@@ -74,7 +75,7 @@ def _intro(out_flag):
     return text + "\n"
 
 
-def render(root=None, out=None, ref=None) -> str:
+def render(root=None, out=None, ref=None, conn=None) -> str:
     """Return the guide for the repository as a string."""
     if root is None:
         try:
@@ -89,10 +90,21 @@ def render(root=None, out=None, ref=None) -> str:
     db = model_dir / "model.db"
     if not db.exists():
         return NOT_INITIALISED
-    conn = store.open_db(db)
+
+    own_conn = False
+    if conn is None:
+        conn = store.read_only(db)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != store.SCHEMA_VERSION:
+            conn.close()
+            raise sqlite3.DatabaseError(
+                f"{db} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
+            )
+        own_conn = True
+
     token = parts.bind(db.parent)
     try:
-        tasks.attach_cache(conn)
+        tasks.attach_cache(conn, readonly=True)
         if not conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone():
             return NOT_INITIALISED
         counts = conn.execute(
@@ -108,7 +120,8 @@ def render(root=None, out=None, ref=None) -> str:
         return pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
     finally:
         parts.unbind(token)
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def run(out=None, ref=None):
