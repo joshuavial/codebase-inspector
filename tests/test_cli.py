@@ -62,3 +62,54 @@ def test_make_repo_commits_files(make_repo):
         ["git", "status", "--porcelain"], cwd=repo, check=True, capture_output=True, text=True
     ).stdout
     assert status == ""
+
+
+def test_query_schema(make_repo, monkeypatch, capsys):
+    repo = make_repo({"a.py": "x = 1\n"})
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    assert main(["query", "--schema"]) == 0
+    out = capsys.readouterr().out
+    assert "Model Schema:" in out
+    assert "nodes" in out and "edges" in out
+
+    assert main(["query", "--schema", "--json"]) == 0
+    out_json = capsys.readouterr().out
+    data = json.loads(out_json)
+    assert "nodes" in data and "edges" in data
+
+
+def test_query_select(make_repo, monkeypatch, capsys):
+    repo = make_repo({"a.py": "def foo(): pass\n"})
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+
+    # Text format
+    assert main(["query", "SELECT id, kind, name FROM nodes WHERE kind = 'symbol'"]) == 0
+    out = capsys.readouterr().out
+    assert "foo" in out
+    assert "id" in out and "kind" in out
+
+    # JSON format
+    assert main(["query", "SELECT id, kind, name FROM nodes WHERE kind = 'symbol'", "--json"]) == 0
+    out_json = capsys.readouterr().out
+    payload = json.loads(out_json)
+    assert payload["row_count"] >= 1
+    assert any(r["name"] == "foo" for r in payload["rows"])
+
+
+def test_query_disallows_writes_and_missing_sql(make_repo, monkeypatch, capsys):
+    repo = make_repo({"a.py": "x = 1\n"})
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+
+    # Missing SQL argument
+    assert main(["query"]) == 2
+    err = capsys.readouterr().err
+    assert "provide a SQL statement" in err
+
+    # Non-read query
+    assert main(["query", "INSERT INTO nodes (id) VALUES ('x')"]) == 1
+    err_insert = capsys.readouterr().err
+    assert "only read-only queries are permitted" in err_insert
+
