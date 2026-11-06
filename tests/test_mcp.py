@@ -1707,6 +1707,10 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert gemini_json.is_file()
     g_data = json.loads(gemini_json.read_text())
     assert "codebase-inspector" in g_data["mcpServers"]
+    ag_json = fake_home / ".gemini" / "antigravity" / "mcp_config.json"
+    assert ag_json.is_file()
+    ag_data = json.loads(ag_json.read_text())
+    assert "codebase-inspector" in ag_data["mcpServers"]
     gemini_settings = fake_home / ".gemini" / "settings.json"
     assert gemini_settings.is_file()
     s_data = json.loads(gemini_settings.read_text())

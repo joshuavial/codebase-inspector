@@ -1935,6 +1935,7 @@ def install_client_config(client_name: str = "all", root=None):
 
     if client in ("gemini", "antigravity", "all"):
         targets.append((home / ".gemini" / "settings.json", default_server_entry))
+        targets.append((home / ".gemini" / "antigravity" / "mcp_config.json", default_server_entry))
         targets.append((home / ".gemini" / "antigravity-cli" / "mcp_config.json", default_server_entry))
 
     if client in ("windsurf", "all"):
