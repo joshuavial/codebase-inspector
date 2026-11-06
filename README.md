@@ -66,6 +66,7 @@ From any repository root:
 ```bash
 cbi prime              # Orientation guide for your agent
 cbi scan               # Map repository into .cbi/model.db
+cbi context [node]     # Architecture overview or node context for AI agents
 cbi mcp                # Run stdio Model Context Protocol server for coding agents
 cbi query "<sql>"      # Safe read-only SQL queries and schema introspection
 cbi search <symbol>    # Fast full-text search across all AST nodes

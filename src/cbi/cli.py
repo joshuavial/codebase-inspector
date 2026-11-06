@@ -86,7 +86,10 @@ def build_parser():
     cmds["status"].add_argument("--out", metavar="DIR", type=Path, help="model directory to use instead of .cbi/ in the repo root")
     cmds["status"].add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds["show"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
-    cmds["context"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
+    cmds["context"].add_argument("node", nargs="?", default=None,
+                                 help="a node ID, a repo-relative path, path#qualified.name, or a symbol name (omit for system overview)")
+    cmds["context"].add_argument("--system", action="store_true",
+                                 help="render top-level system architecture context")
     cmds["show"].add_argument("--min-confidence", type=float, default=None, metavar="F",
                               help="hide edges below F (text default 0.6; --json keeps them all unless this is set)")
     cmds["show"].add_argument("--all", action="store_true", help="do not cap relationships or tests at 10")
@@ -173,7 +176,7 @@ def build_parser():
     cmds["ingest"].add_argument("files", nargs="+", metavar="file", help="lcov, coverage.py JSON or JUnit XML file")
     ref_help = "branch, tag or commit. scan stores its model; the other commands read it"
     for name in ("scan", "search", "show", "tests-for", "status", "build", "tasks", "task", "submit",
-                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file"):
+                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file", "query"):
         cmds[name].add_argument("--ref", metavar="REF", help=ref_help)
     viewed = cmds["context"].add_mutually_exclusive_group()
     viewed.add_argument("--ref", metavar="REF", help=ref_help)
@@ -305,7 +308,8 @@ symbol details. The block also gives the linked test count, the names of
 environment variables the code reads (never their values or defaults), the
 integration points, and a To see more list of commands with cd and the
 flags filled in: cbi show, cbi tests-for, cbi search, cbi diff when this is
-a comparison, and a sqlite3 query for the raw edges.
+a comparison, and a cbi query for the raw edges. Omit the node argument or
+use --system to print the high-level codebase architecture overview.
 
 --compare BASE..HEAD reads the head model (scanning both refs first, the
 same as cbi diff) and cannot be combined with --ref. The show, tests-for
@@ -314,7 +318,8 @@ and search commands in the block use --ref HEAD so they open that model.
 Exit codes: 0 printed, 1 not found, ambiguous, unknown ref, or no model,
 2 compare is not base..head.
 
-Example: cbi context src/app.ts#main""",
+Example: cbi context src/app.ts#main
+         cbi context (for system overview)""",
     **graph.HELP,
     "tasks": """\
 List open judgement tasks, one per line: task ID, kind, the node it covers
@@ -827,6 +832,8 @@ def cmd_context(args):
         try:
             head_sha = store.get_meta(head_conn, "commit") or sides[1]
             place = _place(root, out, out / "refs" / head_sha / "model.db", sha=head_sha, compare=sides)
+            if not args.node or getattr(args, "system", False):
+                return context.emit_system(head_conn, place)
             return context.emit(head_conn, args.node, place)
         finally:
             base_conn.close()
@@ -835,6 +842,8 @@ def cmd_context(args):
     conn = _read_model(args)
     try:
         place = _place(root, out, path, ref=args.ref, sha=sha)
+        if not args.node or getattr(args, "system", False):
+            return context.emit_system(conn, place)
         return context.emit(conn, args.node, place)
     finally:
         conn.close()
