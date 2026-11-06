@@ -103,7 +103,10 @@ def test_tools_list():
     assert resp["id"] == 2
     tools = resp["result"]["tools"]
     tool_names = {t["name"] for t in tools}
-    expected = {"cbi_status", "cbi_context", "cbi_tests_for", "cbi_search", "cbi_hotspots"}
+    expected = {
+        "cbi_status", "cbi_context", "cbi_tests_for", "cbi_search", "cbi_hotspots",
+        "cbi_cycles", "cbi_orphans", "cbi_deps",
+    }
     assert expected.issubset(tool_names)
 
     for tool in tools:
@@ -161,7 +164,7 @@ def test_tools_call_context(repo):
     assert "# circle.ts" in text or "Circle" in text
     assert "Project:" in text
 
-    # Missing node argument
+    # Omitted node argument returns system architecture overview
     req_missing = {
         "jsonrpc": "2.0",
         "id": 21,
@@ -169,8 +172,22 @@ def test_tools_call_context(repo):
         "params": {"name": "cbi_context", "arguments": {}},
     }
     resp_missing = server.handle_request(req_missing)
-    assert resp_missing["result"]["isError"]
-    assert "Missing required argument" in resp_missing["result"]["content"][0]["text"]
+    assert not resp_missing["result"]["isError"]
+    text_sys = resp_missing["result"]["content"][0]["text"]
+    assert "Architecture Overview" in text_sys
+    assert "Project:" in text_sys
+
+    # node='system' returns system architecture overview
+    req_sys = {
+        "jsonrpc": "2.0",
+        "id": 23,
+        "method": "tools/call",
+        "params": {"name": "cbi_context", "arguments": {"node": "system"}},
+    }
+    resp_sys = server.handle_request(req_sys)
+    assert not resp_sys["result"]["isError"]
+    text_sys2 = resp_sys["result"]["content"][0]["text"]
+    assert "Architecture Overview" in text_sys2
 
     # Nonexistent node
     req_unknown = {
@@ -480,6 +497,79 @@ def test_tool_concepts(repo):
     assert "not found" in resp_missing["content"][0]["text"]
 
 
+def test_tools_call_cycles(repo):
+    server = MCPServer(root=repo)
+
+    # Text format
+    resp_text = server.execute_tool("cbi_cycles", {})
+    assert not resp_text["isError"]
+    text = resp_text["content"][0]["text"]
+    assert "SCCs:" in text and "memberships" in text
+
+    resp_text2 = server.execute_tool("cbi_cycles", {"format": "text"})
+    assert not resp_text2["isError"]
+    assert resp_text2["content"][0]["text"] == text
+
+    # JSON format
+    resp_json = server.execute_tool("cbi_cycles", {"format": "json"})
+    assert not resp_json["isError"]
+    data = json.loads(resp_json["content"][0]["text"])
+    assert "files" in data and "folders" in data and "packages" in data
+    assert isinstance(data["files"], list)
+
+
+def test_tools_call_orphans(repo):
+    server = MCPServer(root=repo)
+
+    # Text format
+    resp_text = server.execute_tool("cbi_orphans", {})
+    assert not resp_text["isError"]
+    text = resp_text["content"][0]["text"]
+    assert "production code with no production importer" in text
+
+    # JSON format
+    resp_json = server.execute_tool("cbi_orphans", {"format": "json"})
+    assert not resp_json["isError"]
+    data = json.loads(resp_json["content"][0]["text"])
+    assert "unreferenced" in data
+    assert "test_only_symbols" in data
+    assert "untested" in data
+    assert isinstance(data["unreferenced"], list)
+
+
+def test_tools_call_deps(repo):
+    server = MCPServer(root=repo)
+
+    # Default level (package) in text format
+    resp_text = server.execute_tool("cbi_deps", {})
+    assert not resp_text["isError"]
+    text = resp_text["content"][0]["text"]
+    assert isinstance(text, str)
+
+    # Folder level text format
+    resp_folder = server.execute_tool("cbi_deps", {"level": "folder", "format": "text"})
+    assert not resp_folder["isError"]
+
+    # Folder level JSON format
+    resp_json = server.execute_tool("cbi_deps", {"level": "folder", "format": "json"})
+    assert not resp_json["isError"]
+    data = json.loads(resp_json["content"][0]["text"])
+    assert data["level"] == "folder"
+    assert "nodes" in data
+    assert "edges" in data
+
+    # With include_tests
+    resp_tests = server.execute_tool("cbi_deps", {"level": "folder", "include_tests": True, "format": "json"})
+    assert not resp_tests["isError"]
+    data_tests = json.loads(resp_tests["content"][0]["text"])
+    assert data_tests["tests"] is True
+
+    # Unknown start endpoint returns error
+    resp_bad = server.execute_tool("cbi_deps", {"level": "folder", "start": "nonexistent_dir"})
+    assert resp_bad["isError"]
+    assert "no folder" in resp_bad["content"][0]["text"]
+
+
 def test_concurrent_requests_stress(repo):
     import concurrent.futures
 
@@ -492,6 +582,9 @@ def test_concurrent_requests_stress(repo):
         ("cbi_hotspots", {"metric": "fan-in"}),
         ("cbi_query", {"sql": "SELECT id, name FROM nodes WHERE kind = 'symbol'", "format": "json"}),
         ("cbi_tasks", {"format": "json"}),
+        ("cbi_cycles", {"format": "json"}),
+        ("cbi_orphans", {"format": "json"}),
+        ("cbi_deps", {"level": "folder", "format": "json"}),
     ]
 
     def make_call(pair):

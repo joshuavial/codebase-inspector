@@ -37,16 +37,16 @@ TOOLS = [
     },
     {
         "name": "cbi_context",
-        "description": "Print a short Markdown description of a node (file, symbol, concept, package) for agent context.",
+        "description": "Print a short Markdown description of a node (file, symbol, concept, package) for agent context, or the system architecture overview when omitted or set to 'system'.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "node": {
                     "type": "string",
-                    "description": "A node ID, repo-relative path, path#symbol, or symbol name.",
+                    "description": "A node ID, repo-relative path, path#symbol, symbol name, or 'system' (omit or pass 'system' for system architecture overview).",
                 }
             },
-            "required": ["node"],
+            "required": [],
         },
     },
     {
@@ -208,6 +208,68 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_cycles",
+        "description": "Detect dependency cycles at the file, folder, and package levels.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' or 'json' (default: text)",
+                    "enum": ["text", "json"],
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_orphans",
+        "description": "Identify orphaned code, test-only exported symbols, unreachable files, and untested packages/folders.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' or 'json' (default: text)",
+                    "enum": ["text", "json"],
+                }
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_deps",
+        "description": "Show dependencies between containers (packages, folders, concepts, or deployables).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "description": "Container level: 'package', 'folder', 'concept', or 'deployable' (default: 'package').",
+                    "enum": ["package", "folder", "concept", "deployable"],
+                },
+                "start": {
+                    "type": "string",
+                    "description": "Only dependencies that originate from this container node/path.",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Only dependencies that enter this container node/path.",
+                },
+                "include_tests": {
+                    "type": "boolean",
+                    "description": "Include imports from test files (default: false).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' or 'json' (default: text)",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -315,6 +377,9 @@ class MCPServer:
             "cbi_tasks": self.handle_tasks,
             "cbi_query": self.handle_query,
             "cbi_concepts": self.handle_concepts,
+            "cbi_cycles": self.handle_cycles,
+            "cbi_orphans": self.handle_orphans,
+            "cbi_deps": self.handle_deps,
         }
         self._stdout_lock = threading.Lock()
 
@@ -429,8 +494,17 @@ class MCPServer:
 
     def handle_context(self, args: dict) -> str:
         node = args.get("node") or args.get("target")
-        if not node:
-            raise ValueError("Missing required argument: 'node'")
+        place = context.Place(
+            repo=self.root,
+            model_root=self.out,
+            model_db=self.model_path,
+            branch=context.current_branch(self.root),
+        )
+        if not node or node == "system":
+            if not self.model_path.is_file():
+                raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
+            return context.render_system(self.model_path, place).rstrip()
+
         conn = self._get_connection()
         try:
             found = query.resolve(conn, node)
@@ -443,12 +517,6 @@ class MCPServer:
                     where = f"{c['path']}:{c['start_line']}" if c.get("start_line") else (c.get("path") or "")
                     lines.append(f"  {c['display_kind']:<12} {c['name']}  {where}\n    {c['id']}")
                 raise ValueError("\n".join(lines))
-            place = context.Place(
-                repo=self.root,
-                model_root=self.out,
-                model_db=self.model_path,
-                branch=context.current_branch(self.root),
-            )
             return context.render(conn, found[0], place).rstrip()
         finally:
             conn.close()
@@ -741,6 +809,65 @@ class MCPServer:
                 if c["summary"]:
                     lines.append(f"  {c['summary']}")
             return "\n".join(lines)
+        finally:
+            conn.close()
+
+    def handle_cycles(self, args: dict) -> str:
+        fmt = args.get("format", "text")
+        as_json = fmt == "json"
+        conn = self._get_connection()
+        try:
+            buf = io.StringIO()
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(buf):
+                    graph.cycles(conn, argparse.Namespace(json=as_json))
+            return buf.getvalue().rstrip()
+        finally:
+            conn.close()
+
+    def handle_orphans(self, args: dict) -> str:
+        fmt = args.get("format", "text")
+        as_json = fmt == "json"
+        conn = self._get_connection()
+        try:
+            buf = io.StringIO()
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(buf):
+                    graph.orphans(conn, argparse.Namespace(json=as_json))
+            return buf.getvalue().rstrip()
+        finally:
+            conn.close()
+
+    def handle_deps(self, args: dict) -> str:
+        level = args.get("level") or "package"
+        start = args.get("start")
+        end = args.get("end")
+        include_tests = bool(args.get("include_tests", False))
+        fmt = args.get("format", "text")
+        as_json = fmt == "json"
+
+        conn = self._get_connection()
+        try:
+            out_buf = io.StringIO()
+            err_buf = io.StringIO()
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                    code = graph.deps(
+                        conn,
+                        argparse.Namespace(
+                            level=level,
+                            start=start,
+                            end=end,
+                            forbid=[],
+                            include_tests=include_tests,
+                            json=as_json,
+                        ),
+                    )
+            out = out_buf.getvalue()
+            err = err_buf.getvalue()
+            if code != 0 and err and not out:
+                raise ValueError(err.strip())
+            return (out or err).rstrip()
         finally:
             conn.close()
 

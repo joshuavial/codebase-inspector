@@ -97,10 +97,13 @@ cbi mcp --config all        # All client templates
 
 Exposed MCP tools:
 * `cbi_status`: Scan state, task counts, and codebase diagnostics.
-* `cbi_context`: Markdown summary of any node (file, symbol, concept, package).
+* `cbi_context`: Markdown summary of any node (file, symbol, concept, package), or top-level system architecture overview when omitted or passed as 'system'.
 * `cbi_tests_for`: Tests linked to a specific function, class, file, or folder.
 * `cbi_search`: Full-text search across all AST nodes in the codebase.
 * `cbi_hotspots`: Rank nodes by coupling (fan-in/fan-out), size (LOC), or symbol count.
+* `cbi_cycles`: Detect dependency cycles at file, folder, and package levels.
+* `cbi_orphans`: Identify orphaned code, test-only exported symbols, unreachable files, and untested packages/folders.
+* `cbi_deps`: Container dependency matrix between packages, folders, concepts, or deployables.
 * `cbi_diff`: Architectural diff between commits, branches, or model databases.
 * `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
 * `cbi_query`: Execute read-only SQL queries against the local codebase model database.
