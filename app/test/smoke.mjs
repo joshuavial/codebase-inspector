@@ -112,15 +112,14 @@ let app;
 try {
   app = await electron.launch({
     args: [appRoot],
-    env: {
-      ...process.env,
+    env: Object.assign({}, process.env, {
       CBI_BIN: wrapper,
       CBI_APP_USER_DATA: userData,
       CBI_PICK_FOLDER: fixture,
       CBI_SKIP_PROTOCOL: "1",
       CBI_HEADLESS: "1",
       CBI_NO_UPDATE_CHECK: "1",
-    },
+    }),
   });
   const page = await app.firstWindow();
   page.setDefaultTimeout(90_000);

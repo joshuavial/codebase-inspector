@@ -44,7 +44,7 @@ export function runProcess(
     const child = spawnFn(bin, args, {
       cwd,
       shell: false,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: Object.assign({}, process.env, { PYTHONUNBUFFERED: "1" }),
     });
     let stdout = "";
     let stderr = "";

@@ -98,7 +98,7 @@ execFileSync(wrapper, ["init"], { cwd: fixture, stdio: "pipe", timeout: 60_000 }
 execFileSync(wrapper, ["scan"], { cwd: fixture, stdio: "pipe", timeout: 60_000 });
 execFileSync(wrapper, ["build"], { cwd: fixture, stdio: "pipe", timeout: 60_000 });
 
-const env = { ...process.env };
+const env = Object.assign({}, process.env);
 delete env.CBI_NO_UPDATE_CHECK;
 env.CBI_BIN = wrapper;
 env.CBI_APP_USER_DATA = userData;

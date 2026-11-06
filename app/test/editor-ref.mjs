@@ -99,8 +99,7 @@ let app;
 try {
   app = await electron.launch({
     args: [appRoot],
-    env: {
-      ...process.env,
+    env: Object.assign({}, process.env, {
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
       CBI_BIN: wrapper,
       CBI_APP_USER_DATA: userData,
@@ -110,7 +109,7 @@ try {
       CBI_SNAPSHOT_DIR: cache,
       CBI_EDITOR_DRY_RUN: argvLog,
       CBI_HEADLESS: "1",
-    },
+    }),
   });
   const page = await app.firstWindow();
   const shown = await app.evaluate(({ BrowserWindow }) => {
