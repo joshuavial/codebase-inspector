@@ -249,4 +249,3 @@ def test_format_tables_text_preserves_cased_fk_names_when_filtered():
     text_acc = system_views.format_tables_text(filtered_acc, rels_acc, all_tables=all_tables)
     assert "Orders(AccountID) -> AccountID" in text_acc
 
-

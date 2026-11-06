@@ -23,6 +23,8 @@ READS = (
     ("cycles",),
     ("deps",),
     ("context", "src/app.ts"),
+    ("endpoints",),
+    ("tables",),
 )
 
 

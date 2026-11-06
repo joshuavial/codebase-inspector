@@ -730,4 +730,3 @@ def test_tools_call_system_views_with_data(make_repo, monkeypatch):
     assert not res["isError"]
     assert "table accounts (2 columns)" in res["content"][0]["text"]
 
-

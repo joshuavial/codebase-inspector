@@ -423,4 +423,3 @@ def cmd_tables(conn, args):
         return 0
     print(format_tables_text(tables, rels, all_tables=view["tables"]))
     return 0
-
