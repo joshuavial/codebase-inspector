@@ -731,11 +731,11 @@ def _level_nodes(conn, level):
 
 
 def _find_endpoint(nodes, level, text):
-    text = text.strip("/")
+    text_stripped = text.strip("/")
     if level == "folder":
-        hits = [n for n in nodes if n["path"] == text]
+        hits = [n for n in nodes if n["path"] == text_stripped or n["id"] == text or n["id"].rstrip("/") == text_stripped]
     else:
-        hits = [n for n in nodes if n["name"] == text or (n["path"] and n["path"] == text)]
+        hits = [n for n in nodes if n["name"] == text_stripped or (n["path"] and n["path"] == text_stripped) or n["id"] == text or n["id"].rstrip("/") == text_stripped]
     if not hits:
         return None, f"no {level} {text!r}"
     if len(hits) > 1:
@@ -787,6 +787,9 @@ def deps(conn, args):
     level = args.level
     nodes = _level_nodes(conn, level)
     if not nodes:
+        if getattr(args, "json", False) and not getattr(args, "forbid", None):
+            _print_json({"level": level, "tests": bool(getattr(args, "include_tests", False)), "nodes": [], "edges": []})
+            return 0
         print(f"no {level}s in the model")
         return 1 if args.forbid else 0
     files = _files(conn)

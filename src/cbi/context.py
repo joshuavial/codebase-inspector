@@ -137,6 +137,12 @@ def emit_system(conn, place):
 
 def render_system(conn, place, facts=None):
     """The Markdown block for high-level system architecture context. Always ends with a newline."""
+    if isinstance(conn, (str, Path)):
+        c = open_model(conn)
+        try:
+            return render_system(c, place, facts=facts)
+        finally:
+            c.close()
     facts = facts or _facts(conn)
     project = facts["project"] or place.repo.name
     lines = [
