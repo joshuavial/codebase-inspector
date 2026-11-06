@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 from cbi import files, store
+from cbi.task_cache import EMPTY_BLOB_ID, PROTOCOL_VERSION, attach_cache
 
 # Same byte budget as an unsplit brief. parts.budget reads it from team.toml.
 DEFAULT_BRIEF_BUDGET = 150 * 1024
@@ -108,7 +109,6 @@ def import_answers(conn, out):
     path = directory / ANSWERS_NAME
     if not path.is_file():
         return 0
-    from cbi import tasks
     applied = 0
     rows = _parse(path.read_text(encoding="utf-8"))
     _remember_revisions(conn, rows.values())
@@ -116,10 +116,10 @@ def import_answers(conn, out):
         if row.get("superseded_by") or row.get("conflicts"):
             conn.execute("DELETE FROM cache.summary_answers WHERE input_hash = ?", (row["key"],))
             continue
-        if row["protocol"] != tasks.PROTOCOL_VERSION:
+        if row["protocol"] != PROTOCOL_VERSION:
             continue
         if row["kind"] == FILE_KIND:
-            if row["key"] == tasks.EMPTY_BLOB_ID:
+            if row["key"] == EMPTY_BLOB_ID:
                 continue
             if not isinstance(row["answer"], str) or not row["answer"].strip():
                 continue
@@ -223,13 +223,12 @@ def supersede(conn, out, kind, key):
         if (kind, old) in rows:
             rows[(kind, old)] = {**rows[(kind, old)], **retired}
             rows[(kind, old)].pop("conflicts", None)
-    from cbi import tasks
     accepted = conn.execute(
         "SELECT answer FROM cache.summary_answers WHERE input_hash = ?", (key,)
     ).fetchone()
     if accepted is None:
         raise ValueError("cannot accept an uncached document answer")
-    rows[(kind, key)] = {**_canon(kind, key, tasks.PROTOCOL_VERSION, json.loads(accepted[0])),
+    rows[(kind, key)] = {**_canon(kind, key, PROTOCOL_VERSION, json.loads(accepted[0])),
                          "generation": generation, "acceptance_id": uuid.uuid4().hex,
                          "retired_acceptances": sorted(retired_current)}
     revised.append(rows[(kind, key)])
@@ -365,8 +364,7 @@ def _model_rows(path):
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != store.SCHEMA_VERSION:
             return {}, f"{path.name} is schema {version}; exported no new answers"
-        from cbi import tasks
-        tasks.attach_cache(conn)
+        attach_cache(conn)
         return _collect(conn), None
     except sqlite3.Error as err:
         return {}, f"{path.name} could not be read ({err}); exported no new answers"
@@ -376,16 +374,15 @@ def _model_rows(path):
 
 def _collect(conn):
     """Cache rows this model uses, keyed by (kind, key). The cache is attached as `cache`."""
-    from cbi import tasks
     found = {}
     revisions = _answer_revisions(conn)
-    protocol = tasks.PROTOCOL_VERSION
+    protocol = PROTOCOL_VERSION
     hashes = [
         row[0] for row in conn.execute(
             "SELECT DISTINCT content_hash FROM nodes "
             "WHERE kind = 'file' AND content_hash IS NOT NULL "
             "AND content_hash != ? AND json_extract(attrs, '$.role') IN ('code', 'test')",
-            (tasks.EMPTY_BLOB_ID,),
+            (EMPTY_BLOB_ID,),
         )
     ]
     if hashes:

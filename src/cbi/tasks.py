@@ -18,13 +18,19 @@ from collections import defaultdict
 from pathlib import Path
 
 from cbi import change_summaries, concepts, manifests, resolve, screens, store
-from cbi.files import PARSER_VERSION, blob_id
-from cbi.task_cache import _attach_cache_readonly, _cached_answer, attach_cache, cache_path
+from cbi.files import PARSER_VERSION
+from cbi.task_cache import (
+    AnswerError,
+    EMPTY_BLOB_ID,
+    PROTOCOL_VERSION,
+    _attach_cache_readonly,
+    _cached_answer,
+    attach_cache,
+    cache_path,
+)
 
 # Bump when briefs or answers change meaning; cached answers from older versions are ignored.
-PROTOCOL_VERSION = 1
 FILES_PER_TASK = 15
-EMPTY_BLOB_ID = blob_id(b"")
 EMPTY_FILE_SUMMARY = "Empty file."
 
 SCHEMAS = {
@@ -213,10 +219,6 @@ _MANIFEST = re.compile(
 )
 _DEP_KEYS = ("id", "name", "display_kind", "entry_points", "remove")
 _PKG_KEYS = ("id", "name", "display_kind", "directory", "remove")
-
-
-class AnswerError(Exception):
-    """A rejected answer. The message lists each problem with its JSON path."""
 
 
 class UnknownTask(Exception):

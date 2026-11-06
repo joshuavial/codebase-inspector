@@ -14,6 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from cbi import store
+from cbi.task_cache import PROTOCOL_VERSION, AnswerError
 
 CHECKS = [
     "every region component is a real component node or detected screen template",
@@ -598,9 +599,8 @@ def _listed(components, templates, entries):
 
 
 def _input_hash(listed, pairs, entries, states):
-    from cbi import tasks
     payload = [
-        "sketch-screens", tasks.PROTOCOL_VERSION,
+        "sketch-screens", PROTOCOL_VERSION,
         [[c["ref"], c["content_hash"], c["concept"] or "", c["signature"]] for c in listed],
         pairs,
         [[e["component"], e["from"], e["reason"]] for e in entries],
@@ -885,12 +885,12 @@ def refresh(conn, out=None, root=None):
 
 def accept(conn, task, answer, out, root=None):
     """Write screens.json, project it, and close the task. Raises AnswerError listing every failure."""
-    from cbi import tasks, team
+    from cbi import team
     if out is None:
-        raise tasks.AnswerError("$: no model directory; submit through `cbi submit`")
+        raise AnswerError("$: no model directory; submit through `cbi submit`")
     errors = problems(conn, answer, root)
     if errors:
-        raise tasks.AnswerError("\n".join(errors))
+        raise AnswerError("\n".join(errors))
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
     current = (out / "screens.json").read_text(encoding="utf-8") if (out / "screens.json").exists() else None

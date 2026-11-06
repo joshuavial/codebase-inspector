@@ -7,6 +7,14 @@ import sys
 from pathlib import Path
 
 from cbi import store
+from cbi.files import blob_id
+
+PROTOCOL_VERSION = 1
+EMPTY_BLOB_ID = blob_id(b"")
+
+
+class AnswerError(Exception):
+    pass
 
 
 def cache_path():
