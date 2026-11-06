@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from cbi import build, context
-from cbi.cli import main
+from cbi.cli import build_parser, main
 
 _spec = importlib.util.spec_from_file_location(
     "context_fixture_viewer", Path(__file__).with_name("test_viewer.py"))
@@ -79,8 +79,9 @@ def test_symbol_block_omits_secrets_and_quotes_the_id(tmp_path):
     assert "cbi diff" not in text
     assert "--out" not in text
     assert "--ref" not in text
-    assert f"sqlite3 {shlex.quote(str(place.model_db))}" in text
-    assert FN in text.split("sqlite3", 1)[1]
+    assert "cbi query " in text
+    assert FN in text.split("cbi query", 1)[1]
+    assert "sqlite3" not in text
     assert len(text.splitlines()) <= context.LINE_CAP
     assert text.endswith("```\n")
 
@@ -143,8 +144,9 @@ def test_custom_out_and_comparison_flags(tmp_path):
     assert flag in text
     assert f"cbi show {shlex.quote(FN)} {flag} --ref head" in text
     assert f"cbi diff base head {flag}" in text
-    assert shlex.quote(str(place.model_db)) in text
-    assert "refs/abc/model.db" in text.replace("\\", "/")
+    assert f"cbi query " in text
+    assert f"{flag} --ref head" in text
+    assert "sqlite3" not in text
 
 
 def test_ref_commands_name_the_ref(tmp_path):
@@ -170,7 +172,8 @@ def test_long_block_drops_bullets_and_keeps_commands(tmp_path):
     assert len(text.splitlines()) <= context.LINE_CAP
     assert "To see more" in text
     assert f"cbi show {shlex.quote(FN)}" in text
-    assert "sqlite3 " in text
+    assert "cbi query " in text
+    assert "sqlite3" not in text
     assert "- ... " in text or text.count("\n- `extra") < 40
 
 
@@ -243,7 +246,8 @@ def test_context_on_a_scanned_symbol_and_concept(make_repo, monkeypatch, capsys)
     assert "Environment: SECRET" in out
     assert SECRET not in out and EXAMPLE not in out and "default" not in out
     assert f"cbi show {shlex.quote(fn)}" in out
-    assert "cbi tests-for" in out and "cbi search hi" in out and "sqlite3 " in out
+    assert "cbi tests-for" in out and "cbi search hi" in out and "cbi query " in out
+    assert "sqlite3" not in out
     assert "--out" not in out
     assert len(out.splitlines()) <= context.LINE_CAP
     assert db.stat().st_mtime_ns == before
@@ -277,7 +281,8 @@ def test_context_compare_and_bad_compare(make_repo, monkeypatch, tmp_path, capsy
     assert "comparison HEAD~1..HEAD" in text
     assert "a.ts#hi" in text
     assert "cbi diff" in text and "HEAD~1" in text and "--ref HEAD" in text
-    assert "refs/" in text.replace("\\", "/")
+    assert "cbi query" in text and "--ref HEAD" in text
+    assert "sqlite3" not in text
     assert not (root / ".cbi").exists()
     assert len(text.splitlines()) <= context.LINE_CAP
 
@@ -299,3 +304,64 @@ def test_viewer_sources_expose_copy_for_agent():
     main = (root / "app/src/main.ts").read_text()
     assert "clipboard-sanitized-write" in main
     assert "CommandOrControl+C" in main and "cbiCopy()" in main
+
+
+def test_render_system_context(tmp_path):
+    conn = concept_model(tmp_path)
+    place = _place(tmp_path)
+    text = context.render_system(conn, place)
+
+    assert "Architecture Overview" in text
+    assert "Project: fixture\n" in text
+    assert f"Path: {place.repo}\n" in text
+    assert f"Model: {place.model_root}\n" in text
+    assert f"Version: worktree {place.repo} on main\n" in text
+    assert "Concepts:\n" in text
+    assert f"**App** (`{APP}`)" in text
+    assert "sub-concepts: API" in text
+    assert "To explore further\n" in text
+    assert "cbi query --schema" in text
+    assert "cbi search '<symbol_or_path>'" in text
+    assert "cbi context '<concept_or_file>'" in text
+    assert "cbi hotspots --by fan-in" in text
+    assert "cbi mcp --config" in text
+
+
+def test_render_system_context_ref_and_compare(tmp_path):
+    conn = concept_model(tmp_path)
+    # Ref overview
+    place_ref = _place(tmp_path, ref="HEAD")
+    text_ref = context.render_system(conn, place_ref)
+    assert "--ref HEAD" in text_ref
+    assert "cbi mcp --config" in text_ref
+    assert "cbi mcp --config --ref" not in text_ref
+    for line in text_ref.splitlines():
+        if line.startswith("cbi "):
+            build_parser().parse_args(shlex.split(line)[1:])
+
+    # Comparison overview
+    place_cmp = _place(tmp_path, compare=("base", "head"))
+    text_cmp = context.render_system(conn, place_cmp)
+    assert "--ref head" in text_cmp
+    assert "cbi mcp --config" in text_cmp
+    assert "cbi mcp --config --ref" not in text_cmp
+    for line in text_cmp.splitlines():
+        if line.startswith("cbi "):
+            build_parser().parse_args(shlex.split(line)[1:])
+
+
+def test_context_cli_system_and_no_arg(make_repo, monkeypatch, capsys):
+    root = make_repo({"a.ts": "export function hi() { return 1; }\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+
+    code, out, err = _run(capsys, "context")
+    assert code == 0, err
+    assert "Architecture Overview" in out
+    assert "Version: worktree" in out
+    assert "To explore further" in out
+
+    code, out, err = _run(capsys, "context", "--system")
+    assert code == 0, err
+    assert "Architecture Overview" in out
+    assert "To explore further" in out

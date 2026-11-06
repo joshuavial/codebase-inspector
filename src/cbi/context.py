@@ -129,6 +129,123 @@ def emit(conn, ref, place):
     return 0
 
 
+def emit_system(conn, place):
+    """Print the high-level architecture overview for the codebase."""
+    sys.stdout.write(render_system(conn, place))
+    return 0
+
+
+def render_system(conn, place, facts=None):
+    """The Markdown block for high-level system architecture context. Always ends with a newline."""
+    facts = facts or _facts(conn)
+    project = facts["project"] or place.repo.name
+    lines = [
+        f"# {project} Architecture Overview",
+        "",
+        f"Project: {project}",
+        f"Path: {place.repo}",
+        f"Model: {place.model_root}",
+        f"Version: {place.version_line()}",
+        "",
+    ]
+
+    ws = conn.execute(
+        "SELECT id, name, summary FROM nodes WHERE kind = 'workspace' AND parent_id IS NULL ORDER BY id LIMIT 1"
+    ).fetchone()
+    if ws and ws[2]:
+        lines.append(f"Summary: {ws[2]}")
+        lines.append("")
+
+    counts = dict(conn.execute("SELECT kind, count(*) FROM nodes GROUP BY kind"))
+    metrics = []
+    if "concept" in counts:
+        metrics.append(f"{counts['concept']} concepts")
+    if "file" in counts:
+        metrics.append(f"{counts['file']} files")
+    if "symbol" in counts:
+        metrics.append(f"{counts['symbol']} symbols")
+    if "test" in counts:
+        metrics.append(f"{counts['test']} tests")
+    if "external" in counts:
+        metrics.append(f"{counts['external']} externals")
+    if metrics:
+        lines.append("Metrics: " + ", ".join(metrics))
+        lines.append("")
+
+    ws_id = ws[0] if ws else None
+    root_concepts = conn.execute(
+        "SELECT id, name, summary FROM nodes WHERE kind = 'concept' "
+        "AND (parent_id IS NULL OR parent_id = ? OR parent_id NOT IN (SELECT id FROM nodes WHERE kind = 'concept')) "
+        "ORDER BY name",
+        (ws_id,)
+    ).fetchall()
+
+    if root_concepts:
+        lines.append("Concepts:")
+        for cid, name, summary in root_concepts:
+            children = conn.execute(
+                "SELECT name FROM nodes WHERE kind = 'concept' AND parent_id = ? ORDER BY name",
+                (cid,)
+            ).fetchall()
+            child_names = [c[0] for c in children if c[0]]
+            owned_files = sum(1 for src, dst in facts["owns"] if src == cid)
+
+            c_line = f"- **{name}** (`{cid}`)"
+            extras = []
+            if owned_files:
+                extras.append(f"{owned_files} files")
+            if child_names:
+                extras.append(f"sub-concepts: {', '.join(child_names[:5])}")
+            if extras:
+                c_line += f" ({'; '.join(extras)})"
+            if summary:
+                short_summary = summary.strip().split("\n")[0]
+                if len(short_summary) > 120:
+                    short_summary = short_summary[:117] + "..."
+                c_line += f": {short_summary}"
+            lines.append(c_line)
+        lines.append("")
+
+    packages = conn.execute(
+        "SELECT name, kind, path FROM nodes WHERE kind IN ('deployable', 'package') ORDER BY kind, name"
+    ).fetchall()
+    if packages:
+        lines.append("Deployables & Packages:")
+        for name, kind, path in packages:
+            p_line = f"- {name} ({kind})"
+            if path:
+                p_line += f" at `{path}`"
+            lines.append(p_line)
+        lines.append("")
+
+    externals = conn.execute(
+        "SELECT name, summary FROM nodes WHERE kind = 'external' ORDER BY name LIMIT 10"
+    ).fetchall()
+    if externals:
+        lines.append("Externals:")
+        for name, summary in externals:
+            ext_line = f"- `{name}`"
+            if summary:
+                short_s = summary.strip().split("\n")[0]
+                ext_line += f": {short_s}"
+            lines.append(ext_line)
+        lines.append("")
+
+    lines += [
+        "To explore further",
+        "",
+        "```",
+        _join(["cd", str(place.repo)]),
+        _cbi(place, "query", "--schema"),
+        _cbi(place, "search", "<symbol_or_path>"),
+        _cbi(place, "context", "<concept_or_file>"),
+        _cbi(place, "hotspots", "--by", "fan-in"),
+        _join(["cbi", "mcp", "--config", *_out_flag(place)]),
+        "```",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def embed(conn, payload, place):
     """`{workspace, blocks}` for data/context.js. One block per box and symbol the viewer can select."""
     ids = []
@@ -558,12 +675,12 @@ def _commands(node, place):
         "select src, dst, kind, source, confidence from edges "
         f"where src={_sql_quote(node['id'])} or dst={_sql_quote(node['id'])}"
     )
-    lines.append(_join(["sqlite3", str(place.model_db), sql]))
+    lines.append(_cbi(place, "query", sql))
     return lines
 
 
-def _cbi(place, sub, arg):
-    return _join(["cbi", sub, arg, *_tail(place)])
+def _cbi(place, sub, *args):
+    return _join(["cbi", sub, *args, *_tail(place)])
 
 
 def _diff_command(place):
