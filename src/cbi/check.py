@@ -69,6 +69,53 @@ def run(root, out, base_ref, fmt, scan):
         restore(out, saved)
 
 
+def verify(root, out, base_ref=None, scan=None):
+    """Scan, verify the model against base_ref, and restore judgement files.
+
+    Returns dict with keys:
+        'passed': bool (True if no problems or warn mode)
+        'problems': list[str] (formatted problem messages)
+        'findings': list[dict] (raw finding dictionaries)
+        'mode': str ('warn' or 'fail')
+        'report': str (clean rendered text report)
+        'base': str (resolved base commit SHA)
+    """
+    root, out = Path(root), Path(out)
+    if not (out / "ignore").exists():
+        raise FileNotFoundError(f"{out} is not initialised. Run `cbi init` first.")
+    base = base_sha(root, base_ref)
+    if scan is None:
+        from cbi import cli
+        scan = cli.scan
+    saved = snapshot(out)
+    try:
+        scan(root, out)
+        restore(out, saved)
+        conn = store.open_db(out / "model.db")
+        try:
+            tasks.attach_cache(conn)
+            findings = _findings(conn, root, out, changed_paths(root, base))
+        finally:
+            conn.close()
+        mode = _mode(out)
+        problems = [
+            f"{item['file']}:{item['line']}: {item['message']}" if item.get("line") else f"{item['file']}: {item['message']}"
+            for item in findings
+        ]
+        text_report = _render(findings, mode, "text")
+        passed = (len(findings) == 0) or (mode == "warn")
+        return {
+            "passed": passed,
+            "problems": problems,
+            "findings": findings,
+            "mode": mode,
+            "report": text_report,
+            "base": base,
+        }
+    finally:
+        restore(out, saved)
+
+
 def base_sha(root, ref):
     """The commit the change is measured from. Raises files.BadRef."""
     head = files.resolve_commit(root, "HEAD")

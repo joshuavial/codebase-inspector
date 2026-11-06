@@ -108,7 +108,7 @@ def test_tools_list():
         "cbi_status", "cbi_context", "cbi_show", "cbi_tests_for", "cbi_search", "cbi_hotspots",
         "cbi_diff", "cbi_tasks", "cbi_submit", "cbi_query", "cbi_concepts",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
-        "cbi_history", "cbi_review",
+        "cbi_history", "cbi_review", "cbi_check", "cbi_worktrees",
     }
     assert expected.issubset(tool_names)
 
@@ -832,6 +832,10 @@ def test_concurrent_requests_stress(repo):
         ("cbi_history", {"format": "markdown"}),
         ("cbi_review", {"target": "HEAD", "base": "HEAD", "format": "json"}),
         ("cbi_review", {"target": "HEAD", "base": "HEAD", "format": "markdown"}),
+        ("cbi_check", {"format": "text"}),
+        ("cbi_check", {"format": "json"}),
+        ("cbi_worktrees", {"format": "text"}),
+        ("cbi_worktrees", {"format": "json"}),
     ]
 
     def make_call(pair):
@@ -1123,5 +1127,99 @@ def test_tool_review(make_repo, monkeypatch):
     # Error handling: invalid target ref
     res_bad = server.execute_tool("cbi_review", {"target": "nonexistent_ref_9999"})
     assert res_bad["isError"]
+
+
+def test_tool_check(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Clean pass in text format (default)
+    res_text = server.execute_tool("cbi_check", {})
+    assert not res_text["isError"]
+    assert "cbi check: passed" in res_text["content"][0]["text"]
+
+    # Explicit text format
+    res_text_exp = server.execute_tool("cbi_check", {"format": "text"})
+    assert not res_text_exp["isError"]
+    assert "cbi check: passed" in res_text_exp["content"][0]["text"]
+
+    # 2. Clean pass in JSON format
+    res_json = server.execute_tool("cbi_check", {"format": "json"})
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert data["passed"] is True
+    assert data["problems"] == []
+
+    # 3. Clean pass with explicit base
+    res_base = server.execute_tool("cbi_check", {"base": "main", "format": "json"})
+    assert not res_base["isError"]
+    data_base = json.loads(res_base["content"][0]["text"])
+    assert data_base["passed"] is True
+    assert data_base["problems"] == []
+
+    # 4. Bad ref error handling
+    res_bad = server.execute_tool("cbi_check", {"base": "nonexistent_ref_9999"})
+    assert res_bad["isError"]
+    assert "Error:" in res_bad["content"][0]["text"]
+
+    # 5. Problem detection when code file is changed
+    (repo / "src/shapes/circle.ts").write_text("export class Circle { constructor(readonly r: number) {} }\n")
+    res_prob_json = server.execute_tool("cbi_check", {"format": "json"})
+    assert not res_prob_json["isError"]
+    data_prob = json.loads(res_prob_json["content"][0]["text"])
+    assert data_prob["passed"] is False
+    assert len(data_prob["problems"]) > 0
+    assert any("src/shapes/circle.ts" in p for p in data_prob["problems"])
+
+    res_prob_text = server.execute_tool("cbi_check", {"format": "text"})
+    assert not res_prob_text["isError"]
+    assert "problem" in res_prob_text["content"][0]["text"]
+    assert "src/shapes/circle.ts" in res_prob_text["content"][0]["text"]
+
+
+def test_tool_worktrees(repo, tmp_path):
+    import subprocess
+    lane = tmp_path / "wt-lane"
+    subprocess.run(["git", "worktree", "add", "-q", "-b", "lane", str(lane)], cwd=repo, check=True)
+
+    server = MCPServer(root=repo)
+
+    # 1. Text format (default)
+    res_text = server.execute_tool("cbi_worktrees", {})
+    assert not res_text["isError"]
+    text = res_text["content"][0]["text"]
+    assert "worktrees:" in text
+    assert "branches:" in text
+    assert "main" in text
+    assert "lane" in text
+
+    # Explicit format: text
+    res_text_exp = server.execute_tool("cbi_worktrees", {"format": "text"})
+    assert not res_text_exp["isError"]
+    assert "worktrees:" in res_text_exp["content"][0]["text"]
+
+    # 2. JSON format
+    res_json = server.execute_tool("cbi_worktrees", {"format": "json"})
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert "worktrees" in data and "branches" in data
+    assert isinstance(data["worktrees"], list) and len(data["worktrees"]) >= 2
+    assert isinstance(data["branches"], list) and len(data["branches"]) >= 2
+
+    # Verify worktree properties
+    current_wt = next(w for w in data["worktrees"] if w["current"])
+    assert current_wt["branch"] == "main"
+    assert current_wt["has_model"] is True
+    assert Path(current_wt["path"]).resolve() == repo.resolve()
+
+    lane_wt = next(w for w in data["worktrees"] if Path(w["path"]).resolve() == lane.resolve())
+    assert lane_wt["branch"] == "lane"
+    assert lane_wt["current"] is False
+
+    # Verify branches properties
+    main_b = next(b for b in data["branches"] if b["name"] == "main")
+    assert main_b["current"] is True
+    lane_b = next(b for b in data["branches"] if b["name"] == "lane")
+    assert lane_b["current"] is False
+
 
 
