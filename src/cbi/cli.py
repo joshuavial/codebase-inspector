@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, mcp, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, mcp, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, system_views, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -44,6 +44,8 @@ COMMANDS = {
     "history": "Print the architecture changelog for the default branch.",
     "mcp": "Run the stdio MCP server for coding agents.",
     "query": "Execute a read-only SQL query against the codebase model.",
+    "endpoints": "List HTTP routes with handlers, callers, downstream code and tables.",
+    "tables": "List database tables, columns, foreign keys and code references.",
 }
 
 
@@ -71,7 +73,7 @@ def build_parser():
         if name in ("init", "scan", "check", *READERS):
             cmd.add_argument("--out", metavar="DIR", type=Path,
                              help="model directory to use instead of .cbi/ in the repo root")
-        if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps", "query"):
+        if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps", "query", "endpoints", "tables"):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds = sub.choices
     cmds["bug"].add_argument("--print", dest="print_url", action="store_true", help="print the URL without opening it")
@@ -176,7 +178,7 @@ def build_parser():
     cmds["ingest"].add_argument("files", nargs="+", metavar="file", help="lcov, coverage.py JSON or JUnit XML file")
     ref_help = "branch, tag or commit. scan stores its model; the other commands read it"
     for name in ("scan", "search", "show", "tests-for", "status", "build", "tasks", "task", "submit",
-                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file", "query"):
+                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file", "query", "endpoints", "tables"):
         cmds[name].add_argument("--ref", metavar="REF", help=ref_help)
     viewed = cmds["context"].add_mutually_exclusive_group()
     viewed.add_argument("--ref", metavar="REF", help=ref_help)
@@ -217,11 +219,16 @@ def build_parser():
     cmds["query"].add_argument("sql", nargs="?", help="SQL query to execute against model.db (SELECT, WITH, EXPLAIN)")
     cmds["query"].add_argument("--schema", action="store_true", help="print table definitions (nodes, edges, diagnostics, coverage)")
     cmds["query"].add_argument("--limit", type=int, default=50, help="maximum rows to return (default: 50)")
+    cmds["endpoints"].add_argument("--path", help="only endpoints matching this path (substring)")
+    cmds["endpoints"].add_argument("--method", help="only endpoints with this HTTP method (GET, POST, ...)")
+    cmds["endpoints"].add_argument("--handler", help="only endpoints handled by this function or file")
+    cmds["endpoints"].add_argument("--table", help="only endpoints that read or write this table")
+    cmds["tables"].add_argument("--table", help="only tables matching this table name")
     return parser
 
 
 READERS = ("search", "show", "context", "tests-for", "tasks", "task", "submit", "build",
-           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp", "query")
+           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp", "query", "endpoints", "tables")
 
 TEAM_INIT_HELP = """\
 Opt in to team mode. Writes team.toml, rewrites .gitignore so only derived
@@ -296,6 +303,7 @@ name. current marks the worktree you are in and its branch.
 
 Exit codes: 0 done, 1 not inside a git repo.""",
     **query.HELP,
+    **system_views.HELP,
     "context": """\
 Print a short Markdown block describing one node, for pasting into an agent
 session. It names the project and its absolute path, the model folder
@@ -1339,12 +1347,20 @@ def cmd_query(args):
     return _query(args, query.sql)
 
 
+def cmd_endpoints(args):
+    return _query(args, system_views.cmd_endpoints)
+
+
+def cmd_tables(args):
+    return _query(args, system_views.cmd_tables)
+
+
 HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
             "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,
             "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp,
-            "query": cmd_query}
+            "query": cmd_query, "endpoints": cmd_endpoints, "tables": cmd_tables}
 HANDLERS["ingest"] = cmd_ingest
 
 

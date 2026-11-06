@@ -62,3 +62,159 @@ def test_build_writes_system_view_scripts(make_repo, monkeypatch, capsys):
     assert database.startswith('cbiLoad("database", {"tables":')
     assert endpoints.startswith('cbiLoad("endpoints", {"endpoints":')
     assert '"path":"/api/accounts"' in endpoints
+
+
+def test_cli_endpoints_text_and_json(make_repo, monkeypatch, capsys):
+    _root, _conn = _scan(make_repo, monkeypatch, capsys)
+
+    # Default text output
+    assert main(["endpoints"]) == 0
+    out = capsys.readouterr().out
+    assert "GET    /api/accounts" in out
+    assert "POST   /api/accounts" in out
+    assert "handler: accounts" in out
+    assert "callers: loadAccounts" in out
+    assert "tables:  accounts (read)" in out
+
+    # Structured JSON output
+    assert main(["endpoints", "--json"]) == 0
+    json_out = capsys.readouterr().out
+    data = json.loads(json_out)
+    assert "endpoints" in data
+    assert len(data["endpoints"]) == 2
+    paths = [(ep["method"], ep["path"]) for ep in data["endpoints"]]
+    assert ("GET", "/api/accounts") in paths
+    assert ("POST", "/api/accounts") in paths
+
+
+def test_cli_endpoints_filters(make_repo, monkeypatch, capsys):
+    _root, _conn = _scan(make_repo, monkeypatch, capsys)
+
+    # Filter by method
+    assert main(["endpoints", "--method", "get", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["method"] == "GET"
+
+    assert main(["endpoints", "--method", "POST", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["method"] == "POST"
+
+    # Filter by path
+    assert main(["endpoints", "--path", "accounts", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["endpoints"]) == 2
+
+    # Filter by handler
+    assert main(["endpoints", "--handler", "create_account", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["handler"]["name"] == "create_account"
+
+    # Filter by table
+    assert main(["endpoints", "--table", "accounts", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["method"] == "GET"
+
+    # Filter with no matches
+    assert main(["endpoints", "--table", "nonexistent"]) == 0
+    assert "no endpoints found" in capsys.readouterr().out
+
+    assert main(["endpoints", "--table", "nonexistent", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["endpoints"] == []
+
+
+def test_cli_tables_text_and_json(make_repo, monkeypatch, capsys):
+    _root, _conn = _scan(make_repo, monkeypatch, capsys)
+
+    # Default text output
+    assert main(["tables"]) == 0
+    out = capsys.readouterr().out
+    assert "table accounts (2 columns)" in out
+    assert "id" in out
+    assert "email" in out
+    assert "PRIMARY KEY" in out
+    assert "NOT NULL" in out
+    assert "reads:   list_accounts" in out
+
+    # JSON output
+    assert main(["tables", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert "tables" in data
+    assert "relationships" in data
+    assert len(data["tables"]) == 1
+    assert data["tables"][0]["name"] == "accounts"
+
+
+def test_cli_tables_filters(make_repo, monkeypatch, capsys):
+    _root, _conn = _scan(make_repo, monkeypatch, capsys)
+
+    # Filter matching table
+    assert main(["tables", "--table", "accounts", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data["tables"]) == 1
+    assert data["tables"][0]["name"] == "accounts"
+
+    # Filter with no matches
+    assert main(["tables", "--table", "nonexistent"]) == 0
+    assert "no tables found" in capsys.readouterr().out
+
+    assert main(["tables", "--table", "nonexistent", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["tables"] == []
+    assert data["relationships"] == []
+
+
+def test_filter_and_format_units():
+    # Unit tests for formatters and filters
+    assert system_views.format_endpoints_text([]) == "no endpoints found"
+    assert system_views.format_tables_text([]) == "no tables found"
+
+    dummy_tables = [
+        {
+            "id": "t1",
+            "name": "users",
+            "columns": [
+                {"id": "c_id", "name": "id", "type": "INTEGER", "primaryKey": True},
+                {"id": "c_name", "name": "name", "type": "TEXT", "nullable": False},
+            ],
+            "foreignKeys": [],
+            "referencedBy": [
+                {"from": "t2", "column": "c_user", "to": "t1", "targetColumn": "c_id"}
+            ],
+            "reads": [{"name": "get_user", "file": "users.py", "line": 5}],
+            "writes": [{"name": "save_user", "file": "users.py", "line": 20}],
+        },
+        {
+            "id": "t2",
+            "name": "orders",
+            "columns": [
+                {"id": "c_order_id", "name": "id", "type": "INTEGER", "primaryKey": True},
+                {"id": "c_user", "name": "user_id", "type": "INTEGER", "nullable": False},
+            ],
+            "foreignKeys": [
+                {"from": "t2", "column": "c_user", "to": "t1", "targetColumn": "c_id"}
+            ],
+            "referencedBy": [],
+            "reads": [],
+            "writes": [],
+        },
+    ]
+    dummy_rels = [{"from": "t2", "column": "c_user", "to": "t1", "targetColumn": "c_id"}]
+
+    text = system_views.format_tables_text(dummy_tables, dummy_rels)
+    assert "table users (2 columns)" in text
+    assert "table orders (2 columns)" in text
+    assert "foreign keys:" in text
+    assert "referenced by:" in text
+    assert "reads:   get_user (users.py:5)" in text
+    assert "writes:  save_user (users.py:20)" in text
+
+    matched_t, matched_r = system_views.filter_tables(dummy_tables, dummy_rels, table="users")
+    assert len(matched_t) == 1
+    assert matched_t[0]["name"] == "users"
+    assert len(matched_r) == 1
+

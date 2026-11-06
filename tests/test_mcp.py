@@ -3,6 +3,7 @@
 import io
 import json
 import sqlite3
+from pathlib import Path
 import pytest
 
 from cbi.cli import main
@@ -105,7 +106,7 @@ def test_tools_list():
     tool_names = {t["name"] for t in tools}
     expected = {
         "cbi_status", "cbi_context", "cbi_tests_for", "cbi_search", "cbi_hotspots",
-        "cbi_cycles", "cbi_orphans", "cbi_deps",
+        "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
     }
     assert expected.issubset(tool_names)
 
@@ -613,6 +614,8 @@ def test_concurrent_requests_stress(repo):
         ("cbi_cycles", {"format": "json"}),
         ("cbi_orphans", {"format": "json"}),
         ("cbi_deps", {"level": "folder", "format": "json"}),
+        ("cbi_endpoints", {"format": "json"}),
+        ("cbi_tables", {"format": "json"}),
     ]
 
     def make_call(pair):
@@ -631,4 +634,100 @@ def test_concurrent_requests_stress(repo):
         assert not res["isError"], f"Tool {tool_name} failed: {res['content']}"
         assert len(res["content"]) > 0
         assert len(res["content"][0]["text"]) > 0
+
+
+def test_tools_call_endpoints_empty_repo(repo):
+    server = MCPServer(root=repo)
+    req = {
+        "jsonrpc": "2.0",
+        "id": 80,
+        "method": "tools/call",
+        "params": {"name": "cbi_endpoints", "arguments": {}},
+    }
+    resp = server.handle_request(req)
+    assert not resp["result"]["isError"]
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload == {"endpoints": []}
+
+
+def test_tools_call_tables_empty_repo(repo):
+    server = MCPServer(root=repo)
+    req = {
+        "jsonrpc": "2.0",
+        "id": 81,
+        "method": "tools/call",
+        "params": {"name": "cbi_tables", "arguments": {}},
+    }
+    resp = server.handle_request(req)
+    assert not resp["result"]["isError"]
+    payload = json.loads(resp["result"]["content"][0]["text"])
+    assert payload == {"tables": [], "relationships": []}
+
+
+def test_tools_call_system_views_with_data(make_repo, monkeypatch):
+    system_fixture = Path(__file__).parent / "fixtures" / "data" / "system"
+    root = make_repo({
+        p.relative_to(system_fixture).as_posix(): p.read_text()
+        for p in system_fixture.rglob("*") if p.is_file()
+    }, name="system-mcp")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+
+    server = MCPServer(root=root)
+
+    # cbi_endpoints: default json output
+    res = server.execute_tool("cbi_endpoints", {})
+    assert not res["isError"]
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["endpoints"]) == 2
+
+    # cbi_endpoints: filtering by method
+    res = server.execute_tool("cbi_endpoints", {"method": "GET"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["method"] == "GET"
+
+    # cbi_endpoints: filtering by path
+    res = server.execute_tool("cbi_endpoints", {"path": "/api/accounts"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["endpoints"]) == 2
+
+    # cbi_endpoints: filtering by handler
+    res = server.execute_tool("cbi_endpoints", {"handler": "create_account"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["handler"]["name"] == "create_account"
+
+    # cbi_endpoints: filtering by table
+    res = server.execute_tool("cbi_endpoints", {"table": "accounts"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["endpoints"]) == 1
+    assert data["endpoints"][0]["method"] == "GET"
+
+    # cbi_endpoints: text format
+    res = server.execute_tool("cbi_endpoints", {"format": "text"})
+    assert not res["isError"]
+    assert "GET    /api/accounts" in res["content"][0]["text"]
+
+    # cbi_tables: default json output
+    res = server.execute_tool("cbi_tables", {})
+    assert not res["isError"]
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["tables"]) == 1
+    assert data["tables"][0]["name"] == "accounts"
+
+    # cbi_tables: filtering by table
+    res = server.execute_tool("cbi_tables", {"table": "accounts"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["tables"]) == 1
+
+    res = server.execute_tool("cbi_tables", {"table": "nonexistent"})
+    data = json.loads(res["content"][0]["text"])
+    assert len(data["tables"]) == 0
+
+    # cbi_tables: text format
+    res = server.execute_tool("cbi_tables", {"format": "text"})
+    assert not res["isError"]
+    assert "table accounts (2 columns)" in res["content"][0]["text"]
+
 
