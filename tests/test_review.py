@@ -295,6 +295,8 @@ def test_deps_matrix_and_forbid(repo, capsys):
     assert code == 0 and "no packages in the model" in out
     code, out, _ = run(capsys, "deps", "--forbid", "a:b")
     assert code == 1 and "no packages in the model" in out
+    code, out, _ = run(capsys, "deps", "--forbid", "a:b", "--json")
+    assert code == 1 and "no packages in the model" in out
 
 
 def test_show_order_floor_part_of_and_helper_links(repo, capsys):
