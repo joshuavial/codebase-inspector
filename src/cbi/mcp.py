@@ -9,6 +9,7 @@ import contextlib
 import datetime as dt
 import io
 import json
+import re
 import sqlite3
 import sys
 import threading
@@ -343,11 +344,11 @@ TOOLS = [
             "properties": {
                 "since": {
                     "type": "string",
-                    "description": "ISO date string or git date to filter commits since (default: 183 days ago).",
+                    "description": "ISO date string (YYYY-MM-DD) or relative date (e.g. '1 month ago', 'now') to filter commits since (default: 183 days ago).",
                 },
                 "until": {
                     "type": "string",
-                    "description": "ISO date string or git date to filter commits until.",
+                    "description": "ISO date string (YYYY-MM-DD) or relative date (e.g. 'now', 'yesterday') to filter commits until.",
                 },
                 "concept": {
                     "type": "string",
@@ -1029,9 +1030,40 @@ class MCPServer:
         finally:
             conn.close()
 
+    def _normalize_history_date(self, val: str | None) -> str | None:
+        if not val:
+            return None
+        val = str(val).strip()
+        try:
+            dt.datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return val
+        except ValueError:
+            pass
+        now = dt.datetime.now().astimezone()
+        lower = val.lower()
+        if lower in ("now", "today"):
+            return now.date().isoformat()
+        if lower == "yesterday":
+            return (now - dt.timedelta(days=1)).date().isoformat()
+        m = re.fullmatch(r"(\d+)\s*(hour|hours|day|days|week|weeks|month|months|year|years)\s*ago", lower)
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2)
+            if "hour" in unit:
+                return (now - dt.timedelta(hours=n)).date().isoformat()
+            if "day" in unit:
+                return (now - dt.timedelta(days=n)).date().isoformat()
+            if "week" in unit:
+                return (now - dt.timedelta(weeks=n)).date().isoformat()
+            if "month" in unit:
+                return (now - dt.timedelta(days=n * 30)).date().isoformat()
+            if "year" in unit:
+                return (now - dt.timedelta(days=n * 365)).date().isoformat()
+        return val
+
     def handle_history(self, args: dict) -> str:
-        since = args.get("since")
-        until = args.get("until")
+        since = self._normalize_history_date(args.get("since"))
+        until = self._normalize_history_date(args.get("until"))
         concept = args.get("concept")
         limit = args.get("limit")
         if limit is not None:
@@ -1047,7 +1079,7 @@ class MCPServer:
 
         build_since = since
         if build_since is None:
-            build_since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=history.DEFAULT_DAYS)).date().isoformat()
+            build_since = (dt.datetime.now().astimezone() - dt.timedelta(days=history.DEFAULT_DAYS)).date().isoformat()
 
         with self._scan_lock:
             try:

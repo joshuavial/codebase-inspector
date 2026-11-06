@@ -811,6 +811,12 @@ def test_tool_history(make_repo, monkeypatch):
     text = res_text["content"][0]["text"]
     assert "Architecture changelog" not in text
 
+    # Relative dates ("1 month ago", "now")
+    res_relative = server.execute_tool("cbi_history", {"since": "1 month ago", "until": "now", "format": "json"})
+    assert not res_relative["isError"]
+    payload_rel = json.loads(res_relative["content"][0]["text"])
+    assert len(payload_rel["entries"]) >= 2
+
     # Error handling: invalid limit
     res_err_limit = server.execute_tool("cbi_history", {"limit": -1})
     assert res_err_limit["isError"]
