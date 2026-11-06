@@ -408,35 +408,40 @@ def _date(value):
         raise HistoryError(f"invalid date {value!r}", code=2) from err
 
 
+def _is_date_only(value):
+    return bool(value and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()))
+
+
 def select(entries, since=None, until=None, concept=None, limit=None):
     low, high = _date(since), _date(until)
-    low_is_instant = bool(since and ("T" in since or " " in since))
-    high_is_instant = bool(until and ("T" in until or " " in until))
-    local_tz = dt.datetime.now().astimezone().tzinfo
-    if low and low_is_instant and low.tzinfo is None:
-        low = low.replace(tzinfo=local_tz)
-    if high and high_is_instant and high.tzinfo is None:
-        high = high.replace(tzinfo=local_tz)
+    low_date_only = _is_date_only(since)
+    high_date_only = _is_date_only(until)
+    if low and not low_date_only and low.tzinfo is None:
+        low = low.astimezone()
+    if high and not high_date_only and high.tzinfo is None:
+        high = high.astimezone()
 
     shown = []
     for entry in reversed(entries):
         when = _date(entry["date"])
-        when_aware = when if when.tzinfo else when.replace(tzinfo=local_tz)
+        when_aware = when if when.tzinfo else when.astimezone()
         if low:
-            if low_is_instant:
+            if not low_date_only:
                 if when_aware < low:
                     continue
             else:
-                target_tz = low.tzinfo or local_tz
-                if when_aware.astimezone(target_tz).date() < low.date():
+                target_tz = low.tzinfo
+                when_date = when.astimezone(target_tz).date() if target_tz else when.astimezone().date()
+                if when_date < low.date():
                     continue
         if high:
-            if high_is_instant:
+            if not high_date_only:
                 if when_aware > high:
                     continue
             else:
-                target_tz = high.tzinfo or local_tz
-                if when_aware.astimezone(target_tz).date() > high.date():
+                target_tz = high.tzinfo
+                when_date = when.astimezone(target_tz).date() if target_tz else when.astimezone().date()
+                if when_date > high.date():
                     continue
         item = copy.deepcopy(entry)
         if concept:
