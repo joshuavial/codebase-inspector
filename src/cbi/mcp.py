@@ -251,11 +251,11 @@ TOOLS = [
                 },
                 "start": {
                     "type": "string",
-                    "description": "Only dependencies that originate from this container node/path.",
+                    "description": "Only dependencies that originate from this container node ID, name, or repo-relative path.",
                 },
                 "end": {
                     "type": "string",
-                    "description": "Only dependencies that enter this container node/path.",
+                    "description": "Only dependencies that enter this container node ID, name, or repo-relative path.",
                 },
                 "include_tests": {
                     "type": "boolean",

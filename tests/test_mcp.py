@@ -546,6 +546,14 @@ def test_tools_call_deps(repo):
     text = resp_text["content"][0]["text"]
     assert isinstance(text, str)
 
+    # Absent container in JSON format returns structured empty JSON
+    resp_empty_json = server.execute_tool("cbi_deps", {"format": "json"})
+    assert not resp_empty_json["isError"]
+    empty_data = json.loads(resp_empty_json["content"][0]["text"])
+    assert empty_data["level"] == "package"
+    assert empty_data["nodes"] == []
+    assert empty_data["edges"] == []
+
     # Folder level text format
     resp_folder = server.execute_tool("cbi_deps", {"level": "folder", "format": "text"})
     assert not resp_folder["isError"]
@@ -563,6 +571,26 @@ def test_tools_call_deps(repo):
     assert not resp_tests["isError"]
     data_tests = json.loads(resp_tests["content"][0]["text"])
     assert data_tests["tests"] is True
+
+    # Endpoint filtering with node ID and repo path
+    resp_id = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "start": "local:repo:src/shapes",
+        "format": "json",
+    })
+    assert not resp_id["isError"]
+    id_data = json.loads(resp_id["content"][0]["text"])
+    assert id_data["level"] == "folder"
+
+    resp_path = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "start": "src/shapes",
+        "end": "src/shapes",
+        "format": "json",
+    })
+    assert not resp_path["isError"]
+    path_data = json.loads(resp_path["content"][0]["text"])
+    assert path_data["level"] == "folder"
 
     # Unknown start endpoint returns error
     resp_bad = server.execute_tool("cbi_deps", {"level": "folder", "start": "nonexistent_dir"})
