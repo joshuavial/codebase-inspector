@@ -23,6 +23,7 @@ from cbi.task_cache import (
     AnswerError,
     EMPTY_BLOB_ID,
     PROTOCOL_VERSION,
+    SCHEMAS,
     _attach_cache_readonly,
     _cached_answer,
     attach_cache,
@@ -33,7 +34,7 @@ from cbi.task_cache import (
 FILES_PER_TASK = 15
 EMPTY_FILE_SUMMARY = "Empty file."
 
-SCHEMAS = {
+SCHEMAS.update({
     "summarise-files": {
         "type": "object",
         "required": ["input_hash", "files"],
@@ -57,7 +58,7 @@ SCHEMAS = {
             },
         },
     },
-}
+})
 
 
 GROUP_DISPLAY_KINDS = ["folder", "module", "component", "library", "skill", "repertoire", "tests", "scripts",

@@ -17,6 +17,9 @@ class AnswerError(Exception):
     pass
 
 
+SCHEMAS = {}
+
+
 def cache_path():
     return Path(os.environ.get("CBI_CACHE_DIR") or Path.home() / ".cache" / "codebase-inspector") / "answers.db"
 

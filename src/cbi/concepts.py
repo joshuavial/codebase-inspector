@@ -15,6 +15,7 @@ import posixpath
 from collections import defaultdict
 
 from cbi import store
+from cbi.task_cache import AnswerError, PROTOCOL_VERSION, SCHEMAS
 
 ROLES = ("ui", "app", "service", "core", "data")
 ROLE_DISPLAY = {"ui": "interface", "app": "app", "service": "service", "core": "core", "data": "data"}
@@ -137,9 +138,8 @@ def structure_confirmed(conn):
     define-concepts stays closed while any confirm-structure task is open or missing.
     If that kind is not registered and no rows exist, nothing is waiting.
     """
-    from cbi import tasks
     states = [row[0] for row in conn.execute("SELECT state FROM tasks WHERE kind = 'confirm-structure'")]
-    if "confirm-structure" not in tasks.SCHEMAS and not states:
+    if "confirm-structure" not in SCHEMAS and not states:
         return True
     return bool(states) and all(state == "done" for state in states)
 
@@ -196,8 +196,7 @@ def _pairs(conn, files):
 
 
 def _input_hash(files, pairs):
-    from cbi import tasks
-    payload = ["define-concepts", tasks.PROTOCOL_VERSION,
+    payload = ["define-concepts", PROTOCOL_VERSION,
                [[f["path"], f["content_hash"], f["summary"]] for f in files],
                [[p["from"], p["to"], p["kind"], p["count"]] for p in pairs]]
     return hashlib.sha1(json.dumps(payload).encode()).hexdigest()[:16]
@@ -646,7 +645,7 @@ def _task_id(workspace_id):
 
 def refresh(conn, out=None, root=None, previous=None):
     """Open, close or fill define-concepts from the current files and concepts.json."""
-    from cbi import screens, tasks, team
+    from cbi import screens, team
     if not structure_confirmed(conn):
         conn.execute("DELETE FROM tasks WHERE kind = 'define-concepts'")
         screens.refresh(conn, out, root)
@@ -665,7 +664,7 @@ def refresh(conn, out=None, root=None, previous=None):
     files = [f for f in tracked if f["role"] in ("code", "test")]
     pairs = _pairs(conn, files)
     digest = _input_hash(files, pairs)
-    committed = team.committed_answer(out, "define-concepts", digest, tasks.PROTOCOL_VERSION)
+    committed = team.committed_answer(out, "define-concepts", digest, PROTOCOL_VERSION)
     cached = None
     if not team.answer_superseded(out, "define-concepts", digest):
         cached = committed if committed is not None else _cached(conn, digest)
@@ -704,12 +703,12 @@ def refresh(conn, out=None, root=None, previous=None):
 
 def accept(conn, task, answer, out, root=None):
     """Write concepts.json, project it, and close the task. Raises AnswerError listing every failure."""
-    from cbi import tasks, team
+    from cbi import team
     if out is None:
-        raise tasks.AnswerError("$: no model directory; submit through `cbi submit`")
+        raise AnswerError("$: no model directory; submit through `cbi submit`")
     errors, warnings = problems(conn, answer)
     if errors:
-        raise tasks.AnswerError("\n".join(errors + warnings))
+        raise AnswerError("\n".join(errors + warnings))
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
     current = (out / "concepts.json").read_text(encoding="utf-8") if (out / "concepts.json").exists() else None
