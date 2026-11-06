@@ -385,3 +385,129 @@ def test_tool_diff(repo):
     resp = server.execute_tool("cbi_diff", {"base_model": model_file, "head_model": model_file})
     assert not resp["isError"]
     assert "no architectural changes" in resp["content"][0]["text"]
+
+
+def test_tool_query(repo):
+    server = MCPServer(root=repo)
+
+    # JSON format
+    resp_json = server.execute_tool("cbi_query", {
+        "sql": "SELECT id, kind, name FROM nodes WHERE kind = 'symbol' ORDER BY name",
+        "format": "json",
+    })
+    assert not resp_json["isError"]
+    data = json.loads(resp_json["content"][0]["text"])
+    assert data["row_count"] > 0
+    assert "Circle" in [r["name"] for r in data["rows"]]
+    assert "columns" in data
+    assert data["columns"] == ["id", "kind", "name"]
+
+    # Text format
+    resp_text = server.execute_tool("cbi_query", {
+        "sql": "SELECT id, kind, name FROM nodes WHERE kind = 'symbol' ORDER BY name",
+        "format": "text",
+    })
+    assert not resp_text["isError"]
+    text = resp_text["content"][0]["text"]
+    assert "Circle" in text
+    assert "id" in text and "name" in text
+
+    # Missing SQL argument
+    resp_err = server.execute_tool("cbi_query", {})
+    assert resp_err["isError"]
+
+    # Reject non-read operations
+    resp_insert = server.execute_tool("cbi_query", {"sql": "INSERT INTO nodes (id) VALUES ('fake')"})
+    assert resp_insert["isError"]
+    assert "Only read-only queries are permitted" in resp_insert["content"][0]["text"]
+
+    resp_drop = server.execute_tool("cbi_query", {"sql": "DROP TABLE nodes"})
+    assert resp_drop["isError"]
+    assert "Only read-only queries are permitted" in resp_drop["content"][0]["text"]
+
+
+def test_tool_concepts(repo):
+    server = MCPServer(root=repo)
+
+    # Empty concepts in fresh test repo
+    resp_empty = server.execute_tool("cbi_concepts", {"format": "json"})
+    assert not resp_empty["isError"]
+    assert json.loads(resp_empty["content"][0]["text"]) == []
+
+    resp_empty_text = server.execute_tool("cbi_concepts", {"format": "text"})
+    assert not resp_empty_text["isError"]
+    assert "No concepts defined" in resp_empty_text["content"][0]["text"]
+
+    # Insert sample concept nodes and edges
+    db_path = repo / ".cbi" / "model.db"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            "INSERT INTO nodes (id, kind, display_kind, name, summary, attrs) VALUES (?, ?, ?, ?, ?, ?)",
+            ("shapes", "concept", "core", "Shapes", "Shape calculations", json.dumps({"role": "core", "entry": False})),
+        )
+        conn.execute(
+            "INSERT INTO edges (src, dst, kind, source) VALUES (?, ?, 'owns', 'concept')",
+            ("shapes", f"local:repo:src/shapes/circle.ts"),
+        )
+    conn.close()
+
+    # Query all concepts as JSON
+    resp_all_json = server.execute_tool("cbi_concepts", {"format": "json"})
+    assert not resp_all_json["isError"]
+    concepts = json.loads(resp_all_json["content"][0]["text"])
+    assert len(concepts) == 1
+    assert concepts[0]["id"] == "shapes"
+    assert concepts[0]["files_count"] == 1
+
+    # Query all concepts as Text
+    resp_all_text = server.execute_tool("cbi_concepts", {"format": "text"})
+    assert not resp_all_text["isError"]
+    assert "Shapes" in resp_all_text["content"][0]["text"]
+    assert "shapes" in resp_all_text["content"][0]["text"]
+
+    # Query specific concept by ID
+    resp_single = server.execute_tool("cbi_concepts", {"concept_id": "shapes", "format": "json"})
+    assert not resp_single["isError"]
+    single = json.loads(resp_single["content"][0]["text"])
+    assert single["id"] == "shapes"
+    assert single["name"] == "Shapes"
+    assert "local:repo:src/shapes/circle.ts" in single["files"]
+
+    # Non-existent concept ID
+    resp_missing = server.execute_tool("cbi_concepts", {"concept_id": "nonexistent"})
+    assert resp_missing["isError"]
+    assert "not found" in resp_missing["content"][0]["text"]
+
+
+def test_concurrent_requests_stress(repo):
+    import concurrent.futures
+
+    server = MCPServer(root=repo)
+
+    tools_and_args = [
+        ("cbi_status", {"format": "text"}),
+        ("cbi_search", {"query": "Circle"}),
+        ("cbi_tests_for", {"target": "src/shapes/circle.ts"}),
+        ("cbi_hotspots", {"metric": "fan-in"}),
+        ("cbi_query", {"sql": "SELECT id, name FROM nodes WHERE kind = 'symbol'", "format": "json"}),
+        ("cbi_tasks", {"format": "json"}),
+    ]
+
+    def make_call(pair):
+        tool, args = pair
+        res = server.execute_tool(tool, args)
+        return tool, res
+
+    work_items = [tools_and_args[i % len(tools_and_args)] for i in range(60)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [executor.submit(make_call, item) for item in work_items]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    assert len(results) == 60
+    for tool_name, res in results:
+        assert not res["isError"], f"Tool {tool_name} failed: {res['content']}"
+        assert len(res["content"]) > 0
+        assert len(res["content"][0]["text"]) > 0
+

@@ -10,9 +10,10 @@ import io
 import json
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 
-from cbi import context, files, graph, query, store, tasks
+from cbi import concepts, context, diff, files, graph, query, store, tasks
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "cbi"
@@ -165,6 +166,48 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_query",
+        "description": "Execute a read-only SQL query against the codebase model database (model.db). Schema includes nodes (id, kind, display_kind, name, path, start_line, end_line, summary, doc, attrs), edges (src, dst, kind, source, attrs, confidence), and diagnostics (node, message, path, line, kind, severity).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "description": "SQL query to run (SELECT or EXPLAIN statement). Writes are disallowed.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of rows to return (default: 50, maximum: 500).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'json' (default) or 'text'.",
+                    "enum": ["json", "text"],
+                },
+            },
+            "required": ["sql"],
+        },
+    },
+    {
+        "name": "cbi_concepts",
+        "description": "List concepts defined in the codebase model, their hierarchy, role, file ownership, and cross-concept dependencies.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "concept_id": {
+                    "type": "string",
+                    "description": "Optional concept ID to inspect (if omitted, lists all concepts).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -270,7 +313,10 @@ class MCPServer:
             "cbi_hotspots": self.handle_hotspots,
             "cbi_diff": self.handle_diff,
             "cbi_tasks": self.handle_tasks,
+            "cbi_query": self.handle_query,
+            "cbi_concepts": self.handle_concepts,
         }
+        self._stdout_lock = threading.Lock()
 
     def _get_connection(self):
         if not self.model_path.is_file():
@@ -374,8 +420,9 @@ class MCPServer:
             fmt = args.get("format", "text")
             as_json = fmt == "json"
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                query.status(conn, argparse.Namespace(json=as_json))
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(buf):
+                    query.status(conn, argparse.Namespace(json=as_json))
             return buf.getvalue().rstrip()
         finally:
             conn.close()
@@ -415,8 +462,9 @@ class MCPServer:
             as_json = args.get("format") == "json"
             out_buf = io.StringIO()
             err_buf = io.StringIO()
-            with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-                code = query.tests_for(conn, argparse.Namespace(node=target, json=as_json))
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                    code = query.tests_for(conn, argparse.Namespace(node=target, json=as_json))
             out = out_buf.getvalue()
             err = err_buf.getvalue()
             if code != 0 and err and not out:
@@ -436,8 +484,9 @@ class MCPServer:
             kind = args.get("kind")
             as_json = args.get("format") == "json"
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                query.search(conn, argparse.Namespace(text=words, limit=limit, kind=kind, json=as_json))
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(buf):
+                    query.search(conn, argparse.Namespace(text=words, limit=limit, kind=kind, json=as_json))
             return buf.getvalue().rstrip()
         finally:
             conn.close()
@@ -450,8 +499,9 @@ class MCPServer:
             kind = args.get("kind")
             as_json = args.get("format") == "json"
             buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                graph.hotspots(conn, argparse.Namespace(by=metric, limit=limit, kind=kind, json=as_json))
+            with self._stdout_lock:
+                with contextlib.redirect_stdout(buf):
+                    graph.hotspots(conn, argparse.Namespace(by=metric, limit=limit, kind=kind, json=as_json))
             return buf.getvalue().rstrip()
         finally:
             conn.close()
@@ -523,6 +573,173 @@ class MCPServer:
                 f"{t['id']}  {t['kind']}  {t['node_display_kind']} {t['node_path'] or t['node_id']}  ({t['files']} files)"
                 for t in found
             ]
+            return "\n".join(lines)
+        finally:
+            conn.close()
+
+    def handle_query(self, args: dict) -> str:
+        sql = (args.get("sql") or "").strip()
+        if not sql:
+            raise ValueError("Missing required argument: 'sql'")
+        # Enforce read-only queries
+        first_token = sql.split()[0].upper() if sql.split() else ""
+        if first_token not in ("SELECT", "WITH", "EXPLAIN", "PRAGMA"):
+            raise ValueError(f"Only read-only queries are permitted (got {first_token}).")
+
+        limit = min(max(int(args.get("limit", 50)), 1), 500)
+        fmt = args.get("format", "json")
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = cursor.fetchmany(limit)
+
+            if fmt == "json":
+                results = [dict(zip(columns, row)) for row in rows]
+                payload = {
+                    "query": sql,
+                    "columns": columns,
+                    "row_count": len(results),
+                    "rows": results,
+                }
+                return json.dumps(payload, indent=2)
+            else:
+                if not columns:
+                    return "Query returned 0 columns."
+                col_widths = [len(c) for c in columns]
+                str_rows = []
+                for row in rows:
+                    str_row = [str(val) if val is not None else "NULL" for val in row]
+                    for i, val in enumerate(str_row):
+                        col_widths[i] = max(col_widths[i], len(val))
+                    str_rows.append(str_row)
+                header = " | ".join(columns[i].ljust(col_widths[i]) for i in range(len(columns)))
+                divider = "-+-".join("-" * col_widths[i] for i in range(len(columns)))
+                body = "\n".join(" | ".join(row[i].ljust(col_widths[i]) for i in range(len(columns))) for row in str_rows)
+                summary = f"({len(rows)} row{'s' if len(rows) != 1 else ''})"
+                return f"{header}\n{divider}\n{body}\n{summary}" if body else f"{header}\n{divider}\n(0 rows)"
+        finally:
+            conn.close()
+
+    def handle_concepts(self, args: dict) -> str:
+        concept_id = args.get("concept_id")
+        fmt = args.get("format", "text")
+        as_json = fmt == "json"
+
+        conn = self._get_connection()
+        try:
+            if concept_id:
+                row = conn.execute(
+                    "SELECT id, name, summary, attrs FROM nodes WHERE kind = 'concept' AND id = ?",
+                    (concept_id,),
+                ).fetchone()
+                if not row:
+                    raise ValueError(f"Concept '{concept_id}' not found.")
+                cid, name, summary, attrs_json = row
+                attrs = json.loads(attrs_json) if attrs_json else {}
+
+                files_list = [
+                    r[0] for r in conn.execute(
+                        "SELECT dst FROM edges WHERE kind = 'owns' AND src = ? ORDER BY dst",
+                        (concept_id,),
+                    )
+                ]
+
+                relates_out = [
+                    {"target": r[0], "attrs": json.loads(r[1]) if r[1] else {}}
+                    for r in conn.execute(
+                        "SELECT dst, attrs FROM edges WHERE kind = 'relates' AND src = ? ORDER BY dst",
+                        (concept_id,),
+                    )
+                ]
+                relates_in = [
+                    {"source": r[0], "attrs": json.loads(r[1]) if r[1] else {}}
+                    for r in conn.execute(
+                        "SELECT src, attrs FROM edges WHERE kind = 'relates' AND dst = ? ORDER BY src",
+                        (concept_id,),
+                    )
+                ]
+
+                detail = {
+                    "id": cid,
+                    "name": name,
+                    "summary": summary or "",
+                    "role": attrs.get("role", ""),
+                    "entry": attrs.get("entry", False),
+                    "entry_file": attrs.get("entry_file"),
+                    "files": files_list,
+                    "files_count": len(files_list),
+                    "relates_out": relates_out,
+                    "relates_in": relates_in,
+                }
+
+                if as_json:
+                    return json.dumps(detail, indent=2)
+
+                lines = [
+                    f"# Concept: {name} ({cid})",
+                    f"Role: {detail['role'] or 'unspecified'}",
+                    f"Entry: {'yes' if detail['entry'] else 'no'}",
+                ]
+                if detail["summary"]:
+                    lines.append(f"\n{detail['summary']}")
+                lines.append(f"\nOwned files ({len(files_list)}):")
+                for f in files_list:
+                    lines.append(f"  - {f}")
+                if relates_out:
+                    lines.append("\nOutgoing relationships:")
+                    for rel in relates_out:
+                        label = rel["attrs"].get("label", "relates to")
+                        lines.append(f"  -> {rel['target']} ({label})")
+                if relates_in:
+                    lines.append("\nIncoming relationships:")
+                    for rel in relates_in:
+                        label = rel["attrs"].get("label", "relates to")
+                        lines.append(f"  <- {rel['source']} ({label})")
+                return "\n".join(lines)
+
+            # All concepts
+            rows = conn.execute(
+                "SELECT id, name, summary, attrs FROM nodes WHERE kind = 'concept' ORDER BY id"
+            ).fetchall()
+            if not rows:
+                if as_json:
+                    return json.dumps([], indent=2)
+                return "No concepts defined in model."
+
+            file_counts = dict(
+                conn.execute("SELECT src, count(*) FROM edges WHERE kind = 'owns' GROUP BY src")
+            )
+            relates_counts = dict(
+                conn.execute("SELECT src, count(*) FROM edges WHERE kind = 'relates' GROUP BY src")
+            )
+
+            concepts_list = []
+            for cid, name, summary, attrs_json in rows:
+                attrs = json.loads(attrs_json) if attrs_json else {}
+                concepts_list.append({
+                    "id": cid,
+                    "name": name,
+                    "summary": summary or "",
+                    "role": attrs.get("role", ""),
+                    "entry": attrs.get("entry", False),
+                    "files_count": file_counts.get(cid, 0),
+                    "relationships_count": relates_counts.get(cid, 0),
+                })
+
+            if as_json:
+                return json.dumps(concepts_list, indent=2)
+
+            lines = ["# Codebase Concepts\n"]
+            for c in concepts_list:
+                role_tag = f" [{c['role']}]" if c["role"] else ""
+                entry_tag = " (entry)" if c["entry"] else ""
+                lines.append(f"- **{c['name']}** (`{c['id']}`){role_tag}{entry_tag}")
+                lines.append(f"  Files: {c['files_count']} | Relates: {c['relationships_count']}")
+                if c["summary"]:
+                    lines.append(f"  {c['summary']}")
             return "\n".join(lines)
         finally:
             conn.close()
