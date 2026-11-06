@@ -410,13 +410,34 @@ def _date(value):
 
 def select(entries, since=None, until=None, concept=None, limit=None):
     low, high = _date(since), _date(until)
+    low_is_instant = bool(since and ("T" in since or " " in since))
+    high_is_instant = bool(until and ("T" in until or " " in until))
+    local_tz = dt.datetime.now().astimezone().tzinfo
+    if low and low_is_instant and low.tzinfo is None:
+        low = low.replace(tzinfo=local_tz)
+    if high and high_is_instant and high.tzinfo is None:
+        high = high.replace(tzinfo=local_tz)
+
     shown = []
     for entry in reversed(entries):
         when = _date(entry["date"])
-        if low and when.date() < low.date():
-            continue
-        if high and when.date() > high.date():
-            continue
+        when_aware = when if when.tzinfo else when.replace(tzinfo=local_tz)
+        if low:
+            if low_is_instant:
+                if when_aware < low:
+                    continue
+            else:
+                target_tz = low.tzinfo or local_tz
+                if when_aware.astimezone(target_tz).date() < low.date():
+                    continue
+        if high:
+            if high_is_instant:
+                if when_aware > high:
+                    continue
+            else:
+                target_tz = high.tzinfo or local_tz
+                if when_aware.astimezone(target_tz).date() > high.date():
+                    continue
         item = copy.deepcopy(entry)
         if concept:
             item["changes"] = json.loads(diff.render(item["changes"], "json", concept))
