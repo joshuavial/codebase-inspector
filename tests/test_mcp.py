@@ -4,12 +4,23 @@ import io
 import json
 import sqlite3
 import sys
+import urllib.parse
 from pathlib import Path
 import pytest
 
 from cbi import prime
 from cbi.cli import main
-from cbi.mcp import MCPServer, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, read_message, write_message
+from cbi.mcp import (
+    MCPServer,
+    PROMPTS,
+    PROTOCOL_VERSION,
+    RESOURCE_TEMPLATES,
+    RESOURCES,
+    SERVER_NAME,
+    SERVER_VERSION,
+    read_message,
+    write_message,
+)
 
 FILES = {
     "src/shapes/circle.ts": """\
@@ -69,7 +80,11 @@ def test_initialize():
     assert resp["id"] == 1
     result = resp["result"]
     assert result["protocolVersion"] == PROTOCOL_VERSION
-    assert result["capabilities"] == {"tools": {}}
+    assert result["capabilities"] == {
+        "tools": {},
+        "resources": {"subscribe": False, "listChanged": False},
+        "prompts": {"listChanged": False},
+    }
     assert result["serverInfo"] == {"name": SERVER_NAME, "version": SERVER_VERSION}
 
 
@@ -122,6 +137,310 @@ def test_tools_list():
         assert "description" in tool
         assert "inputSchema" in tool
         assert tool["inputSchema"]["type"] == "object"
+
+
+def test_resources_list():
+    server = MCPServer()
+    req = {"jsonrpc": "2.0", "id": 10, "method": "resources/list"}
+    resp = server.handle_request(req)
+    assert resp["jsonrpc"] == "2.0"
+    assert resp["id"] == 10
+    resources = resp["result"]["resources"]
+    uris = {r["uri"] for r in resources}
+    expected_uris = {
+        "cbi://system/overview",
+        "cbi://model/status",
+        "cbi://model/schema",
+        "cbi://concepts",
+    }
+    assert uris == expected_uris
+    for r in resources:
+        assert "name" in r
+        assert "description" in r
+        assert "mimeType" in r
+
+
+def test_resources_templates_list():
+    server = MCPServer()
+    req = {"jsonrpc": "2.0", "id": 11, "method": "resources/templates/list"}
+    resp = server.handle_request(req)
+    assert resp["jsonrpc"] == "2.0"
+    assert resp["id"] == 11
+    templates = resp["result"]["resourceTemplates"]
+    template_uris = {t["uriTemplate"] for t in templates}
+    assert template_uris == {"cbi://node/{id}", "cbi://context/{node}"}
+    for t in templates:
+        assert "name" in t
+        assert "description" in t
+        assert "mimeType" in t
+
+
+def test_resources_read_static(repo):
+    server = MCPServer(root=repo)
+
+    # 1. cbi://system/overview
+    req = {"jsonrpc": "2.0", "id": 20, "method": "resources/read", "params": {"uri": "cbi://system/overview"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 20
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://system/overview"
+    assert contents[0]["mimeType"] == "text/markdown"
+    assert "Architecture" in contents[0]["text"] or "System" in contents[0]["text"] or "#" in contents[0]["text"]
+
+    # 2. cbi://model/status
+    req = {"jsonrpc": "2.0", "id": 21, "method": "resources/read", "params": {"uri": "cbi://model/status"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 21
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://model/status"
+    assert contents[0]["mimeType"] == "application/json"
+    status_data = json.loads(contents[0]["text"])
+    assert isinstance(status_data, dict)
+
+    # 3. cbi://model/schema
+    req = {"jsonrpc": "2.0", "id": 22, "method": "resources/read", "params": {"uri": "cbi://model/schema"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 22
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://model/schema"
+    assert contents[0]["mimeType"] == "text/plain"
+    schema_text = contents[0]["text"]
+    assert "CREATE TABLE" in schema_text
+    assert "nodes" in schema_text
+    assert "edges" in schema_text
+
+    # 4. cbi://concepts
+    req = {"jsonrpc": "2.0", "id": 23, "method": "resources/read", "params": {"uri": "cbi://concepts"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 23
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://concepts"
+    assert contents[0]["mimeType"] == "application/json"
+    concepts_data = json.loads(contents[0]["text"])
+    assert isinstance(concepts_data, list)
+
+
+def test_resources_read_templates(repo):
+    server = MCPServer(root=repo)
+
+    # 1. cbi://node/{id} with plain path
+    req = {"jsonrpc": "2.0", "id": 30, "method": "resources/read", "params": {"uri": "cbi://node/src/shapes/circle.ts"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 30
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://node/src/shapes/circle.ts"
+    assert contents[0]["mimeType"] == "application/json"
+    node_data = json.loads(contents[0]["text"])
+    assert node_data["path"] == "src/shapes/circle.ts"
+
+    # 2. cbi://node/{id} with full node id URL-encoded
+    encoded_uri = f"cbi://node/{urllib.parse.quote(CIRCLE, safe='')}"
+    req = {"jsonrpc": "2.0", "id": 31, "method": "resources/read", "params": {"uri": encoded_uri}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 31
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    node_data = json.loads(contents[0]["text"])
+    assert node_data["id"] == CIRCLE
+
+    # 3. cbi://context/{node}
+    req = {"jsonrpc": "2.0", "id": 32, "method": "resources/read", "params": {"uri": "cbi://context/src/shapes/circle.ts"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 32
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://context/src/shapes/circle.ts"
+    assert contents[0]["mimeType"] == "text/markdown"
+    assert "Circle" in contents[0]["text"] or "circle.ts" in contents[0]["text"]
+
+
+def test_resources_read_errors(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Unknown resource URI
+    req = {"jsonrpc": "2.0", "id": 40, "method": "resources/read", "params": {"uri": "cbi://unknown/resource"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 40
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+    assert "Unknown resource URI" in resp["error"]["message"]
+
+    # 2. Missing URI param
+    req = {"jsonrpc": "2.0", "id": 41, "method": "resources/read", "params": {}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 41
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+
+    # 3. Nonexistent node
+    req = {"jsonrpc": "2.0", "id": 42, "method": "resources/read", "params": {"uri": "cbi://node/nonexistent.py"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 42
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+
+
+def test_prompts_list():
+    server = MCPServer()
+    req = {"jsonrpc": "2.0", "id": 50, "method": "prompts/list"}
+    resp = server.handle_request(req)
+    assert resp["jsonrpc"] == "2.0"
+    assert resp["id"] == 50
+    prompts = resp["result"]["prompts"]
+    names = {p["name"] for p in prompts}
+    assert names == {
+        "cbi_architecture_orientation",
+        "cbi_review_pr",
+        "cbi_judgement_task",
+    }
+    for p in prompts:
+        assert "description" in p
+        assert "arguments" in p
+
+
+def test_prompts_get_architecture_orientation():
+    server = MCPServer()
+
+    # Without arguments
+    req = {
+        "jsonrpc": "2.0",
+        "id": 60,
+        "method": "prompts/get",
+        "params": {"name": "cbi_architecture_orientation"},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 60
+    assert "error" not in resp
+    result = resp["result"]
+    assert "Guide an agent" in result["description"]
+    msg = result["messages"][0]
+    assert msg["role"] == "user"
+    assert "cbi_prime" in msg["content"]["text"]
+    assert "cbi_status" in msg["content"]["text"]
+    assert "cbi_concepts" in msg["content"]["text"]
+    assert "cbi_context" in msg["content"]["text"]
+
+    # With focus argument
+    req = {
+        "jsonrpc": "2.0",
+        "id": 61,
+        "method": "prompts/get",
+        "params": {"name": "cbi_architecture_orientation", "arguments": {"focus": "auth-layer"}},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 61
+    assert "error" not in resp
+    msg = resp["result"]["messages"][0]
+    assert "auth-layer" in msg["content"]["text"]
+
+
+def test_prompts_get_review_pr():
+    server = MCPServer()
+
+    # Without arguments (defaults base=main, head=HEAD)
+    req = {
+        "jsonrpc": "2.0",
+        "id": 70,
+        "method": "prompts/get",
+        "params": {"name": "cbi_review_pr"},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 70
+    assert "error" not in resp
+    result = resp["result"]
+    assert "Perform an architectural code review" in result["description"]
+    msg = result["messages"][0]
+    assert msg["role"] == "user"
+    assert "main" in msg["content"]["text"]
+    assert "HEAD" in msg["content"]["text"]
+    assert "cbi_diff" in msg["content"]["text"]
+    assert "cbi_review" in msg["content"]["text"]
+    assert "cbi_check" in msg["content"]["text"]
+
+    # With custom base and head
+    req = {
+        "jsonrpc": "2.0",
+        "id": 71,
+        "method": "prompts/get",
+        "params": {"name": "cbi_review_pr", "arguments": {"base": "release-1.0", "head": "feature-x"}},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 71
+    msg = resp["result"]["messages"][0]
+    assert "release-1.0" in msg["content"]["text"]
+    assert "feature-x" in msg["content"]["text"]
+
+
+def test_prompts_get_judgement_task(repo):
+    server = MCPServer(root=repo)
+
+    # Missing task_id -> error -32602
+    req = {
+        "jsonrpc": "2.0",
+        "id": 80,
+        "method": "prompts/get",
+        "params": {"name": "cbi_judgement_task"},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 80
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+    assert "Missing required argument" in resp["error"]["message"]
+
+    # With task_id
+    req = {
+        "jsonrpc": "2.0",
+        "id": 81,
+        "method": "prompts/get",
+        "params": {"name": "cbi_judgement_task", "arguments": {"task_id": "test-task-123"}},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 81
+    assert "error" not in resp
+    msg = resp["result"]["messages"][0]
+    assert "test-task-123" in msg["content"]["text"]
+    assert "cbi_task(task_id='test-task-123', parts=True)" in msg["content"]["text"]
+    assert "cbi_submit" in msg["content"]["text"]
+
+
+def test_prompts_get_unknown():
+    server = MCPServer()
+
+    # Unknown prompt name
+    req = {
+        "jsonrpc": "2.0",
+        "id": 90,
+        "method": "prompts/get",
+        "params": {"name": "nonexistent_prompt"},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 90
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+    assert "Unknown prompt: nonexistent_prompt" in resp["error"]["message"]
+
+    # Missing name
+    req = {
+        "jsonrpc": "2.0",
+        "id": 91,
+        "method": "prompts/get",
+        "params": {},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 91
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
 
 
 def test_tool_scan(repo):

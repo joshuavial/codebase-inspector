@@ -132,6 +132,19 @@ Exposed MCP tools:
 * `cbi_prime`: State-aware guide for an agent meeting cbi for the first time. Reports repository mapping status, open judgement tasks breakdown, the task loop, and ingest instructions (format: markdown or text).
 * `cbi_task`: Print the brief for one judgement task, inspect partitioned parts for large briefs, or pre-validate an answer JSON schema before submission (format: text or json).
 
+Exposed MCP resources:
+* `cbi://system/overview`: High-level architecture overview, concepts, key components, and boundaries (Markdown).
+* `cbi://model/status`: Codebase scan state, task counts, and codebase diagnostics (JSON).
+* `cbi://model/schema`: SQLite schema and table definitions of `model.db` (plain text DDL).
+* `cbi://concepts`: Architecture concepts map and mapped nodes (JSON).
+* `cbi://node/{id}`: Detailed architecture information, relationships, tests, and diagnostics for any node (JSON).
+* `cbi://context/{node}`: Context brief for an agent working on a file, symbol, or concept (Markdown).
+
+Exposed MCP prompts:
+* `cbi_architecture_orientation`: Guide an agent through onboarding and understanding codebase architecture using CBI (optional `focus` argument).
+* `cbi_review_pr`: Perform an architectural code review of changes between git base and head (optional `base` and `head` arguments).
+* `cbi_judgement_task`: Investigate and answer an open architectural judgement task in the codebase (required `task_id` argument).
+
 ### System Views
 
 Inspect HTTP API surface and database schemas from the command line:
