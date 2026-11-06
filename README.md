@@ -116,6 +116,8 @@ Exposed MCP tools:
 * `cbi_tables`: List database tables, columns, foreign keys, and code references detected in the codebase model (optional filter: table).
 * `cbi_history`: Architecture evolution and changelog across git history points on the default branch (optional filters: since, until, concept, limit; format: markdown, json, text).
 * `cbi_review`: Architectural review between two versions (branch, commit, PR, or HEAD against base) including a Mermaid diagram, changed concepts, and untested changes (format: markdown or json).
+* `cbi_check`: Verify that committed map and judgement files match files changed since the merge base with default branch or a specified base ref (format: text or json).
+* `cbi_worktrees`: List the repository's worktrees and local branches, their head commits, lanes, and model statuses (format: text or json).
 
 ### System Views
 

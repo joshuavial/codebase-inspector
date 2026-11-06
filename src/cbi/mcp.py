@@ -19,6 +19,7 @@ from pathlib import Path
 from cbi import (
     change_overview,
     change_summaries,
+    check,
     concepts,
     context,
     diff,
@@ -435,6 +436,40 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_check",
+        "description": "Verify that committed map and judgement files match files changed since the merge base with the default branch or a specified base ref.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base": {
+                    "type": "string",
+                    "description": "Base ref or commit SHA (e.g. 'main', 'master', commit hash; default: merge-base with default branch).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_worktrees",
+        "description": "List the repository's worktrees and local branches, their head commits, lanes, and model statuses.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -551,6 +586,8 @@ class MCPServer:
             "cbi_tables": self.handle_tables,
             "cbi_history": self.handle_history,
             "cbi_review": self.handle_review,
+            "cbi_check": self.handle_check,
+            "cbi_worktrees": self.handle_worktrees,
         }
         self._stdout_lock = threading.Lock()
         self._scan_lock = threading.Lock()
@@ -1308,6 +1345,52 @@ class MCPServer:
                 repo_name=repo_name,
             )
             return text.rstrip()
+
+    def handle_check(self, args: dict) -> str:
+        base = args.get("base")
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+
+        with self._scan_lock:
+            try:
+                res = check.verify(self.root, self.out, base_ref=base)
+            except (files.BadRef, FileNotFoundError) as err:
+                raise ValueError(str(err)) from err
+
+            if fmt == "json":
+                return json.dumps({
+                    "passed": res["passed"],
+                    "problems": res["problems"],
+                }, indent=2)
+            return res["report"].rstrip()
+
+    def handle_worktrees(self, args: dict) -> str:
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+
+        data = files.inventory(self.root, self.out)
+        if fmt == "json":
+            return json.dumps(data, indent=2)
+
+        lines = ["worktrees:"]
+        for w in data["worktrees"]:
+            mark = "*" if w["current"] else " "
+            branch = w["branch"] or "(detached)"
+            if w["model_complete"]:
+                state = "model complete"
+            elif w["has_model"]:
+                state = "model"
+            else:
+                state = "no model"
+            lines.append(f"{mark} {w['path']}  {branch}  {w['head'][:12]}  {w['lane'] or branch}  {state}")
+        lines.append("branches:")
+        for b in data["branches"]:
+            mark = "*" if b["current"] else " "
+            ref = "ref model" if b["has_ref_model"] else "no ref model"
+            lines.append(f"{mark} {b['name']}  {b['head'][:12]}  {b['lane']}  {ref}")
+        return "\n".join(lines)
 
     def run(self, stdin=None, stdout=None):
         if stdin is None:
