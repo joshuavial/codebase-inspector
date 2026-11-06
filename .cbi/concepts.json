@@ -147,7 +147,8 @@
             "tests/test_check.py",
             "tests/test_cli.py",
             "tests/test_editor.py",
-            "tests/test_mcp.py"
+            "tests/test_mcp.py",
+            "tests/test_mcp_subprocess.py"
           ]
         },
         {
