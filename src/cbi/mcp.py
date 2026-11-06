@@ -10,6 +10,7 @@ import contextlib
 import datetime as dt
 import io
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -27,6 +28,7 @@ from cbi import (
     files,
     graph,
     history,
+    ingest,
     parts,
     prime,
     query,
@@ -550,6 +552,45 @@ TOOLS = [
             "required": ["task_id"],
         },
     },
+    {
+        "name": "cbi_ingest",
+        "description": "Ingest test coverage and result files (lcov, coverage.py JSON, JUnit XML) into codebase model.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Array of file paths to coverage or test result files (lcov, coverage.py JSON, JUnit XML) to ingest.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": ["files"],
+        },
+    },
+    {
+        "name": "cbi_init",
+        "description": "Initialize .cbi directory and default ignore file in repository root.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "team": {
+                    "type": "boolean",
+                    "description": "Initialize in team mode (opt-in committed judgement and CI checks).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -671,6 +712,8 @@ class MCPServer:
             "cbi_worktrees": self.handle_worktrees,
             "cbi_prime": self.handle_prime,
             "cbi_task": self.handle_task,
+            "cbi_ingest": self.handle_ingest,
+            "cbi_init": self.handle_init,
         }
         self._stdout_lock = threading.Lock()
         self._scan_lock = threading.Lock()
@@ -1634,6 +1677,91 @@ class MCPServer:
             parts.unbind(token)
             conn.close()
 
+    def handle_ingest(self, args: dict) -> str:
+        files_arg = args.get("files")
+        if not files_arg or not isinstance(files_arg, list):
+            raise ValueError("Missing or invalid required argument: 'files' (expected a non-empty array of file paths)")
+
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+
+        with self._scan_lock:
+            conn = self._get_write_connection()
+            try:
+                records = []
+                for f in files_arg:
+                    path = Path(f)
+                    if not path.is_absolute():
+                        path = self.root / path
+                    try:
+                        r = ingest.ingest(conn, self.root, self.root, path)
+                        records.append((f, r))
+                    except (ingest.UnknownFormat, OSError, ValueError, SyntaxError) as err:
+                        raise ValueError(f"{f}: not loaded: {err}") from err
+            finally:
+                conn.close()
+
+            total_unmapped = sum(r["unmapped"] for _, r in records)
+
+            if fmt == "json":
+                return json.dumps({
+                    "files": [
+                        {
+                            "file": str(f),
+                            "format": r["format"],
+                            "lines": r["lines"],
+                            "files": r["files"],
+                            "results": r["results"],
+                            "edges": r["edges"],
+                            "unmapped": r["unmapped"],
+                        }
+                        for f, r in records
+                    ],
+                    "total_lines": sum(r["lines"] for _, r in records),
+                    "total_files": sum(r["files"] for _, r in records),
+                    "total_results": sum(r["results"] for _, r in records),
+                    "total_edges": sum(r["edges"] for _, r in records),
+                    "total_unmapped": total_unmapped,
+                }, indent=2)
+
+            lines = []
+            for f, r in records:
+                lines.append(
+                    f"{f}: {r['format']}, {r['lines']} lines in {r['files']} files, {r['results']} test results, "
+                    f"{r['edges']} coverage test links, {r['unmapped']} unmapped"
+                )
+            if total_unmapped:
+                lines.append(f"{total_unmapped} paths or test cases matched nothing in the model; see the unmapped_coverage diagnostics")
+            return "\n".join(lines)
+
+    def handle_init(self, args: dict) -> str:
+        from cbi import cli
+
+        team = bool(args.get("team", False))
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+
+        with self._scan_lock:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                cli.init_repo(self.root, self.out, team_mode=team)
+            output = buf.getvalue().strip()
+
+            if fmt == "json":
+                ignore_path = self.out / "ignore"
+                return json.dumps({
+                    "status": "ok",
+                    "root": str(self.root),
+                    "out": str(self.out),
+                    "ignore_file": str(ignore_path),
+                    "team": team,
+                    "output": output,
+                }, indent=2)
+
+            return output
+
     def run(self, stdin=None, stdout=None):
         if stdin is None:
             stdin = sys.stdin
@@ -1743,6 +1871,90 @@ def print_config(client: str = "all") -> int:
         return 1
     print(json.dumps(CONFIG_TEMPLATES[client]["config"], indent=2))
     return 0
+
+
+class InstallResult(list):
+    """List of updated config Paths that also compares equal to 0 for exit codes."""
+
+    def __eq__(self, other):
+        if other == 0:
+            return True
+        return super().__eq__(other)
+
+
+def install_client_config(client_name: str = "all", root=None):
+    """Install or merge codebase-inspector MCP server configuration for AI coding clients."""
+    client = (client_name or "all").lower().strip()
+    valid_clients = {"claude", "cursor", "gemini", "antigravity", "windsurf", "vscode", "all"}
+    if client not in valid_clients:
+        print(
+            f"Unknown client '{client}'. Choose from: claude, cursor, gemini, windsurf, vscode, all",
+            file=sys.stderr,
+        )
+        return 1
+
+    if root is None:
+        try:
+            root = files.repo_root(Path.cwd())
+        except files.NotARepo:
+            root = Path.cwd()
+    root = Path(root).resolve()
+
+    home = Path.home()
+    server_entry = {
+        "command": "cbi",
+        "args": ["mcp"],
+    }
+
+    claude_code_path = home / ".claude.json"
+    if sys.platform == "darwin":
+        claude_desktop_path = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    elif sys.platform == "win32":
+        claude_desktop_path = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json"
+    else:
+        claude_desktop_path = home / ".config" / "Claude" / "claude_desktop_config.json"
+
+    targets = []
+    if client in ("claude", "all"):
+        targets.append(claude_code_path)
+        if claude_desktop_path.parent.exists() or claude_desktop_path.is_file():
+            targets.append(claude_desktop_path)
+
+    if client in ("cursor", "all"):
+        targets.append(home / ".cursor" / "mcp.json")
+
+    if client in ("gemini", "antigravity", "all"):
+        targets.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
+
+    if client in ("windsurf", "all"):
+        targets.append(home / ".codeium" / "windsurf" / "mcp_config.json")
+
+    if client in ("vscode", "all"):
+        targets.append(root / ".vscode" / "mcp.json")
+
+    updated = InstallResult()
+    for target in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if target.is_file():
+            try:
+                content = target.read_text(encoding="utf-8").strip()
+                if content:
+                    data = json.loads(content)
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+
+        if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
+            data["mcpServers"] = {}
+
+        data["mcpServers"]["codebase-inspector"] = server_entry
+        target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        updated.append(target)
+        print(f"Installed codebase-inspector MCP server configuration in {target}")
+
+    return updated
 
 
 def run_server(root=None, out=None, stdin=None, stdout=None):

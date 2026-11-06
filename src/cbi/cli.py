@@ -216,6 +216,8 @@ def build_parser():
                                help="URL scheme the static viewer uses: vscode (default), cursor, or none")
     cmds["mcp"].add_argument("--config", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
                              help="print MCP client configuration snippet (claude, cursor, gemini, windsurf, vscode, or all)")
+    cmds["mcp"].add_argument("--install", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
+                             help="install MCP client configuration (claude, cursor, gemini, windsurf, vscode, or all)")
     cmds["query"].add_argument("sql", nargs="?", help="SQL query to execute against model.db (SELECT, WITH, EXPLAIN)")
     cmds["query"].add_argument("--schema", action="store_true", help="print table definitions (nodes, edges, diagnostics, coverage)")
     cmds["query"].add_argument("--limit", type=int, default=50, help="maximum rows to return (default: 50)")
@@ -477,8 +479,11 @@ def _paths(args):
     return root, out
 
 
-def cmd_init(args):
-    root, out = _paths(args)
+def init_repo(root, out=None, team_mode=False):
+    root = Path(root).resolve()
+    out = (out or (root / ".cbi")).resolve()
+    if team_mode:
+        return team.cmd_init(root, out)
     out.mkdir(parents=True, exist_ok=True)
     # Team mode rewrote this file. Putting `*` back would hide the committed judgement.
     if (out / "team.toml").is_file():
@@ -494,6 +499,11 @@ def cmd_init(args):
         print(f"Created {out} and wrote {ignore}. Edit it to skip more paths, then run `cbi scan`.")
     files.report_excluded_source(root, ignore.read_text(encoding="utf-8"))
     return 0
+
+
+def cmd_init(args):
+    root, out = _paths(args)
+    return init_repo(root, out)
 
 
 def _read(path):
@@ -1339,6 +1349,13 @@ def cmd_team(args):
 def cmd_mcp(args):
     if getattr(args, "config", None):
         return mcp.print_config(args.config)
+    if getattr(args, "install", None):
+        try:
+            root = files.repo_root(Path.cwd())
+        except files.NotARepo:
+            root = Path.cwd()
+        res = mcp.install_client_config(args.install, root=root)
+        return 0 if (res == 0 or isinstance(res, list)) else 1
     root, out = _paths(args)
     return mcp.run_server(root=root, out=out)
 
