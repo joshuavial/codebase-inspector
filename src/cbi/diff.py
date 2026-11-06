@@ -1167,23 +1167,7 @@ def _place(ctx, base_file, head_file):
     return groups
 
 
-def _container(side, fid):
-    if fid not in side.nodes:
-        return None
-    targets = []
-    for edge in side.by_kind["part_of"]:
-        if edge["src"] == fid and edge["dst"] in side.nodes:
-            targets.append(side.nodes[edge["dst"]])
-    deployables = sorted(n["id"] for n in targets if n["kind"] == "deployable")
-    if deployables:
-        return deployables[0]
-    packages = sorted(n["id"] for n in targets if n["kind"] == "package")
-    if packages:
-        return packages[0]
-    parent = side.nodes[fid].get("parent_id")
-    if parent and side.nodes.get(parent, {}).get("kind") == "group":
-        return parent
-    return fid
+_container = change_overview._container
 
 
 # --- group and render -----------------------------------------------------------

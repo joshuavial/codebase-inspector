@@ -461,12 +461,30 @@ def _module(ctx, file, index):
     return {"id": f"module:{gid}:{directory}", "name": directory, "kind": "module"}
 
 
+def _container(side, fid):
+    if fid not in side.nodes:
+        return None
+    targets = []
+    for edge in side.by_kind.get("part_of", []):
+        if edge["src"] == fid and edge["dst"] in side.nodes:
+            targets.append(side.nodes[edge["dst"]])
+    deployables = sorted(n["id"] for n in targets if n["kind"] == "deployable")
+    if deployables:
+        return deployables[0]
+    packages = sorted(n["id"] for n in targets if n["kind"] == "package")
+    if packages:
+        return packages[0]
+    parent = side.nodes[fid].get("parent_id")
+    if parent and side.nodes.get(parent, {}).get("kind") == "group":
+        return parent
+    return fid
+
+
 def _file_group(ctx, fid):
     owner = ctx.head_owner.get(fid) or ctx.base_owner.get(fid)
     if ctx.concept_mode and owner:
         return _top_concept(ctx, ctx.rename.get(owner, owner))
     head_id = next((dst for src, dst in ctx.file_moves.items() if src == fid), fid)
-    from cbi.diff import _container
     return _container(ctx.head, head_id) if head_id in ctx.head.nodes else _container(ctx.base, fid)
 
 
