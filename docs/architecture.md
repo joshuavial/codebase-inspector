@@ -45,6 +45,7 @@ src/cbi/
   resolve.py              import and call resolution, test linking
   docs.py                 markdown nodes, collapse, mentions
   tasks.py                judgement task generation, validation, cache
+  mcp.py                  native Model Context Protocol (MCP) server
   ingest.py               lcov, coverage.py JSON, JUnit XML
   data.py                 schema and table-use extraction
   system_views.py         database and endpoint viewer projections
@@ -195,6 +196,18 @@ Validation is hand-written checks against a small dict per task kind (required k
 - **Complete.** The query commands with examples on this repo's real node names, and the ingest commands for this repo's test runners (node:test, vitest, pytest detected from manifests).
 
 `--help` on every subcommand states inputs, output shape and exit codes. Read commands: `search`, `show`, `tests-for`, `tasks`, `task`, `status`; all take `--json`.
+
+## Native MCP server
+
+Decided in ADR-0024. Autonomous AI coding agents (Claude Code, Cursor, Codex, Antigravity, Windsurf) connect to CBI via a native Model Context Protocol server over stdio JSON-RPC 2.0 (`cbi mcp`).
+
+- **Transport**: Stdio transport with dual-mode framing supporting both HTTP `Content-Length` headers and newline-delimited JSON. Diagnostic logs are strictly routed to stderr.
+- **Zero-daemon architecture**: Runs on demand as an ephemeral child process of the agent client or IDE. No persistent background server, daemon process, or open network port is required.
+- **In-process SQLite access**: Handlers read `.cbi/model.db` and attached task caches directly via `store.read_only()`, operating under SQLite WAL mode with sub-millisecond query response times. Mutating operations (`cbi_scan`, `cbi_submit`, `cbi_ingest`) use coordinated SQLite write transactions.
+- **Tools (25)**: Exposes full CBI capabilities across mapping (`cbi_init`, `cbi_scan`), navigation and search (`cbi_context`, `cbi_show`, `cbi_search`, `cbi_query`, `cbi_concepts`, `cbi_endpoints`, `cbi_tables`, `cbi_worktrees`, `cbi_prime`), dependency analytics (`cbi_deps`, `cbi_cycles`, `cbi_orphans`, `cbi_hotspots`), diagnostics and testing (`cbi_status`, `cbi_tests_for`, `cbi_ingest`), task loop (`cbi_tasks`, `cbi_task`, `cbi_submit`), and architecture change analysis (`cbi_diff`, `cbi_history`, `cbi_review`, `cbi_check`).
+- **Resources and templates (6)**: Direct URI-based access to model views under `cbi://` (`cbi://system/overview`, `cbi://model/status`, `cbi://model/schema`, `cbi://concepts`, `cbi://node/{id}`, `cbi://context/{node}`).
+- **Prompts (3)**: Reusable prompt workflows for architecture onboarding (`cbi_architecture_orientation`), pull request architecture review (`cbi_review_pr`), and judgement task resolution (`cbi_judgement_task`).
+- **Client installation**: `cbi mcp --install <client>` automatically configures Claude Code, Claude Desktop, Cursor, Gemini, Antigravity, Windsurf, and VS Code.
 
 ## Test ingest
 

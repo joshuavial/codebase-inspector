@@ -27,3 +27,4 @@ One file per significant decision, numbered in the order they were made. When a 
 | [0021](0021-history-points-are-merges.md) | History points are merges to main | Accepted |
 | [0022](0022-project-current-concepts-into-history.md) | Project today's concepts into the past | Accepted |
 | [0023](0023-team-mode-commits-judgement.md) | Team mode commits the judgement, not the model | Accepted |
+| [0024](0024-native-mcp-server.md) | Native Model Context Protocol (MCP) server | Accepted |
