@@ -358,3 +358,26 @@ def test_legacy_summary_without_scoped_evidence_stays_pending(tmp_path):
         assert not change_summaries.refresh(conn, result)
     finally:
         conn.close()
+
+
+def test_select_timezone_instants_and_date_bounds():
+    # Commit at 2026-11-06T23:00:00+00:00, which is 2026-11-07 12:00 NZDT (+13:00)
+    entries = [{"date": "2026-11-06T23:00:00+00:00", "changes": {"groups": []}}]
+
+    # Instant comparison across timezones: 11:00 to 13:00 in NZ includes 23:00 UTC
+    assert len(history.select(entries, since="2026-11-07T11:00:00+13:00", until="2026-11-07T13:00:00+13:00")) == 1
+    # Instant comparison before window
+    assert len(history.select(entries, since="2026-11-07T13:00:00+13:00")) == 0
+    # Instant comparison after window
+    assert len(history.select(entries, until="2026-11-07T11:00:00+13:00")) == 0
+
+    # Lowercase 't' instant semantics
+    assert len(history.select(entries, since="2026-11-07t13:00:00+13:00")) == 0
+    assert len(history.select(entries, since="2026-11-07t11:00:00+13:00")) == 1
+
+    # DST-aware local date conversion for winter dates (e.g. June 30 in NZ is UTC+12)
+    winter_entry = [{"date": "2026-06-30T11:30:00Z", "changes": {"groups": []}}]
+    # 11:30 UTC on June 30 is 23:30 local in NZ on June 30
+    assert len(history.select(winter_entry, until="2026-06-30")) == 1
+
+
