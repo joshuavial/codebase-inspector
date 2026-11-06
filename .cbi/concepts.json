@@ -242,6 +242,7 @@
           "role": "core",
           "files": [
             "src/cbi/prime.py",
+            "src/cbi/task_cache.py",
             "src/cbi/tasks.py",
             "tests/test_agent_guide.py",
             "tests/test_structure_tasks.py",

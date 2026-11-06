@@ -4,7 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from cbi import change_overview, concepts, store
+from cbi import change_overview, store
+from cbi.task_cache import _cached_answer, attach_cache
 
 KIND = "summarise-architecture-change"
 VERSION = 3
@@ -84,10 +85,15 @@ def _writer(head):
     return store.open_db(path), True
 
 
+def _workspace(conn):
+    row = conn.execute(
+        "SELECT id, name, summary FROM nodes WHERE kind = 'workspace' AND parent_id IS NULL ORDER BY id LIMIT 1"
+    ).fetchone()
+    return {"id": row[0], "name": row[1], "summary": row[2]} if row else None
+
+
 def enrich(base, head, result):
     """Open one task per changed concept plus the whole diff, and attach cached answers."""
-    from cbi import tasks
-
     base_hash, head_hash = model_hash(base), model_hash(head)
     groups = {g["id"]: g for g in result.get("groups", [])}
     items = {g["id"]: g for g in result.get("overview", {}).get("items", [])}
@@ -164,8 +170,8 @@ def enrich(base, head, result):
     conn, owned = _writer(head)
     try:
         if not any(row[1] == "cache" for row in conn.execute("PRAGMA database_list")):
-            tasks.attach_cache(conn)
-        workspace = concepts._workspace(conn)
+            attach_cache(conn)
+        workspace = _workspace(conn)
         summaries = {"overall": None, "concepts": {}}
         with conn:
             for cid in [None, *ids]:
@@ -194,7 +200,7 @@ def enrich(base, head, result):
                     allowed = sorted(citations(facts))
                 digest = change_hash(base_hash, head_hash, cid, facts)
                 task_id = "sac-" + digest[:16]
-                answer = tasks._cached_answer(conn, digest)
+                answer = _cached_answer(conn, digest)
                 accepted = isinstance(answer, dict) and answer.get("narrative") and answer.get("citations")
                 if accepted and not set(answer["citations"]).issubset(allowed):
                     accepted = False
@@ -229,8 +235,6 @@ def refresh(conn, result):
     Older payloads can recover that metadata from their original task inbox;
     when neither scoped evidence nor the task survives, they remain pending.
     """
-    from cbi import tasks
-
     summaries = result.get("summaries") or {}
     entries = [summaries.get("overall"), *summaries.get("concepts", {}).values()]
     changed = False
@@ -249,7 +253,7 @@ def refresh(conn, result):
                 allowed = json.loads(row[1]).get("citations", [])
         if digest and allowed is not None:
             entry.update(input_hash=digest, evidence_citations=allowed)
-        answer = tasks._cached_answer(conn, digest) if has_cache and digest else None
+        answer = _cached_answer(conn, digest) if has_cache and digest else None
         accepted = (isinstance(answer, dict) and answer.get("narrative") and answer.get("citations")
                     and allowed is not None and set(answer["citations"]).issubset(allowed))
         entry.update(state="answered" if accepted else "pending",
