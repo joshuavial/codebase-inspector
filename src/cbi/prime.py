@@ -104,7 +104,9 @@ def render(root=None, out=None, ref=None, conn=None) -> str:
 
     token = parts.bind(db.parent)
     try:
-        tasks.attach_cache(conn, readonly=True)
+        has_cache = any(row[1] == "cache" for row in conn.execute("PRAGMA database_list"))
+        if not has_cache:
+            tasks.attach_cache(conn, readonly=True)
         if not conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone():
             return NOT_INITIALISED
         counts = conn.execute(

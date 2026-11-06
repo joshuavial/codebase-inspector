@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 import pytest
 
+from cbi import prime
 from cbi.cli import main
 from cbi.mcp import MCPServer, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, read_message, write_message
 
@@ -1273,6 +1274,16 @@ def test_tool_prime(repo, tmp_path):
         assert rows == [("keep-me",)]
     finally:
         conn_check.close()
+
+    # 6. Shared answer cache is not redundantly attached
+    conn_orig = server._get_connection()
+    try:
+        assert any(row[1] == "cache" for row in conn_orig.execute("PRAGMA database_list"))
+        guide_text = prime.render(server.root, server.out, conn=conn_orig)
+        assert len(guide_text) > 0
+        assert any(row[1] == "cache" for row in conn_orig.execute("PRAGMA database_list"))
+    finally:
+        conn_orig.close()
 
 
 def test_tool_task(repo):
