@@ -100,7 +100,7 @@ def build_parser():
                               help="exit 1 when a production import runs from FROM to TO")
     cmds["deps"].add_argument("--include-tests", action="store_true", help="count imports from test files too")
     cmds["tests-for"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
-    cmds["tasks"].add_argument("--kind", help="only tasks of this kind, such as summarise-files")
+    cmds["tasks"].add_argument("--kind", help="only tasks of this kind, such as summarise-files or summarise-architecture-change")
     cmds["tasks"].add_argument("--limit", type=int, help="most tasks to list")
     cmds["tasks"].add_argument("--offset", type=int, default=0, help="skip this many open tasks; use with --limit to batch")
     cmds["task"].add_argument("id", help="task ID from `cbi tasks`")
@@ -316,15 +316,17 @@ Kinds: summarise-files, summarise-group (a folder or package, from its
 children's summaries), confirm-structure (one per workspace; accepting it
 writes structure.json), summarise-deployable (one per deployable, after
 confirm-structure), summarise-workspace, define-concepts (the concept
-map), sketch-screens (region trees for UI screens) and summarise-change
-(a legacy narrative of one diff) and summarise-architecture-change (one cited paragraph
-per changed concept plus the whole diff, cached by both model hashes). Run a diff or
-comparison build first to open these tasks in the ordinary task inbox. Tasks run
-bottom-up: a group or workspace task is blocked, and not listed, until
-its children are summarised. define-concepts opens once confirm-structure
-is done; sketch-screens opens once that map is done and the repo has UI
-components or screen templates. A review can open define-concepts for the new files on
-a ref model, and summarise-change for that commit pair.
+map), sketch-screens (region trees for UI screens), and
+summarise-architecture-change (grounded, per-concept cited summaries plus
+the whole diff, cached by both model hashes). Run a diff, review, or
+comparison build first to open summarise-architecture-change tasks in the
+ordinary task inbox. Legacy summarise-change is also supported for a single
+diff narrative. Tasks run bottom-up: a group or workspace task is blocked,
+and not listed, until its children are summarised. define-concepts opens once
+confirm-structure is done; sketch-screens opens once that map is done and the
+repo has UI components or screen templates. A review can open define-concepts
+for the new files on a ref model, and summarise-architecture-change for changed
+concepts.
 
 --json prints a list of {id, kind, node_id, node_display_kind, node_path,
 files}. --limit N and --offset N batch that list: offset skips the first
@@ -336,13 +338,13 @@ Print the brief for one task: what to do, the files to read with their
 symbol outline (or, for group and workspace tasks, the children with their
 summaries and the README head; for confirm-structure, the detected
 deployables, packages and bare directories; for summarise-deployable, its
-entry points and member summaries), the input_hash your answer must copy,
-and the JSON Schema of the answer. define-concepts also prints its checks,
-the files to assign and the import and call pairs. sketch-screens prints
-its checks, component templates, render edges, screen template files and routes. A
-blocked task lists
-what it waits on. Then write the answer to a file and run
-`cbi submit <id> <file>`.
+entry points and member summaries; for summarise-architecture-change,
+the diff facts, ranked overview, and allowed citations), the input_hash your
+answer must copy, and the JSON Schema of the answer. define-concepts also
+prints its checks, the files to assign and the import and call pairs.
+sketch-screens prints its checks, component templates, render edges, screen
+template files and routes. A blocked task lists what it waits on. Then write
+the answer to a file and run `cbi submit <id> <file>`.
 
 The line under the title is `size: N bytes`, the length of the text this
 command prints.
@@ -362,15 +364,18 @@ the checks reject, or parts asked of another kind.""",
     "submit": """\
 Validate an answer and store it. Reads FILE, or stdin when FILE is - or
 missing. On success the task is done, the answer is cached (file summaries
-by file content, group and workspace summaries by their inputs) so any repo
-with identical inputs reuses it, and the tasks it unblocked open and are
-listed. Submitting the same answer again changes nothing; a new summary
-text reopens the parent's task. Accepting confirm-structure writes
-structure.json and reruns manifest detection and resolution in this command.
-An accepted define-concepts answer writes concepts.json and applies it in
-the same command. An accepted sketch-screens answer writes screens.json
-and applies it in the same command. A define-concepts warning (more than
-9 children) is printed and does not reject on its own.
+by file content, group and workspace summaries by their inputs, architecture
+change summaries by model hashes) so any repo or comparison with identical
+inputs reuses it, and the tasks it unblocked open and are listed.
+Submitting the same answer again changes nothing; a new summary text reopens
+the parent's task. Accepting confirm-structure writes structure.json and
+reruns manifest detection and resolution in this command. An accepted
+define-concepts answer writes concepts.json and applies it in the same
+command. An accepted sketch-screens answer writes screens.json and applies
+it in the same command. For summarise-architecture-change, citations are
+verified against allowed diff citations; references outside the diff are
+rejected. A define-concepts warning (more than 9 children) is printed and
+does not reject on its own.
 
 Rejected answers print one line per problem, each starting with the JSON
 path it refers to ($.files[2].summary: empty). An answer whose input_hash
