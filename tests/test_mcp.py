@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 import pytest
 
+from cbi import prime
 from cbi.cli import main
 from cbi.mcp import MCPServer, PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION, read_message, write_message
 
@@ -109,6 +110,7 @@ def test_tools_list():
         "cbi_diff", "cbi_tasks", "cbi_submit", "cbi_query", "cbi_concepts",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
         "cbi_history", "cbi_review", "cbi_check", "cbi_worktrees",
+        "cbi_prime", "cbi_task",
     }
     assert expected.issubset(tool_names)
 
@@ -836,6 +838,8 @@ def test_concurrent_requests_stress(repo):
         ("cbi_check", {"format": "json"}),
         ("cbi_worktrees", {"format": "text"}),
         ("cbi_worktrees", {"format": "json"}),
+        ("cbi_prime", {}),
+        ("cbi_task", {"task_id": "test"}),
     ]
 
     def make_call(pair):
@@ -1220,6 +1224,202 @@ def test_tool_worktrees(repo, tmp_path):
     assert main_b["current"] is True
     lane_b = next(b for b in data["branches"] if b["name"] == "lane")
     assert lane_b["current"] is False
+
+
+def test_tool_prime(repo, tmp_path):
+    server = MCPServer(root=repo)
+
+    # 1. Default guide generation in mapped repo
+    res_default = server.execute_tool("cbi_prime", {})
+    assert not res_default["isError"]
+    guide_text = res_default["content"][0]["text"]
+    assert "# cbi: codebase inspector" in guide_text
+    assert "cbi tasks" in guide_text
+
+    # 2. Explicit markdown format
+    res_md = server.execute_tool("cbi_prime", {"format": "markdown"})
+    assert not res_md["isError"]
+    assert "# cbi: codebase inspector" in res_md["content"][0]["text"]
+
+    # 3. Explicit text format
+    res_text = server.execute_tool("cbi_prime", {"format": "text"})
+    assert not res_text["isError"]
+    assert "# cbi: codebase inspector" in res_text["content"][0]["text"]
+
+    # 4. Unmapped repo returns not-initialised guide
+    unmapped_server = MCPServer(root=tmp_path)
+    res_unmapped = unmapped_server.execute_tool("cbi_prime", {})
+    assert not res_unmapped["isError"]
+    assert "This repo is not mapped yet" in res_unmapped["content"][0]["text"]
+
+    # 5. Incompatible schema returns error and does not erase the database
+    incompat_dir = tmp_path / "incompat"
+    (incompat_dir / ".cbi").mkdir(parents=True)
+    db_path = incompat_dir / ".cbi" / "model.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE sentinel(val TEXT)")
+    conn.execute("INSERT INTO sentinel VALUES ('keep-me')")
+    conn.execute("PRAGMA user_version = 999")
+    conn.commit()
+    conn.close()
+
+    incompat_server = MCPServer(root=incompat_dir)
+    res_incompat = incompat_server.execute_tool("cbi_prime", {})
+    assert res_incompat["isError"]
+    assert "schema 999" in res_incompat["content"][0]["text"]
+
+    conn_check = sqlite3.connect(db_path)
+    try:
+        rows = conn_check.execute("SELECT val FROM sentinel").fetchall()
+        assert rows == [("keep-me",)]
+    finally:
+        conn_check.close()
+
+    # 6. Shared answer cache is not redundantly attached
+    conn_orig = server._get_connection()
+    try:
+        assert any(row[1] == "cache" for row in conn_orig.execute("PRAGMA database_list"))
+        guide_text = prime.render(server.root, server.out, conn=conn_orig)
+        assert len(guide_text) > 0
+        assert any(row[1] == "cache" for row in conn_orig.execute("PRAGMA database_list"))
+    finally:
+        conn_orig.close()
+
+
+def test_tool_task(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Missing required task_id
+    res_no_tid = server.execute_tool("cbi_task", {})
+    assert res_no_tid["isError"]
+    assert "Missing required argument: 'task_id'" in res_no_tid["content"][0]["text"]
+
+    # 2. Unknown task handling
+    res_unknown = server.execute_tool("cbi_task", {"task_id": "nonexistent-task"})
+    assert "Unknown task" in res_unknown["content"][0]["text"]
+
+    # Retrieve open tasks from fixture repo
+    tasks_res = server.execute_tool("cbi_tasks", {"format": "json"})
+    assert not tasks_res["isError"]
+    open_tasks = json.loads(tasks_res["content"][0]["text"])
+    assert len(open_tasks) > 0
+    task = open_tasks[0]
+    task_id = task["id"]
+
+    # 3. Brief retrieval in text format (default)
+    res_text = server.execute_tool("cbi_task", {"task_id": task_id})
+    assert not res_text["isError"]
+    text_content = res_text["content"][0]["text"]
+    assert f"# Task {task_id}:" in text_content or "node:" in text_content or "instructions" in text_content.lower()
+
+    # 4. JSON format brief retrieval
+    res_json = server.execute_tool("cbi_task", {"task_id": task_id, "format": "json"})
+    assert not res_json["isError"]
+    brief_data = json.loads(res_json["content"][0]["text"])
+    assert brief_data["id"] == task_id
+    assert "input_hash" in brief_data
+    assert "bytes" in brief_data
+
+    # 5. Part handling on non-split task kind (e.g. summarise-files or confirm-structure)
+    if task["kind"] not in ("define-concepts", "sketch-screens"):
+        res_parts = server.execute_tool("cbi_task", {"task_id": task_id, "parts": True})
+        assert res_parts["isError"]
+        assert "briefs are not split" in res_parts["content"][0]["text"]
+
+        res_part = server.execute_tool("cbi_task", {"task_id": task_id, "part": 1})
+        assert res_part["isError"]
+        assert "briefs are not split" in res_part["content"][0]["text"]
+
+    # 6. Answer check validation
+    # 6a. Malformed JSON check draft
+    res_check_bad_json = server.execute_tool(
+        "cbi_task", {"task_id": task_id, "check": "{not-valid-json", "format": "json"}
+    )
+    assert not res_check_bad_json["isError"]
+    bad_json_data = json.loads(res_check_bad_json["content"][0]["text"])
+    assert bad_json_data["ok"] is False
+    assert any("not valid JSON" in e for e in bad_json_data["errors"])
+
+    # 6b. Invalid schema / bad input hash check draft
+    res_check_bad_schema = server.execute_tool(
+        "cbi_task", {"task_id": task_id, "check": {"input_hash": "stale-hash"}, "format": "json"}
+    )
+    assert not res_check_bad_schema["isError"]
+    bad_schema_data = json.loads(res_check_bad_schema["content"][0]["text"])
+    assert bad_schema_data["ok"] is False
+    assert len(bad_schema_data["errors"]) > 0
+
+    # 6c. Valid answer check draft
+    if task["kind"] == "summarise-files":
+        valid_answer = {
+            "input_hash": brief_data["input_hash"],
+            "files": [{"path": f["path"], "summary": f"Summary for {f['path']}."} for f in brief_data["files"]],
+        }
+    elif task["kind"] == "confirm-structure":
+        valid_answer = {
+            "input_hash": brief_data["input_hash"],
+            "deployables": [],
+            "packages": [],
+        }
+    else:
+        valid_answer = {"input_hash": brief_data["input_hash"], "summary": "Valid summary."}
+
+    # JSON format valid check
+    res_check_valid = server.execute_tool(
+        "cbi_task", {"task_id": task_id, "check": json.dumps(valid_answer), "format": "json"}
+    )
+    assert not res_check_valid["isError"]
+    valid_data = json.loads(res_check_valid["content"][0]["text"])
+    assert valid_data["ok"] is True
+    assert valid_data["warnings"] == []
+
+    # Text format valid check
+    res_check_valid_text = server.execute_tool(
+        "cbi_task", {"task_id": task_id, "check": json.dumps(valid_answer), "format": "text"}
+    )
+    assert not res_check_valid_text["isError"]
+    assert res_check_valid_text["content"][0]["text"] == "ok"
+
+    # 7. Part handling on a split-capable brief (define-concepts)
+    # Find or open confirm-structure, answer it to open define-concepts
+    cs_tasks = [t for t in open_tasks if t["kind"] == "confirm-structure"]
+    if cs_tasks:
+        cs_id = cs_tasks[0]["id"]
+        cs_brief = json.loads(server.execute_tool("cbi_task", {"task_id": cs_id, "format": "json"})["content"][0]["text"])
+        cs_ans = {"input_hash": cs_brief["input_hash"], "deployables": [], "packages": []}
+        submit_res = server.execute_tool("cbi_submit", {"task_id": cs_id, "answer": cs_ans})
+        assert not submit_res["isError"]
+
+        new_tasks = json.loads(server.execute_tool("cbi_tasks", {"format": "json"})["content"][0]["text"])
+        dc_tasks = [t for t in new_tasks if t["kind"] == "define-concepts"]
+        if dc_tasks:
+            dc_id = dc_tasks[0]["id"]
+            # Index of parts in text format
+            res_dc_parts = server.execute_tool("cbi_task", {"task_id": dc_id, "parts": True})
+            assert not res_dc_parts["isError"]
+            assert f"# Parts for {dc_id}:" in res_dc_parts["content"][0]["text"]
+
+            # Index of parts in JSON format
+            res_dc_parts_json = server.execute_tool("cbi_task", {"task_id": dc_id, "parts": True, "format": "json"})
+            assert not res_dc_parts_json["isError"]
+            parts_payload = json.loads(res_dc_parts_json["content"][0]["text"])
+            assert "parts" in parts_payload
+            assert len(parts_payload["parts"]) >= 1
+
+            # Retrieve part 1 in text format
+            res_p1 = server.execute_tool("cbi_task", {"task_id": dc_id, "part": 1})
+            assert not res_p1["isError"]
+            assert len(res_p1["content"][0]["text"]) > 0
+
+            # Retrieve part 1 in JSON format
+            res_p1_json = server.execute_tool("cbi_task", {"task_id": dc_id, "part": 1, "format": "json"})
+            assert not res_p1_json["isError"]
+
+            # Out of bounds part
+            res_p_bad = server.execute_tool("cbi_task", {"task_id": dc_id, "part": 99})
+            assert res_p_bad["isError"]
+            assert "outside 1.." in res_p_bad["content"][0]["text"]
+
 
 
 

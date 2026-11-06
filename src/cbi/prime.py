@@ -5,6 +5,7 @@ Three states: not initialised or not scanned, judgement tasks pending, and compl
 
 import json
 import shlex
+import sqlite3
 from pathlib import Path
 
 from cbi import files, ingest, parts, store, tasks
@@ -74,40 +75,61 @@ def _intro(out_flag):
     return text + "\n"
 
 
-def run(out=None, ref=None):
-    """Print the guide for the repo containing the current directory. Returns the exit code."""
-    try:
-        root = files.repo_root(Path.cwd())
-    except files.NotARepo:
-        print(NOT_INITIALISED, end="")
-        return 0
-    base = out.resolve() if out else root / ".cbi"
+def render(root=None, out=None, ref=None, conn=None) -> str:
+    """Return the guide for the repository as a string."""
+    if root is None:
+        try:
+            root = files.repo_root(Path.cwd())
+        except files.NotARepo:
+            return NOT_INITIALISED
+    else:
+        root = Path(root).resolve()
+    base = Path(out).resolve() if out else root / ".cbi"
     sha = files.resolve_commit(root, ref) if ref else None
     model_dir = base / "refs" / sha if sha else base
     db = model_dir / "model.db"
     if not db.exists():
-        print(NOT_INITIALISED, end="")
-        return 0
-    conn = store.open_db(db)
+        return NOT_INITIALISED
+
+    own_conn = False
+    if conn is None:
+        conn = store.read_only(db)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version != store.SCHEMA_VERSION:
+            conn.close()
+            raise sqlite3.DatabaseError(
+                f"{db} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
+            )
+        own_conn = True
+
     token = parts.bind(db.parent)
     try:
-        tasks.attach_cache(conn)
+        has_cache = any(row[1] == "cache" for row in conn.execute("PRAGMA database_list"))
+        if not has_cache:
+            tasks.attach_cache(conn, readonly=True)
         if not conn.execute("SELECT 1 FROM nodes LIMIT 1").fetchone():
-            print(NOT_INITIALISED, end="")
-            return 0
+            return NOT_INITIALISED
         counts = conn.execute(
             "SELECT kind, sum(state = 'open'), sum(state = 'blocked') FROM tasks GROUP BY kind ORDER BY kind"
         ).fetchall()
         pending = [c for c in counts if c[1] or c[2]]
         if sha:
             flag = " --ref " + shlex.quote(sha)
+        elif out and Path(out).resolve() != (root / ".cbi").resolve():
+            flag = " --out " + shlex.quote(str(db.parent))
         else:
-            flag = "" if out is None else " --out " + shlex.quote(str(db.parent))
-        guide = pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
-        print(guide, end="")
+            flag = ""
+        return pending_guide(conn, root, db.parent, pending, flag) if pending else complete_guide(conn, root, db.parent, flag)
     finally:
         parts.unbind(token)
-        conn.close()
+        if own_conn:
+            conn.close()
+
+
+def run(out=None, ref=None):
+    """Print the guide for the repo containing the current directory. Returns the exit code."""
+    guide = render(out=out, ref=ref)
+    print(guide, end="")
     return 0
 
 

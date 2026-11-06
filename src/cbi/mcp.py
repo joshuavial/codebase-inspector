@@ -26,6 +26,8 @@ from cbi import (
     files,
     graph,
     history,
+    parts,
+    prime,
     query,
     review,
     store,
@@ -470,6 +472,52 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_prime",
+        "description": "State-aware guide for an agent meeting cbi for the first time. Reports repository mapping status, open judgement tasks breakdown, the task loop, and ingest instructions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'markdown' (default) or 'text'.",
+                    "enum": ["markdown", "text"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_task",
+        "description": "Print the brief for one judgement task, inspect partitioned parts for large briefs, or pre-validate an answer JSON schema before submission.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The task ID (e.g. dc-..., sf-..., etc.).",
+                },
+                "parts": {
+                    "type": "boolean",
+                    "description": "Return the index of parts for large briefs (default: false).",
+                },
+                "part": {
+                    "type": "integer",
+                    "description": "1-based part index to read for a large brief.",
+                },
+                "check": {
+                    "type": "string",
+                    "description": "JSON string containing an answer draft to validate against the task schema without submitting.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": ["task_id"],
+        },
+    },
 ]
 
 
@@ -588,6 +636,8 @@ class MCPServer:
             "cbi_review": self.handle_review,
             "cbi_check": self.handle_check,
             "cbi_worktrees": self.handle_worktrees,
+            "cbi_prime": self.handle_prime,
+            "cbi_task": self.handle_task,
         }
         self._stdout_lock = threading.Lock()
         self._scan_lock = threading.Lock()
@@ -1391,6 +1441,97 @@ class MCPServer:
             ref = "ref model" if b["has_ref_model"] else "no ref model"
             lines.append(f"{mark} {b['name']}  {b['head'][:12]}  {b['lane']}  {ref}")
         return "\n".join(lines)
+
+    def handle_prime(self, args: dict) -> str:
+        if not self.model_path.is_file():
+            return prime.NOT_INITIALISED.rstrip()
+        conn = self._get_connection()
+        try:
+            return prime.render(self.root, self.out, conn=conn).rstrip()
+        finally:
+            conn.close()
+
+    def handle_task(self, args: dict) -> str:
+        task_id = args.get("task_id")
+        if not task_id:
+            raise ValueError("Missing required argument: 'task_id'")
+
+        fmt = args.get("format", "text")
+        as_json = fmt == "json"
+
+        conn = self._get_connection()
+        token = parts.bind(self.out)
+        try:
+            if "check" in args and args["check"] is not None:
+                check_val = args["check"]
+                if isinstance(check_val, (dict, list)):
+                    check_text = json.dumps(check_val)
+                elif isinstance(check_val, str):
+                    check_text = check_val
+                else:
+                    check_text = json.dumps(check_val)
+
+                try:
+                    warnings = tasks.check(conn, task_id, check_text, self.root)
+                except tasks.UnknownTask as err:
+                    return f"Unknown task: {err}"
+                except tasks.AnswerError as err:
+                    if as_json:
+                        return json.dumps({"ok": False, "errors": str(err).splitlines()}, indent=2)
+                    return f"rejected:\n{err}"
+
+                if as_json:
+                    return json.dumps({"ok": True, "warnings": warnings}, indent=2)
+                elif warnings:
+                    return "ok\n" + "\n".join(warnings)
+                else:
+                    return "ok"
+
+            try:
+                b = tasks.brief(conn, task_id, self.root)
+            except tasks.UnknownTask as err:
+                return f"Unknown task: {err}"
+
+            has_parts = bool(args.get("parts", False))
+            part_idx = args.get("part")
+
+            if has_parts or part_idx is not None:
+                if b["kind"] not in parts.SPLIT_KINDS:
+                    raise ValueError(f"{b['kind']} briefs are not split")
+                try:
+                    spec = parts.split_brief(conn, b, self.root)
+                except ValueError as err:
+                    raise ValueError(str(err)) from err
+
+                if has_parts:
+                    if as_json:
+                        return json.dumps(parts.index_payload(spec), indent=2)
+                    return parts.index_text(spec).rstrip()
+
+                try:
+                    part_int = int(part_idx)
+                except (ValueError, TypeError):
+                    raise ValueError(f"part {part_idx} is outside 1..{len(spec['parts'])}")
+                if part_int < 1 or part_int > len(spec["parts"]):
+                    raise ValueError(f"part {part_idx} is outside 1..{len(spec['parts'])}")
+                part = spec["parts"][part_int - 1]
+                if as_json:
+                    return parts.json_part(part["brief"]).rstrip()
+                return part["text"].rstrip()
+
+            from cbi.cli import _brief_text
+            text = _brief_text(b)
+            stamped = tasks.sized(parts.insert_note(text, parts.over_note(b, text)))
+            if as_json:
+                payload = dict(b)
+                payload["bytes"] = len(stamped.encode())
+                if parts.over_note(b, text):
+                    payload["over_budget"] = True
+                return json.dumps(payload, indent=2)
+            return stamped.rstrip()
+        finally:
+            parts.unbind(token)
+            conn.close()
 
     def run(self, stdin=None, stdout=None):
         if stdin is None:
