@@ -101,6 +101,8 @@ Exposed MCP tools:
 * `cbi_hotspots`: Rank nodes by coupling (fan-in/fan-out), size (LOC), or symbol count.
 * `cbi_diff`: Architectural diff between commits, branches, or model databases.
 * `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
+* `cbi_query`: Execute read-only SQL queries against the local codebase model database.
+* `cbi_concepts`: Query concept taxonomy, hierarchy, role descriptions, and file ownership.
 
 ---
 
