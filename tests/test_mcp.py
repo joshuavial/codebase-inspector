@@ -3,6 +3,7 @@
 import io
 import json
 import sqlite3
+import sys
 from pathlib import Path
 import pytest
 
@@ -1729,7 +1730,12 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert "codebase-inspector" in v_data["servers"]
 
     # 6. Install claude (Claude Code and Desktop when directory exists)
-    desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
+    if sys.platform == "darwin":
+        desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
+    elif sys.platform == "win32":
+        desktop_dir = fake_home / "AppData" / "Roaming" / "Claude"
+    else:
+        desktop_dir = fake_home / ".config" / "Claude"
     desktop_dir.mkdir(parents=True, exist_ok=True)
     res_claude = install_client_config("claude", root=root)
     assert res_claude == 0
