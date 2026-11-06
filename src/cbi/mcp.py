@@ -32,6 +32,7 @@ from cbi import (
     parts,
     prime,
     query,
+    resolve,
     review,
     store,
     system_views,
@@ -1950,7 +1951,10 @@ def install_client_config(client_name: str = "all", root=None):
             try:
                 content = target.read_text(encoding="utf-8").strip()
                 if content:
-                    data = json.loads(content)
+                    try:
+                        data = json.loads(content)
+                    except json.JSONDecodeError:
+                        data = resolve._jsonc(content)
             except Exception as err:
                 print(f"Skipping {target}: existing file could not be parsed as JSON ({err})", file=sys.stderr)
                 has_errors = True

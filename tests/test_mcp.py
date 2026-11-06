@@ -1729,6 +1729,15 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert "codebase-inspector" in v_data["mcpServers"]
     assert "codebase-inspector" in v_data["servers"]
 
+    # 5b. Safe merge into existing VS Code JSONC (comments and trailing commas)
+    jsonc_content = """{\n  // VS Code comment\n  "servers": {\n    "custom-server": { "command": "serve" },\n  },\n}"""
+    vscode_json.write_text(jsonc_content)
+    res_vscode_jsonc = install_client_config("vscode", root=root)
+    assert res_vscode_jsonc == 0
+    v_data_jsonc = json.loads(vscode_json.read_text())
+    assert "custom-server" in v_data_jsonc["servers"]
+    assert "codebase-inspector" in v_data_jsonc["servers"]
+
     # 6. Install claude (Claude Code and Desktop when directory exists)
     if sys.platform == "darwin":
         desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
