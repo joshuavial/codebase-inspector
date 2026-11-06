@@ -343,3 +343,45 @@ def test_cbi_mcp_cli_help(capsys):
     out = capsys.readouterr().out
     assert "mcp" in out
     assert "--out" in out
+    assert "--config" in out
+
+
+def test_cbi_mcp_cli_config(capsys):
+    assert main(["mcp", "--config"]) == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert "mcpServers" in data
+    assert "codebase-inspector" in data["mcpServers"]
+    assert "clients" in data
+
+    assert main(["mcp", "--config", "claude"]) == 0
+    out_claude = capsys.readouterr().out
+    claude_data = json.loads(out_claude)
+    assert "mcpServers" in claude_data
+    assert claude_data["mcpServers"]["codebase-inspector"]["command"] == "cbi"
+
+    assert main(["mcp", "--config", "cursor"]) == 0
+    out_cursor = capsys.readouterr().out
+    cursor_data = json.loads(out_cursor)
+    assert "mcpServers" in cursor_data
+
+
+def test_tool_tasks(repo):
+    server = MCPServer(root=repo)
+    resp = server.execute_tool("cbi_tasks", {})
+    assert not resp["isError"]
+    # In fixture repo with initial scan, tasks may exist or be empty
+    assert isinstance(resp["content"][0]["text"], str)
+
+    resp_json = server.execute_tool("cbi_tasks", {"format": "json"})
+    assert not resp_json["isError"]
+    parsed = json.loads(resp_json["content"][0]["text"])
+    assert isinstance(parsed, list)
+
+
+def test_tool_diff(repo):
+    server = MCPServer(root=repo)
+    model_file = str(repo / ".cbi" / "model.db")
+    resp = server.execute_tool("cbi_diff", {"base_model": model_file, "head_model": model_file})
+    assert not resp["isError"]
+    assert "no architectural changes" in resp["content"][0]["text"]

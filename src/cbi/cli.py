@@ -208,6 +208,8 @@ def build_parser():
                                    help="command template with {project}, {file} and {line}; overrides --editor")
     cmds["build"].add_argument("--editor", choices=editor.EDITORS, default="vscode",
                                help="URL scheme the static viewer uses: vscode (default), cursor, or none")
+    cmds["mcp"].add_argument("--config", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
+                             help="print MCP client configuration snippet (claude, cursor, gemini, windsurf, vscode, or all)")
     return parser
 
 
@@ -1313,6 +1315,8 @@ def cmd_team(args):
 
 
 def cmd_mcp(args):
+    if getattr(args, "config", None):
+        return mcp.print_config(args.config)
     root, out = _paths(args)
     return mcp.run_server(root=root, out=out)
 
