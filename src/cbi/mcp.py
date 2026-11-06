@@ -14,6 +14,7 @@ import re
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 from cbi import (
@@ -40,6 +41,25 @@ SERVER_NAME = "cbi"
 SERVER_VERSION = "0.3.0"
 
 TOOLS = [
+    {
+        "name": "cbi_scan",
+        "description": "Scan repository into model.db and open judgement tasks. Optional ref to scan a git commit or branch.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA to scan into refs/<commit>/model.db.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
     {
         "name": "cbi_status",
         "description": "Show CBI scan state, task counts, and codebase diagnostics.",
@@ -172,6 +192,18 @@ TOOLS = [
                 "concept": {
                     "type": "string",
                     "description": "Optional concept ID to focus the diff on.",
+                },
+                "module": {
+                    "type": "string",
+                    "description": "Drill into a changed presentation module, by id.",
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Drill into a changed file, by id or path.",
+                },
+                "symbol": {
+                    "type": "string",
+                    "description": "Drill into a changed function or class, by id or name.",
                 },
                 "format": {
                     "type": "string",
@@ -616,6 +648,7 @@ class MCPServer:
             self.model_path = Path(model_path).resolve()
 
         self.handlers = {
+            "cbi_scan": self.handle_scan,
             "cbi_status": self.handle_status,
             "cbi_context": self.handle_context,
             "cbi_show": self.handle_show,
@@ -750,6 +783,71 @@ class MCPServer:
                 "content": [{"type": "text", "text": f"Error: {err}"}],
                 "isError": True,
             }
+
+    def handle_scan(self, args: dict) -> str:
+        from cbi import cli
+
+        ref = args.get("ref")
+        fmt = args.get("format", "text")
+        if fmt not in ("text", "json"):
+            fmt = "text"
+
+        with self._scan_lock:
+            root = self.root
+            out = self.out
+            if root is None:
+                try:
+                    root = files.repo_root(Path.cwd())
+                except files.NotARepo as err:
+                    raise ValueError(str(err)) from err
+            else:
+                try:
+                    root = files.repo_root(root)
+                except files.NotARepo as err:
+                    raise ValueError(str(err)) from err
+
+            if out is None:
+                out = root / ".cbi"
+
+            if not (out / "ignore").exists():
+                raise ValueError(f"{out} is not initialised. Run `cbi init` first.")
+
+            start = time.perf_counter()
+            try:
+                if ref:
+                    sha, shortcut, counts, task_counts = cli.scan_ref(root, out, ref)
+                else:
+                    sha = None
+                    shortcut, counts, task_counts = cli.scan(root, out)
+            except (files.NotARepo, files.BadRef) as err:
+                raise ValueError(str(err)) from err
+
+            elapsed = time.perf_counter() - start
+            open_tasks, blocked_tasks = task_counts
+
+            if fmt == "json":
+                return json.dumps({
+                    "ref": sha,
+                    "shortcut": shortcut,
+                    "counts": counts,
+                    "open_tasks": open_tasks,
+                    "blocked_tasks": blocked_tasks,
+                }, indent=2)
+
+            lines = []
+            if ref:
+                lines.append(sha)
+                status = "reused" if shortcut else "scanned"
+            else:
+                excluded = files.excluded_source_files(root, files.Ignore(cli._read(out / "ignore") or ""))
+                lines.append(f"Excluded tracked executable files: {len(excluded)} (by ignore rules)")
+                status = "no changes since the last scan" if shortcut else "scanned"
+            lines.append(f"{status} in {elapsed:.1f} s")
+            for kind, count in counts.items():
+                lines.append(f"  {kind}: {count}")
+            line = tasks.task_headline(open_tasks, blocked_tasks)
+            lines.append(line + ("; run `cbi tasks`" if open_tasks else ""))
+            return "\n".join(lines)
 
     def handle_status(self, args: dict) -> str:
         conn = self._get_connection()
@@ -902,6 +1000,9 @@ class MCPServer:
         base = args.get("base")
         head = args.get("head")
         concept = args.get("concept")
+        module = args.get("module")
+        file = args.get("file")
+        symbol = args.get("symbol")
         fmt = args.get("format", "text")
         detail = bool(args.get("detail", False))
 
@@ -929,7 +1030,7 @@ class MCPServer:
             head_conn.close()
 
         rendered = diff.render(
-            result, fmt, concept=concept, module=None, file=None, symbol=None, detail=detail,
+            result, fmt, concept=concept, module=module, file=file, symbol=symbol, detail=detail,
         )
         return rendered.rstrip()
 

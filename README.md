@@ -98,6 +98,7 @@ cbi mcp --config all        # All client templates
 ```
 
 Exposed MCP tools:
+* `cbi_scan`: Scan repository into model.db and open judgement tasks, with optional git ref scanning (`ref`: branch, tag, or commit SHA; `format`: text or json).
 * `cbi_status`: Scan state, task counts, and codebase diagnostics.
 * `cbi_context`: Markdown summary of any node (file, symbol, concept, package), or top-level system architecture overview when omitted or passed as 'system'.
 * `cbi_show`: Full node details (attributes, children, relationships, tests, diagnostics, concept details, screens, and endpoints) with confidence filtering and cap toggle (format: text or json).
@@ -107,7 +108,7 @@ Exposed MCP tools:
 * `cbi_cycles`: Detect dependency cycles at file, folder, and package levels.
 * `cbi_orphans`: Identify orphaned code, test-only exported symbols, unreachable files, and untested packages/folders.
 * `cbi_deps`: Container dependency matrix between packages, folders, concepts, or deployables.
-* `cbi_diff`: Architectural diff between commits, branches, or model databases.
+* `cbi_diff`: Architectural diff between commits, branches, or model databases, with drill-down options (`concept`, `module`, `file`, `symbol`; `format`: text, markdown, or json; `detail`: boolean).
 * `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
 * `cbi_submit`: Submit an answer for an open judgement task (task_id and answer object or JSON string) with database write serialization.
 * `cbi_query`: Execute read-only SQL queries against the local codebase model database.

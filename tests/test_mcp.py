@@ -106,18 +106,78 @@ def test_tools_list():
     tools = resp["result"]["tools"]
     tool_names = {t["name"] for t in tools}
     expected = {
+        "cbi_scan",
         "cbi_status", "cbi_context", "cbi_show", "cbi_tests_for", "cbi_search", "cbi_hotspots",
         "cbi_diff", "cbi_tasks", "cbi_submit", "cbi_query", "cbi_concepts",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
         "cbi_history", "cbi_review", "cbi_check", "cbi_worktrees",
         "cbi_prime", "cbi_task",
     }
-    assert expected.issubset(tool_names)
+    assert len(expected) == 23
+    assert len(tools) == 23
+    assert expected == tool_names
 
     for tool in tools:
         assert "description" in tool
         assert "inputSchema" in tool
         assert tool["inputSchema"]["type"] == "object"
+
+
+def test_tool_scan(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Text format on current repo (default)
+    req = {
+        "jsonrpc": "2.0",
+        "id": 100,
+        "method": "tools/call",
+        "params": {"name": "cbi_scan", "arguments": {}},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 100
+    assert not resp["result"]["isError"]
+    text = resp["result"]["content"][0]["text"]
+    assert "no changes since the last scan" in text or "scanned" in text
+    assert "judgement tasks" in text
+
+    # Explicit text format
+    res_text_exp = server.execute_tool("cbi_scan", {"format": "text"})
+    assert not res_text_exp["isError"]
+    assert "judgement tasks" in res_text_exp["content"][0]["text"]
+
+    # 2. JSON format on current repo
+    res_json = server.execute_tool("cbi_scan", {"format": "json"})
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert data["ref"] is None
+    assert isinstance(data["shortcut"], bool)
+    assert isinstance(data["counts"], dict)
+    assert "source file" in data["counts"]
+    assert "open_tasks" in data
+    assert "blocked_tasks" in data
+
+    # 3. Git ref scan (HEAD) - text format
+    res_ref_text = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "text"})
+    assert not res_ref_text["isError"]
+    ref_text = res_ref_text["content"][0]["text"]
+    assert "scanned" in ref_text or "reused" in ref_text
+    assert "judgement tasks" in ref_text
+
+    # 4. Git ref scan (HEAD) - JSON format
+    res_ref_json = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    assert not res_ref_json["isError"]
+    data_ref = json.loads(res_ref_json["content"][0]["text"])
+    assert data_ref["ref"] is not None
+    assert len(data_ref["ref"]) == 40
+    assert isinstance(data_ref["shortcut"], bool)
+    assert isinstance(data_ref["counts"], dict)
+    assert "open_tasks" in data_ref
+    assert "blocked_tasks" in data_ref
+
+    # 5. Invalid git ref returns clean error
+    res_bad = server.execute_tool("cbi_scan", {"ref": "nonexistent-branch-ref"})
+    assert res_bad["isError"]
+    assert "unknown revision" in res_bad["content"][0]["text"] or "Error:" in res_bad["content"][0]["text"]
 
 
 def test_tools_call_status(repo):
@@ -609,6 +669,110 @@ def test_tool_diff(repo):
     assert "no architectural changes" in resp["content"][0]["text"]
 
 
+def test_tool_diff_drilldown(repo):
+    import subprocess
+
+    git = lambda *args: subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+        cwd=repo, check=True, capture_output=True, text=True,
+    )
+
+    # Modify src/shapes/circle.ts and commit to create a diff
+    circle_file = repo / "src" / "shapes" / "circle.ts"
+    circle_file.write_text("""\
+/** A round shape. */
+export class Circle {
+  constructor(readonly radius: number) {}
+  area(): number { return Math.PI * this.radius ** 2; }
+  circumference(): number { return 2 * Math.PI * this.radius; }
+}
+
+export function makeCircle(r: number) { return new Circle(r); }
+""")
+    git("add", "src/shapes/circle.ts")
+    git("commit", "-m", "add circumference method to Circle")
+
+    server = MCPServer(root=repo)
+
+    # First get the full diff in JSON to extract module id
+    overview_resp = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "format": "json",
+    })
+    assert not overview_resp["isError"]
+    overview_data = json.loads(overview_resp["content"][0]["text"])
+    item = overview_data["overview"]["items"][0]
+    mod = item["modules"][0]
+    module_id = mod["id"]
+
+    # 1. Drill down into module (text and json)
+    res_mod_text = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "module": module_id,
+        "format": "text",
+    })
+    assert not res_mod_text["isError"]
+    assert mod["name"] in res_mod_text["content"][0]["text"]
+
+    res_mod_json = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "module": module_id,
+        "format": "json",
+    })
+    assert not res_mod_json["isError"]
+    data_mod = json.loads(res_mod_json["content"][0]["text"])
+    assert "selection" in data_mod
+    assert data_mod["selection"]["level"] == "module"
+    assert data_mod["selection"]["item"]["id"] == module_id
+
+    # 2. Drill down into file (text and json)
+    res_file_text = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "file": "src/shapes/circle.ts",
+        "format": "text",
+    })
+    assert not res_file_text["isError"]
+    assert "circle.ts" in res_file_text["content"][0]["text"]
+
+    res_file_json = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "file": "src/shapes/circle.ts",
+        "format": "json",
+    })
+    assert not res_file_json["isError"]
+    data_file = json.loads(res_file_json["content"][0]["text"])
+    assert "selection" in data_file
+    assert data_file["selection"]["level"] == "file"
+    assert data_file["selection"]["item"]["path"] == "src/shapes/circle.ts"
+
+    # 3. Drill down into symbol (text and json)
+    res_sym_text = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "symbol": "circumference",
+        "format": "text",
+    })
+    assert not res_sym_text["isError"]
+    assert "circumference" in res_sym_text["content"][0]["text"]
+
+    res_sym_json = server.execute_tool("cbi_diff", {
+        "base": "HEAD~1",
+        "head": "HEAD",
+        "symbol": "circumference",
+        "format": "json",
+    })
+    assert not res_sym_json["isError"]
+    data_sym = json.loads(res_sym_json["content"][0]["text"])
+    assert "selection" in data_sym
+    assert data_sym["selection"]["level"] == "symbol"
+    assert data_sym["selection"]["item"]["name"] == "circumference"
+
+
 def test_tool_query(repo):
     server = MCPServer(root=repo)
 
@@ -817,6 +981,8 @@ def test_concurrent_requests_stress(repo):
     server = MCPServer(root=repo)
 
     tools_and_args = [
+        ("cbi_scan", {"format": "text"}),
+        ("cbi_scan", {"format": "json"}),
         ("cbi_status", {"format": "text"}),
         ("cbi_search", {"query": "Circle"}),
         ("cbi_show", {"node": "src/shapes/circle.ts"}),
