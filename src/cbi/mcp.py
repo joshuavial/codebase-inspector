@@ -107,6 +107,64 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_diff",
+        "description": "Architectural diff between two commits, branches, or model databases, reporting changed concepts, relationships, and untested changes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "base": {
+                    "type": "string",
+                    "description": "Base git ref, commit SHA, or path to base model.db (default: merge-base with main).",
+                },
+                "head": {
+                    "type": "string",
+                    "description": "Head git ref, commit SHA, or path to head model.db (default: HEAD / current working tree model).",
+                },
+                "concept": {
+                    "type": "string",
+                    "description": "Optional concept ID to focus the diff on.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default), 'markdown', or 'json'.",
+                    "enum": ["text", "markdown", "json"],
+                },
+                "detail": {
+                    "type": "boolean",
+                    "description": "Whether to return the exhaustive structural change list instead of the summary overview.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_tasks",
+        "description": "Query open judgement tasks (e.g. summarise-architecture-change, summarise-files, define-concepts) or retrieve a task brief.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Optional filter by task kind (e.g. 'summarise-architecture-change', 'summarise-files', 'define-concepts').",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Specific task ID to retrieve full brief, outline, and answer schema for.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of open tasks to return (default: 20).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -210,6 +268,8 @@ class MCPServer:
             "cbi_tests_for": self.handle_tests_for,
             "cbi_search": self.handle_search,
             "cbi_hotspots": self.handle_hotspots,
+            "cbi_diff": self.handle_diff,
+            "cbi_tasks": self.handle_tasks,
         }
 
     def _get_connection(self):
@@ -396,6 +456,77 @@ class MCPServer:
         finally:
             conn.close()
 
+    def handle_diff(self, args: dict) -> str:
+        from cbi import diff
+        base_model = args.get("base_model")
+        head_model = args.get("head_model")
+        base = args.get("base")
+        head = args.get("head")
+        concept = args.get("concept")
+        fmt = args.get("format", "text")
+        detail = bool(args.get("detail", False))
+
+        if not base_model and not head_model and not base and not head:
+            base = "main"
+            head = "HEAD"
+        elif not base_model and not head_model:
+            base = base or "main"
+            head = head or "HEAD"
+
+        try:
+            base_conn, head_conn = diff.open_pair(base_model, head_model, base, head, self.root, self.out)
+        except diff.DiffError as err:
+            return f"Diff error: {err}"
+
+        try:
+            if self.root is None or (base_model and head_model):
+                result = diff.compare(base_conn, head_conn)
+                from cbi import change_summaries
+                change_summaries.enrich(base_conn, head_conn, result)
+            else:
+                result = diff.compare_refs(base_conn, head_conn, self.root, base, head)
+        finally:
+            base_conn.close()
+            head_conn.close()
+
+        rendered = diff.render(
+            result, fmt, concept=concept, module=None, file=None, symbol=None, detail=detail,
+        )
+        return rendered.rstrip()
+
+    def handle_tasks(self, args: dict) -> str:
+        conn = self._get_connection()
+        try:
+            task_id = args.get("task_id")
+            fmt = args.get("format", "text")
+            as_json = fmt == "json"
+
+            if task_id:
+                try:
+                    b = tasks.brief(conn, task_id, self.root)
+                except tasks.UnknownTask as err:
+                    return f"Unknown task: {err}"
+                if as_json:
+                    return json.dumps(b, indent=2)
+                from cbi.cli import _brief_text
+                return _brief_text(b).rstrip()
+
+            kind = args.get("kind")
+            limit = args.get("limit", 20)
+            offset = args.get("offset", 0)
+            found = tasks.open_tasks(conn, kind, limit, offset)
+            if as_json:
+                return json.dumps(found, indent=2)
+            if not found:
+                return "no open tasks"
+            lines = [
+                f"{t['id']}  {t['kind']}  {t['node_display_kind']} {t['node_path'] or t['node_id']}  ({t['files']} files)"
+                for t in found
+            ]
+            return "\n".join(lines)
+        finally:
+            conn.close()
+
     def run(self, stdin=None, stdout=None):
         if stdin is None:
             stdin = sys.stdin
@@ -422,6 +553,89 @@ class MCPServer:
                 write_message(stdout, resp, content_length=is_content_length)
 
         return 0
+
+
+CONFIG_TEMPLATES = {
+    "claude": {
+        "description": "Claude Desktop configuration (merge into ~/Library/Application Support/Claude/claude_desktop_config.json)",
+        "config": {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            }
+        },
+    },
+    "cursor": {
+        "description": "Cursor MCP configuration (merge into .cursor/mcp.json)",
+        "config": {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            }
+        },
+    },
+    "gemini": {
+        "description": "Gemini CLI / Antigravity MCP configuration (merge into ~/.gemini/settings.json)",
+        "config": {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            }
+        },
+    },
+    "windsurf": {
+        "description": "Windsurf MCP configuration (merge into ~/.codeium/windsurf/mcp_config.json)",
+        "config": {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            }
+        },
+    },
+    "vscode": {
+        "description": "VS Code MCP configuration (merge into settings.json under mcp.servers)",
+        "config": {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            }
+        },
+    },
+}
+
+
+def print_config(client: str = "all") -> int:
+    client = (client or "all").lower()
+    if client == "all":
+        wrapped = {
+            "mcpServers": {
+                "codebase-inspector": {
+                    "command": "cbi",
+                    "args": ["mcp"],
+                }
+            },
+            "clients": list(CONFIG_TEMPLATES.keys()),
+        }
+        print(json.dumps(wrapped, indent=2))
+        return 0
+    if client not in CONFIG_TEMPLATES:
+        print(
+            f"Unknown client '{client}'. Choose from: {', '.join(sorted(CONFIG_TEMPLATES.keys()))}, all",
+            file=sys.stderr,
+        )
+        return 1
+    print(json.dumps(CONFIG_TEMPLATES[client]["config"], indent=2))
+    return 0
 
 
 def run_server(root=None, out=None, stdin=None, stdout=None):
