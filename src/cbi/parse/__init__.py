@@ -2,7 +2,7 @@
 
 import hashlib
 
-from cbi.ids import symbol_ids
+from cbi.parse.ids import symbol_ids
 from cbi.parse import csharp, python, typescript, vue
 
 LANGS = set(typescript.GRAMMARS) | set(python.GRAMMARS) | set(csharp.GRAMMARS) | set(vue.GRAMMARS)

@@ -7,7 +7,7 @@ Test files yield empty lists: mock fetches are not client calls.
 
 from urllib.parse import urlsplit
 
-from cbi.http import from_pieces, has_literal, is_api_href, join_path, normalise
+from cbi.parse.http_paths import from_pieces, has_literal, is_api_href, join_path, normalise
 
 VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
 CLIENTS = {"fetch", "axios", "ky", "httpx", "requests"}

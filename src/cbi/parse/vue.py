@@ -11,7 +11,7 @@ import re
 
 from tree_sitter_language_pack import get_parser
 
-from cbi.http import is_api_href, normalise
+from cbi.parse.http_paths import is_api_href, normalise
 from cbi.parse import typescript
 
 GRAMMARS = {"vue": "vue"}

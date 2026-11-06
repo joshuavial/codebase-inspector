@@ -184,6 +184,8 @@
             "src/cbi/parse/__init__.py",
             "src/cbi/parse/csharp.py",
             "src/cbi/parse/endpoints.py",
+            "src/cbi/parse/http_paths.py",
+            "src/cbi/parse/ids.py",
             "src/cbi/parse/python.py",
             "src/cbi/parse/typescript.py",
             "src/cbi/parse/vue.py",
