@@ -218,3 +218,35 @@ def test_filter_and_format_units():
     assert matched_t[0]["name"] == "users"
     assert len(matched_r) == 1
 
+
+def test_format_tables_text_preserves_cased_fk_names_when_filtered():
+    all_tables = [
+        {
+            "id": "local:repo:table:accounts",
+            "name": "Accounts",
+            "columns": [{"id": "local:repo:table:accounts#AccountID", "name": "AccountID", "type": "INTEGER", "primaryKey": True}],
+            "foreignKeys": [],
+            "referencedBy": [{"from": "local:repo:table:orders", "column": "local:repo:table:orders#AccountID", "to": "local:repo:table:accounts", "targetColumn": "local:repo:table:accounts#AccountID"}],
+        },
+        {
+            "id": "local:repo:table:orders",
+            "name": "Orders",
+            "columns": [
+                {"id": "local:repo:table:orders#OrderID", "name": "OrderID", "type": "INTEGER", "primaryKey": True},
+                {"id": "local:repo:table:orders#AccountID", "name": "AccountID", "type": "INTEGER"},
+            ],
+            "foreignKeys": [{"from": "local:repo:table:orders", "column": "local:repo:table:orders#AccountID", "to": "local:repo:table:accounts", "targetColumn": "local:repo:table:accounts#AccountID"}],
+            "referencedBy": [],
+        },
+    ]
+    # Filter only Orders
+    filtered, rels = system_views.filter_tables(all_tables, table="Orders")
+    text = system_views.format_tables_text(filtered, rels, all_tables=all_tables)
+    assert "AccountID -> Accounts(AccountID)" in text
+
+    # Filter only Accounts (referenced by)
+    filtered_acc, rels_acc = system_views.filter_tables(all_tables, table="Accounts")
+    text_acc = system_views.format_tables_text(filtered_acc, rels_acc, all_tables=all_tables)
+    assert "Orders(AccountID) -> AccountID" in text_acc
+
+

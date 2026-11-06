@@ -331,13 +331,14 @@ def format_endpoints_text(endpoints):
     return "\n\n".join(blocks)
 
 
-def format_tables_text(tables, relationships=None):
+def format_tables_text(tables, relationships=None, all_tables=None):
     """Format table dictionaries into human-readable text."""
     if not tables:
         return "no tables found"
 
-    table_names = {t["id"]: t["name"] for t in tables if "id" in t}
-    col_names = {c["id"]: c["name"] for t in tables for c in t.get("columns", []) if "id" in c}
+    source_tables = all_tables if all_tables is not None else tables
+    table_names = {t["id"]: t["name"] for t in source_tables if "id" in t}
+    col_names = {c["id"]: c["name"] for t in source_tables for c in t.get("columns", []) if "id" in c}
 
     blocks = []
     for table in tables:
@@ -420,6 +421,6 @@ def cmd_tables(conn, args):
     if getattr(args, "json", False):
         print(json.dumps({"tables": tables, "relationships": rels}, indent=2))
         return 0
-    print(format_tables_text(tables, rels))
+    print(format_tables_text(tables, rels, all_tables=view["tables"]))
     return 0
 

@@ -952,7 +952,7 @@ class MCPServer:
             )
             fmt = args.get("format", "json")
             if fmt == "text":
-                return system_views.format_tables_text(tables, rels).rstrip()
+                return system_views.format_tables_text(tables, rels, all_tables=view["tables"]).rstrip()
             return json.dumps({"tables": tables, "relationships": rels}, indent=2)
         finally:
             conn.close()
