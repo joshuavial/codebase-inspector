@@ -574,6 +574,31 @@ def test_tools_call_submit(repo):
     assert not resp["result"]["isError"]
 
 
+def test_tools_call_submit_mismatched_schema(tmp_path):
+    cbi_dir = tmp_path / ".cbi"
+    cbi_dir.mkdir()
+    db = cbi_dir / "model.db"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA user_version = 999")
+    conn.execute("CREATE TABLE sentinel (value TEXT)")
+    conn.execute("INSERT INTO sentinel VALUES ('keep')")
+    conn.commit()
+    conn.close()
+
+    server = MCPServer(root=tmp_path)
+    res = server.execute_tool("cbi_submit", {"task_id": "any-id", "answer": {}})
+    assert res["isError"]
+    assert "schema 999" in res["content"][0]["text"]
+    assert "Rescan it" in res["content"][0]["text"]
+
+    # Verify model.db was not destroyed or wiped
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 999
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE name = 'sentinel'").fetchall()
+    assert len(rows) == 1
+    conn.close()
+
+
 def test_tool_diff(repo):
     server = MCPServer(root=repo)
     model_file = str(repo / ".cbi" / "model.db")

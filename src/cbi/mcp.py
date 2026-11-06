@@ -571,7 +571,7 @@ class MCPServer:
     def _get_write_connection(self):
         if not self.model_path.is_file():
             raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
-        conn = store.open_db(self.model_path)
+        conn = store._connect(self.model_path)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != store.SCHEMA_VERSION:
             conn.close()
