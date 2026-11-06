@@ -105,7 +105,8 @@ def test_tools_list():
     tools = resp["result"]["tools"]
     tool_names = {t["name"] for t in tools}
     expected = {
-        "cbi_status", "cbi_context", "cbi_tests_for", "cbi_search", "cbi_hotspots",
+        "cbi_status", "cbi_context", "cbi_show", "cbi_tests_for", "cbi_search", "cbi_hotspots",
+        "cbi_diff", "cbi_tasks", "cbi_submit", "cbi_query", "cbi_concepts",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
         "cbi_history", "cbi_review",
     }
@@ -201,6 +202,95 @@ def test_tools_call_context(repo):
     resp_unknown = server.handle_request(req_unknown)
     assert resp_unknown["result"]["isError"]
     assert "No node matches" in resp_unknown["result"]["content"][0]["text"]
+
+
+def test_tools_call_show(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Text format (default)
+    req_text = {
+        "jsonrpc": "2.0",
+        "id": 25,
+        "method": "tools/call",
+        "params": {"name": "cbi_show", "arguments": {"node": "src/shapes/circle.ts"}},
+    }
+    resp_text = server.handle_request(req_text)
+    assert resp_text["id"] == 25
+    assert not resp_text["result"]["isError"]
+    text = resp_text["result"]["content"][0]["text"]
+    assert "src/shapes/circle.ts" in text
+    assert "children" in text
+    assert "Circle" in text
+
+    # Explicit format: text
+    res_text_explicit = server.execute_tool("cbi_show", {"node": "src/shapes/circle.ts", "format": "text"})
+    assert not res_text_explicit["isError"]
+    assert "src/shapes/circle.ts" in res_text_explicit["content"][0]["text"]
+
+    # 2. JSON format
+    req_json = {
+        "jsonrpc": "2.0",
+        "id": 26,
+        "method": "tools/call",
+        "params": {"name": "cbi_show", "arguments": {"node": "src/shapes/circle.ts", "format": "json"}},
+    }
+    resp_json = server.handle_request(req_json)
+    assert not resp_json["result"]["isError"]
+    parsed = json.loads(resp_json["result"]["content"][0]["text"])
+    assert parsed["path"] == "src/shapes/circle.ts"
+    assert parsed["kind"] == "file"
+    assert isinstance(parsed["children"], list)
+    assert any(c["name"] == "Circle" for c in parsed["children"])
+    assert "outgoing" in parsed
+    assert "incoming" in parsed
+    assert "tests" in parsed
+    assert "diagnostics" in parsed
+
+    # 3. Symbol node lookup by name
+    res_sym = server.execute_tool("cbi_show", {"node": "Circle"})
+    assert not res_sym["isError"]
+    assert "Circle (class)" in res_sym["content"][0]["text"]
+
+    # 4. Confidence filtering
+    res_conf = server.execute_tool(
+        "cbi_show",
+        {"node": "src/shapes/circle.ts", "min_confidence": 0.9, "format": "json"},
+    )
+    assert not res_conf["isError"]
+    parsed_conf = json.loads(res_conf["content"][0]["text"])
+    for edge in parsed_conf["outgoing"] + parsed_conf["incoming"]:
+        assert edge["confidence"] >= 0.9 or edge.get("attrs", {}).get("via") == "injection"
+
+    # 5. Invalid min_confidence
+    res_bad_conf = server.execute_tool("cbi_show", {"node": "src/shapes/circle.ts", "min_confidence": 1.5})
+    assert res_bad_conf["isError"]
+    assert "min_confidence must be between 0 and 1" in res_bad_conf["content"][0]["text"]
+
+    # 6. 'all' toggle (relationships/tests cap)
+    res_all = server.execute_tool("cbi_show", {"node": "src/shapes/circle.ts", "all": True})
+    assert not res_all["isError"]
+    assert "src/shapes/circle.ts" in res_all["content"][0]["text"]
+
+    # 7. Missing required 'node' argument
+    res_missing_arg = server.execute_tool("cbi_show", {})
+    assert res_missing_arg["isError"]
+    assert "Missing required argument: 'node'" in res_missing_arg["content"][0]["text"]
+
+    # 8. Non-existent node error
+    res_unknown = server.execute_tool("cbi_show", {"node": "nonexistent/file.ts"})
+    assert res_unknown["isError"]
+    assert "no node matches 'nonexistent/file.ts'" in res_unknown["content"][0]["text"]
+
+    # 9. Non-existent node in JSON format still returns isError
+    res_unknown_json = server.execute_tool("cbi_show", {"node": "nonexistent/file.ts", "format": "json"})
+    assert res_unknown_json["isError"]
+    assert "no node matches 'nonexistent/file.ts'" in res_unknown_json["content"][0]["text"]
+
+    # 10. Ambiguous node error
+    res_ambig = server.execute_tool("cbi_show", {"node": "area"})
+    assert res_ambig["isError"]
+    assert "matches" in res_ambig["content"][0]["text"]
+    assert "pick one by ID" in res_ambig["content"][0]["text"]
 
 
 def test_tools_call_tests_for(repo):
@@ -396,6 +486,117 @@ def test_tool_tasks(repo):
     assert not resp_json["isError"]
     parsed = json.loads(resp_json["content"][0]["text"])
     assert isinstance(parsed, list)
+
+
+def test_tools_call_submit(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Missing required task_id
+    res_no_tid = server.execute_tool("cbi_submit", {"answer": {}})
+    assert res_no_tid["isError"]
+    assert "Missing required argument: 'task_id'" in res_no_tid["content"][0]["text"]
+
+    # 2. Missing required answer
+    res_no_ans = server.execute_tool("cbi_submit", {"task_id": "some-id"})
+    assert res_no_ans["isError"]
+    assert "Missing required argument: 'answer'" in res_no_ans["content"][0]["text"]
+
+    # 3. Unknown task ID
+    res_unknown = server.execute_tool("cbi_submit", {"task_id": "nonexistent-task", "answer": {}})
+    assert res_unknown["isError"]
+    assert "nonexistent-task" in res_unknown["content"][0]["text"]
+
+    # 4. Query open tasks
+    tasks_res = server.execute_tool("cbi_tasks", {"format": "json"})
+    assert not tasks_res["isError"]
+    open_tasks = json.loads(tasks_res["content"][0]["text"])
+    assert len(open_tasks) > 0, "Expected open tasks in fixture repo"
+
+    task = open_tasks[0]
+    task_id = task["id"]
+
+    # Retrieve brief to get task details and input_hash
+    brief_res = server.execute_tool("cbi_tasks", {"task_id": task_id, "format": "json"})
+    assert not brief_res["isError"]
+    brief = json.loads(brief_res["content"][0]["text"])
+
+    # 5. Malformed answer: invalid JSON string
+    res_malformed = server.execute_tool("cbi_submit", {"task_id": task_id, "answer": "{not valid json"})
+    assert res_malformed["isError"]
+    assert "not valid JSON" in res_malformed["content"][0]["text"]
+
+    # 6. Invalid schema / stale input_hash
+    res_bad_hash = server.execute_tool("cbi_submit", {"task_id": task_id, "answer": {"input_hash": "bad-hash"}})
+    assert res_bad_hash["isError"]
+
+    # 7. Construct valid answer matching schema
+    if brief["kind"] == "summarise-files":
+        answer = {
+            "input_hash": brief["input_hash"],
+            "files": [{"path": f["path"], "summary": f"Summary for {f['path']}."} for f in brief["files"]],
+        }
+    elif brief["kind"] == "summarise-group":
+        answer = {"input_hash": brief["input_hash"], "summary": "Group summary."}
+    elif brief["kind"] == "confirm-structure":
+        answer = {"input_hash": brief["input_hash"], "deployables": [], "packages": []}
+    elif brief["kind"] == "define-concepts":
+        answer = {
+            "input_hash": brief["input_hash"],
+            "summary": "Concepts summary.",
+            "concepts": [],
+            "externals": [],
+            "relationships": [],
+        }
+    else:
+        answer = {"input_hash": brief["input_hash"], "summary": "Task summary."}
+
+    # 8. Submit as JSON object (dict)
+    res_good = server.execute_tool("cbi_submit", {"task_id": task_id, "answer": answer})
+    assert not res_good["isError"]
+    report = res_good["content"][0]["text"]
+    assert "accepted" in report or task_id in report
+
+    # 9. Submit as serialized JSON string (idempotent / already accepted)
+    res_str = server.execute_tool("cbi_submit", {"task_id": task_id, "answer": json.dumps(answer)})
+    assert not res_str["isError"]
+    report_str = res_str["content"][0]["text"]
+    assert "accepted" in report_str or "already accepted" in report_str
+
+    # 10. JSON-RPC 2.0 tools/call round-trip
+    req = {
+        "jsonrpc": "2.0",
+        "id": 88,
+        "method": "tools/call",
+        "params": {"name": "cbi_submit", "arguments": {"task_id": task_id, "answer": answer}},
+    }
+    resp = server.handle_request(req)
+    assert resp["id"] == 88
+    assert not resp["result"]["isError"]
+
+
+def test_tools_call_submit_mismatched_schema(tmp_path):
+    cbi_dir = tmp_path / ".cbi"
+    cbi_dir.mkdir()
+    db = cbi_dir / "model.db"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA user_version = 999")
+    conn.execute("CREATE TABLE sentinel (value TEXT)")
+    conn.execute("INSERT INTO sentinel VALUES ('keep')")
+    conn.commit()
+    conn.close()
+
+    server = MCPServer(root=tmp_path)
+    res = server.execute_tool("cbi_submit", {"task_id": "any-id", "answer": {}})
+    assert res["isError"]
+    assert "schema 999" in res["content"][0]["text"]
+    assert "Rescan it" in res["content"][0]["text"]
+
+    # Verify model.db was not destroyed or wiped
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 999
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE name = 'sentinel'").fetchall()
+    assert len(rows) == 1
+    conn.close()
 
 
 def test_tool_diff(repo):
@@ -616,6 +817,8 @@ def test_concurrent_requests_stress(repo):
     tools_and_args = [
         ("cbi_status", {"format": "text"}),
         ("cbi_search", {"query": "Circle"}),
+        ("cbi_show", {"node": "src/shapes/circle.ts"}),
+        ("cbi_show", {"node": "src/shapes/circle.ts", "format": "json"}),
         ("cbi_tests_for", {"target": "src/shapes/circle.ts"}),
         ("cbi_hotspots", {"metric": "fan-in"}),
         ("cbi_query", {"sql": "SELECT id, name FROM nodes WHERE kind = 'symbol'", "format": "json"}),
