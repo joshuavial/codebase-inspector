@@ -36,7 +36,7 @@ def app(make_repo, monkeypatch):
         ".claude/skills/demo/SKILL.md": "# demo\n",
         "logo.png": "not really a png\n",
         "fixtures/sample.json": "{}\n",
-        "dist/bundle.js": "console.log(1);\n",
+        "dist/bundle.min.js": "console.log(1);\n",
         "public/vendor.js": "var a=" + "1+" * 600 + "1;\n",
     }
     files.update({f"data/item{i}.json": "{}\n" for i in range(201)})
@@ -90,7 +90,7 @@ def test_init_writes_self_ignoring_dir_and_ignore_file(app, capsys):
     assert main(["init"]) == 0
     assert (app / ".cbi" / ".gitignore").read_text() == "*\n"
     ignore = (app / ".cbi" / "ignore").read_text()
-    for line in ("/fixtures/", "dist*/", "build/", "/data/", "/public/vendor.js"):
+    for line in ("/fixtures/**/*.[jJ][sS][oO][nN]", "*.min.js", "/data/**/*.[jJ][sS][oO][nN]", "/public/vendor.js"):
         assert line in ignore.splitlines()
     (app / ".cbi" / "ignore").write_text(ignore + "logo.png\n")
     assert main(["init"]) == 0
@@ -103,6 +103,7 @@ def test_fixtures_and_test_data_stay_when_they_are_code(make_repo, monkeypatch, 
         "e2e/test-data/client.cs": "class Client {}\n",
         "fixtures/leases.json": "{}\n",
         "fixtures/notes.txt": "n\n",
+        "fixtures/extra.json": "{}\n",
         "fixtures/dump.sql": "-- dump\n",
         "fixtures/helper.ts": "export {};\n",
         "src/app.ts": "export const app = 1;\n",
@@ -115,14 +116,15 @@ def test_fixtures_and_test_data_stay_when_they_are_code(make_repo, monkeypatch, 
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     ignore = (root / ".cbi" / "ignore").read_text().splitlines()
-    assert "/fixtures/" in ignore and "/sql-only/test-data/" in ignore
+    assert "/fixtures/**/*.[jJ][sS][oO][nN]" in ignore and "/fixtures/**/*.[tT][xX][tT]" in ignore
     assert not any("e2e/test-data" in line or "kept/fixtures" in line or "tied/test-data" in line for line in ignore)
     assert main(["scan"]) == 0
     conn = sqlite3.connect(root / ".cbi" / "model.db")
     paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind IN ('file', 'doc')")}
     conn.close()
-    assert {"e2e/test-data/check.ts", "e2e/test-data/client.cs", "kept/fixtures/a.ts", "tied/test-data/b.ts"} <= paths
-    assert "fixtures/leases.json" not in paths and "sql-only/test-data/seed.sql" not in paths
+    assert {"e2e/test-data/check.ts", "e2e/test-data/client.cs", "kept/fixtures/a.ts", "tied/test-data/b.ts",
+            "fixtures/helper.ts", "fixtures/dump.sql", "sql-only/test-data/seed.sql"} <= paths
+    assert "fixtures/leases.json" not in paths
 
 
 def test_scan_requires_init(app, capsys):
@@ -256,3 +258,122 @@ def test_rescan_keeps_later_columns(app, capsys):
     (app / "src" / "app.ts").write_text("export const app = 2;\n")
     assert "scanned" in scan(capsys)
     assert db.execute("SELECT summary FROM nodes WHERE id = 'github.com/acme/app:src/'").fetchone() == ("kept",)
+
+
+def test_default_ignore_preserves_source_in_artifact_directories(make_repo, monkeypatch, capsys):
+    source = {
+        "evals/run.py": "print('evaluate')\n",
+        "scripts/build/build.sh": "#!/bin/sh\necho build\n",
+        "dist/helpers.ts": "export const helper = 1;\n",
+        "fixtures/schema.sql": "create table sample (id integer);\n",
+        "fixtures/setup": "#!/usr/bin/env python3\nprint('setup')\n",
+        "data/runner.json": "#!/bin/sh\necho run\n",
+    }
+    artifacts = {f"data/item{i}.json": "{}\n" for i in range(201)}
+    artifacts.update({"fixtures/one.json": "{}\n", "fixtures/two.json": "{}\n", "fixtures/three.json": "{}\n",
+                      "evals/one.json": "{}\n", "evals/two.json": "{}\n"})
+    root = make_repo({**source, **artifacts})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    paths = {row[6] for row in nodes(root).values()}
+    assert source.keys() <= paths
+    assert not artifacts.keys() & paths
+
+
+def test_init_scan_check_report_excluded_tracked_source(make_repo, monkeypatch, capsys):
+    root = make_repo({
+        "hidden/run.sh": "#!/bin/sh\necho run\n",
+        "hidden/schema.sql": "select 1;\n",
+        "hidden/tool": "#!/usr/bin/env python3\nprint('run')\n",
+        "hidden/data.json": "{}\n",
+        "visible.py": "value = 1\n",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert "Excluded tracked executable files: 0" in capsys.readouterr().out
+    (root / ".cbi" / "ignore").write_text("hidden/\n")
+    for command in ("init", "scan", "check", "scan"):
+        assert main([command]) == 0
+        assert "Excluded tracked executable files: 3" in capsys.readouterr().out
+
+
+def test_excluded_source_audit_includes_ignored_submodules_and_skips_links(app, tmp_path):
+    from cbi.files import Ignore, excluded_source_files
+
+    outside = tmp_path / "outside.sh"
+    outside.write_text("#!/bin/sh\necho outside\n")
+    os.symlink(outside, app / "link.sh")
+    git(app, "add", "link.sh")
+    assert excluded_source_files(app, Ignore("vendor/lib/\nlink.sh\n")) == ["vendor/lib/lib.py"]
+
+
+def test_generated_artifact_rules_cover_later_data_but_keep_new_source(make_repo, monkeypatch, capsys):
+    root = make_repo({f"data/item{i}.json": "{}\n" for i in range(201)})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    ignore = (root / ".cbi" / "ignore").read_bytes()
+    added = {
+        "data/item201.json": "{}\n",
+        "data/item202.JSON": "{}\n",
+        "data/nested/batch.jsonl": "{}\n",
+        "data/run.py": "print('run')\n",
+        "data/nested/tool.JSON": "#!/usr/bin/env python3\nprint('run')\n",
+        "data/nested/run.sh": "#!/bin/sh\necho run\n",
+        "data/nested/schema.sql": "select 1;\n",
+    }
+    for name, text in added.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    git(root, "add", "data")
+    git(root, "commit", "-m", "grow data directory")
+    assert main(["scan"]) == 0
+    paths = {row[6] for row in nodes(root).values()}
+    artifacts = {"data/item201.json", "data/item202.JSON", "data/nested/batch.jsonl"}
+    assert not artifacts & paths
+    source = set(added) - artifacts
+    assert source <= paths
+    assert (root / ".cbi" / "ignore").read_bytes() == ignore
+    assert main(["scan", "--ref", "HEAD"]) == 0
+    sha = git(root, "rev-parse", "HEAD").strip()
+    conn = sqlite3.connect(root / ".cbi" / "refs" / sha / "model.db")
+    ref_paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind = 'file'")}
+    conn.close()
+    assert source <= ref_paths and not artifacts & ref_paths
+    # Explicit rules outside the generated block retain their normal meaning.
+    (root / ".cbi" / "ignore").write_bytes(ignore + b"data/nested/tool.JSON\n")
+    assert main(["scan"]) == 0
+    assert "data/nested/tool.JSON" not in {row[6] for row in nodes(root).values()}
+
+
+def test_named_build_sources_added_after_init_survive_artifact_rules(make_repo, monkeypatch):
+    from cbi import files
+
+    root = make_repo({f"data/item{i}.json": "{}\n" for i in range(201)}, name="named-source")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    source = {
+        "data/CMakeLists.txt": "cmake_minimum_required(VERSION 3.20)\nproject(sample)\n",
+        "data/Makefile": "all:\n\t@echo ready\n",
+        "data/Dockerfile": "FROM scratch\n",
+        "data/justfile": "build:\n    echo ready\n",
+        "data/GNUmakefile": "all:\n\t@echo ready\n",
+        "data/Containerfile": "FROM scratch\n",
+        "data/Dockerfile.preview.txt": "FROM scratch\n",
+    }
+    for name, text in {**source, "data/notes.txt": "Saved output.\n"}.items():
+        (root / name).write_text(text)
+    git(root, "add", "data")
+    git(root, "commit", "-m", "add named build sources")
+    assert main(["scan"]) == 0
+    paths = {row[6] for row in nodes(root).values()}
+    assert source.keys() <= paths
+    assert "data/notes.txt" not in paths
+    assert all(files.source_like(path) for path in source)
+    assert main(["scan", "--ref", "HEAD"]) == 0
+    sha = git(root, "rev-parse", "HEAD").strip()
+    conn = sqlite3.connect(root / ".cbi" / "refs" / sha / "model.db")
+    ref_paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind = 'file'")}
+    conn.close()
+    assert source.keys() <= ref_paths and "data/notes.txt" not in ref_paths

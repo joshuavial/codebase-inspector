@@ -61,7 +61,10 @@ def run(root, out, base_ref, fmt, scan):
     saved = snapshot(out)
     try:
         scan(root, out)
-        return _report(root, out, base, fmt)
+        restore(out, saved)
+        result = _report(root, out, base, fmt)
+        files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
+        return result
     finally:
         restore(out, saved)
 
@@ -235,13 +238,24 @@ def _json_findings(conn, root, out):
     found = []
     for name, checker in (
         ("structure.json", _structure_errors),
-        ("concepts.json", _concept_errors),
+        ("concepts.json", lambda conn, text: _concept_errors(conn, text, out)),
         ("screens.json", lambda conn, text: _screen_errors(conn, text, root)),
     ):
         path = Path(out) / name
-        if not path.is_file() or not path.read_text().strip():
+        text = path.read_text(encoding="utf-8") if path.is_file() else None
+        if text is None or not text.strip():
+            if name == "concepts.json" and (
+                (store.get_meta(conn, "concepts_json") or "").strip()
+                or not concepts.projection_matches(conn, None)
+            ):
+                state = "missing" if text is None else "empty"
+                found.append(_finding(
+                    "json", _show(root, path),
+                    f"concepts.json is {state} but the model contains its projection",
+                    name,
+                ))
             continue
-        for message in checker(conn, path.read_text()):
+        for message in checker(conn, text):
             found.append(_finding("json", _show(root, path), message, name))
     return found
 
@@ -291,7 +305,7 @@ def _structure_errors(conn, text):
     return errors
 
 
-def _concept_errors(conn, text):
+def _concept_errors(conn, text, out=None):
     data, errors = _object(text)
     if data is None:
         return errors
@@ -304,6 +318,16 @@ def _concept_errors(conn, text):
         failed, _warnings = concepts.problems(conn, body)
     except (KeyError, TypeError) as err:
         return [f"failed its checks ({err})"]
+    if not failed and not concepts.projection_matches(conn, text):
+        failed.append("concepts.json does not match the model; run `cbi scan` and review the concept map")
+    task = conn.execute("SELECT input_hash FROM tasks WHERE kind = 'define-concepts'").fetchone()
+    if task is not None:
+        committed = team.committed_answer(out, "define-concepts", task[0], tasks.PROTOCOL_VERSION)
+        if committed is not None and concepts._body(body) != committed:
+            failed.append(
+                "concepts.json does not match the committed define-concepts answer; "
+                "review the map and submit a define-concepts answer"
+            )
     return failed
 
 
@@ -336,9 +360,15 @@ def _stale_findings(conn, root, out):
     if team.team_dir(out) is None:
         return []
     path = _answers_file(out)
-    have = team._parse(path.read_text()) if path.is_file() else {}
+    have = team._parse(path.read_text(encoding="utf-8")) if path.is_file() else {}
     found = []
     shown = _show(root, path)
+    for (kind, key), row in sorted(have.items()):
+        if row.get("conflicts"):
+            found.append(_finding(
+                "json", shown, f"conflicting accepted answers for {kind} {key}; submit a reviewed answer",
+                "conflicting answers",
+            ))
     for key, row in sorted(team._collect(conn).items()):
         current = have.get(key)
         if current is None:
@@ -363,17 +393,20 @@ def _secret_findings(conn, root, out):
     tracked = set(tasks._tracked_paths(conn))
     if path.is_file():
         shown = _show(root, path)
-        for number, line in enumerate(path.read_text().splitlines(), 1):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            answer = data.get("answer") if isinstance(data, dict) else None
             task_kind = data.get("kind") if isinstance(data, dict) else None
-            ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
-            kind = _answer_secret(answer, ignored)
+            kind = None
+            for answer in _record_answer_payloads(data):
+                ignored = tracked | (_region_ids(answer) if task_kind == "sketch-screens" else set())
+                kind = _answer_secret(answer, ignored)
+                if kind:
+                    break
             if not kind:
                 continue
             key = (data.get("kind"), data.get("key"), kind)
@@ -394,6 +427,17 @@ def _secret_findings(conn, root, out):
             "secret",
         ))
     return found
+
+
+def _record_answer_payloads(record):
+    """All raw answer bodies, including alternatives a causal merge resolves."""
+    if not isinstance(record, dict):
+        return
+    yield record.get("answer")
+    conflicts = record.get("conflicts")
+    if isinstance(conflicts, list):
+        for candidate in conflicts:
+            yield from _record_answer_payloads(candidate)
 
 
 def _answer_secret(answer, ignored=()):

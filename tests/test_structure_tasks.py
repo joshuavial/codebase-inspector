@@ -191,9 +191,9 @@ def test_accept_writes_structure_keeps_ids_and_reruns(make_repo, monkeypatch, ca
     calls = []
     real = resolve.resolve
 
-    def spy(conn, repo_root):
+    def spy(conn, repo_root, reporter=None):
         calls.append(repo_root)
-        return real(conn, repo_root)
+        return real(conn, repo_root, reporter=reporter)
 
     monkeypatch.setattr("cbi.tasks.resolve.resolve", spy)
     code, out, err = submit(capsys, tmp_path, task_id, body)

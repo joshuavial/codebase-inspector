@@ -15,6 +15,9 @@ import tomllib
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from html.parser import HTMLParser
+from fnmatch import fnmatchcase
+from glob import has_magic
+from urllib.parse import unquote, urlsplit
 
 from cbi import resolve
 
@@ -41,14 +44,14 @@ class _Workspace:
     def json(self, path):
         if path not in self._json:
             try:
-                self._json[path] = resolve._jsonc((self.dir / path).read_text())
+                self._json[path] = resolve._jsonc((self.dir / path).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 self._json[path] = None
         return self._json[path]
 
     def toml(self, path):
         try:
-            return tomllib.loads((self.dir / path).read_text())
+            return tomllib.loads((self.dir / path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
 
@@ -58,7 +61,7 @@ class _Workspace:
 
     def text(self, path):
         try:
-            return (self.dir / path).read_text()
+            return (self.dir / path).read_text(encoding="utf-8")
         except OSError:
             return None
 
@@ -258,20 +261,359 @@ def pyproject(ws):
 
 
 DOCKERFILE = re.compile(r"(^|/)(Dockerfile|Dockerfile\.[^/]+|Containerfile)$")
-DOCKER_RUN = re.compile(r"^\s*(CMD|ENTRYPOINT)\s+(.*)$", re.I | re.M)
 
 
-def _docker_entry(ws, here, tokens, scripts):
-    """The first token naming a project script, a `-m` module or a tracked file, as a workspace path."""
-    for i, token in enumerate(tokens):
-        if token in scripts:
-            return scripts[token]
-        if i and tokens[i - 1] == "-m":
-            found = _py_module(ws, here, token) or _py_module(ws, "", token)
-            if found:
-                return found
-        elif "/" in token or "." in token:
-            # ponytail: the COPY destination is unknown, so drop leading container dirs until a path matches
+def _tokens(value):
+    """Literal exec argv or shell words, without executing or expanding anything."""
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    try:
+        value = json.loads(value) if value and value.startswith("[") else value
+        return [str(v) for v in value] if isinstance(value, list) else shlex.split(value or "")
+    except ValueError:
+        return (value or "").split()
+
+
+def _docker_command(value):
+    """Retain Docker's exec versus shell form until command resolution."""
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return value
+    return [str(part) for part in parsed] if isinstance(parsed, list) else value
+
+
+def _effective_command(commands):
+    entry, command = commands.get("ENTRYPOINT"), commands.get("CMD")
+    if isinstance(entry, str) and entry:
+        return entry  # a shell ENTRYPOINT ignores CMD arguments
+    if entry:
+        args = ["/bin/sh", "-c", command] if isinstance(command, str) and command else command or []
+        return entry + args
+    return command or []
+
+
+def _shell_argv(text):
+    """Read one literal shell command, preserving quoted/escaped operators as argument data.
+
+    Compound programs, redirections and substitutions stay unresolved. Nothing is executed.
+    """
+    tokens, word, quote, active, i = [], [], None, False, 0
+    while i < len(text):
+        char = text[i]
+        if quote == "'":
+            if char == "'":
+                quote = None
+            else:
+                word.append(char)
+        elif char == "\\":
+            if i + 1 == len(text):
+                return []
+            following = text[i + 1]
+            if quote == '"' and following not in '$`"\\\n':
+                word.append(char)
+                i += 1
+                continue
+            if following != "\n":
+                word.append(following)
+                active = True
+            i += 2
+            continue
+        elif quote == '"' and char == '"':
+            quote = None
+        elif quote is None and char in "\"'":
+            quote, active = char, True
+        elif quote is None and char in "\n;&|<>()":
+            if char == "\n" and not text[i:].strip():
+                break
+            return []
+        elif char == "`" or char == "$" and text[i:i + 2] == "$(":
+            return []
+        elif quote is None and char.isspace():
+            if active:
+                tokens.append("".join(word))
+                word, active = [], False
+        elif quote is None and char == "#" and not active:
+            end = text.find("\n", i)
+            if end >= 0 and text[end:].strip():
+                return []
+            break
+        else:
+            word.append(char)
+            active = True
+        i += 1
+    if quote:
+        return []
+    if active:
+        tokens.append("".join(word))
+    return tokens
+
+
+def _image_path(workdir, path):
+    return posixpath.normpath(posixpath.join(workdir, path))
+
+
+def _forget_image_destination(state, dest, *, directory=False, basename=None):
+    """Drop only paths an unknown copy may overwrite, retaining constrained siblings."""
+    prefix = dest.rstrip("/") + "/"
+
+    def affected(path):
+        if path == dest:
+            return True
+        if not path.startswith(prefix):
+            return False
+        child = path[len(prefix):].split("/", 1)[0]
+        return not directory or basename is None or fnmatchcase(child, basename)
+
+    state["files"] = {f: tracked for f, tracked in state["files"].items() if not affected(f)}
+
+
+def _copy_pattern_matches(path, pattern):
+    """COPY globs match individual path components, not across directory separators."""
+    parts, patterns = path.split("/"), pattern.split("/")
+    return len(parts) == len(patterns) and all(fnmatchcase(p, g) for p, g in zip(parts, patterns))
+
+
+def _remember_image_directory(state, directory):
+    """WORKDIR and COPY create directories whose identity survives later WORKDIR changes."""
+    while directory not in state["dirs"]:
+        state["dirs"].add(directory)
+        directory = posixpath.dirname(directory)
+
+
+def _docker_state(ws, path, context, target=None):
+    """Track literal files in each build stage; remote, dynamic and generated copies stay unknown."""
+    stages, named = [], {}
+    state = {"files": {}, "workdir": "/", "commands": {}, "copies": False, "cmd_inherited": False, "dirs": {"/"}}
+    text = re.sub(r"\\\n", " ", (ws.text(path) or "") if path in ws.paths else "")
+    for line in text.splitlines():
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        instruction, value = parts[0].upper(), parts[1].strip() if len(parts) > 1 else ""
+        if instruction == "FROM":
+            words = _tokens(value)
+            words = [w for w in words if not w.startswith("--")]
+            parent = named.get(words[0]) if words else None
+            state = {"files": dict(parent["files"]) if parent else {},
+                     "dirs": set(parent["dirs"]) if parent else {"/"},
+                     "workdir": parent["workdir"] if parent else "/",
+                     "commands": dict(parent["commands"]) if parent else {},
+                     "copies": parent["copies"] if parent else False,
+                     "cmd_inherited": bool(parent and "CMD" in parent["commands"])}
+            stages.append(state)
+            named[str(len(stages) - 1)] = state
+            if len(words) >= 3 and words[-2].upper() == "AS":
+                named[words[-1]] = state
+        elif instruction == "WORKDIR" and value and not re.search(r"[$*?]", value):
+            state["workdir"] = _image_path(state["workdir"], value)
+            _remember_image_directory(state, state["workdir"])
+        elif instruction in ("CMD", "ENTRYPOINT"):
+            state["commands"][instruction] = _docker_command(value)
+            if instruction == "CMD":
+                state["cmd_inherited"] = False
+            if instruction == "ENTRYPOINT" and state["cmd_inherited"]:
+                state["commands"].pop("CMD", None)  # a new entrypoint clears an inherited CMD
+        elif instruction in ("COPY", "ADD"):
+            state["copies"] = True
+            flags = {}
+            while value.startswith("--"):
+                parts = value.split(None, 1)
+                flag, value = parts[0], parts[1] if len(parts) > 1 else ""
+                key, _, val = flag[2:].partition("=")
+                flags[key] = val
+                value = value.lstrip()
+            words = _tokens(value)
+            if len(words) < 2:
+                continue
+            sources, dest = words[:-1], words[-1]
+            if re.search(r"[$*?]", dest):
+                state["files"].clear()  # the destination could overwrite any mapped path
+                continue
+            dest = _image_path(state["workdir"], dest)
+            origin = named.get(flags["from"]) if "from" in flags else None
+            external = "from" in flags and origin is None
+            available = dict(origin["files"]) if origin else {"/" + p: p for p in ws.paths
+                if not context or p.startswith(context + "/")}
+            if external:
+                available = {}
+            dest_dir = dest in state["dirs"] or words[-1].endswith("/") or len(sources) > 1
+            if dest_dir:
+                _remember_image_directory(state, dest)
+            for source in sources:
+                if "$" in source:
+                    _forget_image_destination(state, dest)
+                    continue
+                if "://" in source:
+                    try:
+                        basename = posixpath.basename(unquote(urlsplit(source).path)) or None
+                    except ValueError:
+                        basename = None
+                    _forget_image_destination(state, dest, directory=dest_dir, basename=basename)
+                    continue
+                if has_magic(source):
+                    basename = None
+                    if instruction == "COPY" and not external and not source.endswith("/"):
+                        pattern = _image_path("/" if origin else "/" + context, source.lstrip("/"))
+                        directories = set(origin["dirs"]) if origin else {"/"}
+                        for file in available:
+                            directory = posixpath.dirname(file)
+                            while directory not in directories:
+                                directories.add(directory)
+                                directory = posixpath.dirname(directory)
+                        if not any(_copy_pattern_matches(d, pattern) for d in directories):
+                            basename = posixpath.basename(source)
+                    _forget_image_destination(state, dest, directory=dest_dir, basename=basename)
+                    continue
+                if external:
+                    _forget_image_destination(state, dest)
+                    continue
+                source = _image_path("/" if origin else "/" + context, source.lstrip("/"))
+                prefix = source.rstrip("/") + "/"
+                directory = any(f.startswith(prefix) for f in available)
+                matches = [(f, tracked) for f, tracked in available.items() if f == source or f.startswith(prefix)]
+                if not matches:
+                    _forget_image_destination(state, dest)
+                for f, tracked in matches:
+                    suffix = f[len(prefix):] if directory else posixpath.basename(source)
+                    destination = _join(dest, suffix) if directory or dest_dir or len(sources) > 1 else dest
+                    _remember_image_directory(state, posixpath.dirname(destination))
+                    state["files"][destination] = tracked
+    return named.get(target, state) if target else state
+
+
+def _compose_services(ws, path):
+    """Malformed document and service shapes contribute no services to any manifest reader."""
+    data = _yaml(ws.text(path) or "")
+    services = data.get("services") if isinstance(data, dict) else None
+    return services if isinstance(services, dict) else {}
+
+
+def _docker_builds(ws):
+    """Known local build contexts, relative to each Compose file."""
+    builds = defaultdict(list)
+    for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
+        for svc in _compose_services(ws, path).values():
+            build = svc.get("build") if isinstance(svc, dict) else None
+            build = {"context": build} if isinstance(build, str) else build
+            if not isinstance(build, dict):
+                continue
+            context = _join(posixpath.dirname(path), build.get("context") or ".")
+            docker = _join(context, build.get("dockerfile") or "Dockerfile")
+            builds[docker].append((context, build.get("target")))
+    return builds
+
+
+def _shell_invocation(tokens):
+    """Separate shell options from a script path or the command argument selected by -c."""
+    args, command, stdin = tokens[1:], False, False
+    while args:
+        option = args[0]
+        if option == "--":
+            args = args[1:]
+            break
+        if option == "-":
+            return None  # read standard input, not a script named by the next argument
+        if not option.startswith(("-", "+")):
+            break
+        args = args[1:]
+        if option in ("--noprofile", "--norc", "--posix", "--login"):
+            continue
+        if option in ("--rcfile", "--init-file"):
+            if not args:
+                return None
+            args = args[1:]
+            continue
+        flags = option[1:]
+        if not flags or any(flag not in "abCefhiklmnoprstuvxBDEHOPTc" for flag in flags):
+            return None
+        if "c" in flags:
+            if option.startswith("+"):
+                return None
+            command = True
+        if "s" in flags and option.startswith("-"):
+            stdin = True
+        if "o" in flags or "O" in flags:
+            if flags[-1] not in "oO" or not args:
+                return None
+            args = args[1:]
+    if not args or stdin and not command:
+        return None
+    return ("command", args[:1]) if command else ("file", args)
+
+
+def _runtime_argv(command):
+    """Keep argv boundaries and unwrap only literal exec, shell -c and project runners."""
+    tokens = _shell_argv(command) if isinstance(command, str) else _tokens(command)
+    for _ in range(8):
+        if not tokens:
+            return []
+        executable = posixpath.basename(tokens[0])
+        if executable in ("sh", "bash", "ash"):
+            invocation = _shell_invocation(tokens)
+            if invocation is None:
+                return []
+            mode, args = invocation
+            if mode == "command":
+                tokens = _shell_argv(args[0])
+            else:
+                tokens = [tokens[0], *args]
+                return tokens
+        elif tokens[0] == "exec":
+            tokens = tokens[1:]
+        elif executable in ("uv", "poetry") and tokens[1:2] == ["run"]:
+            tokens = tokens[2:]
+        else:
+            return tokens
+    return []
+
+
+def _script_argument(tokens):
+    """The file argument of a supported interpreter, excluding inline code and module modes."""
+    if not tokens or posixpath.basename(tokens[0]) not in (
+            "python", "python3", "node", "tsx", "ts-node", "ts-node-esm", "bun", "sh", "bash", "ash"):
+        return None
+    args = tokens[1:]
+    if posixpath.basename(tokens[0]) == "bun" and args[:1] == ["run"]:
+        args = args[1:]
+    while args and args[0].startswith("-") and posixpath.basename(tokens[0]) not in ("sh", "bash", "ash"):
+        if args[0] in ("-m", "-c", "-e", "--eval", "-p", "--print"):
+            return None
+        args = args[1:]
+    return args[0] if args and not re.search(r"[$`*?]", args[0]) else None
+
+
+def _module_argument(tokens):
+    if not tokens:
+        return None
+    executable = posixpath.basename(tokens[0])
+    args = tokens[1:]
+    if executable in ("python", "python3"):
+        while args and args[0] in ("-u", "-B", "-O", "-OO", "-I", "-s", "-S", "-E"):
+            args = args[1:]
+        target = args[1] if len(args) >= 2 and args[0] == "-m" else ""
+        return target if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", target) else None
+    if executable in ("uvicorn", "gunicorn", "hypercorn") and args:
+        match = re.fullmatch(r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?::[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\(\))?)?", args[0])
+        return match.group(1) if match else None
+    return None
+
+
+def _docker_entry(ws, here, tokens, scripts, state=None):
+    """Resolve only executable paths and supported interpreter file arguments."""
+    if not tokens:
+        return None
+    if tokens[0] in scripts:
+        return scripts[tokens[0]]
+    for token in (tokens[0], _script_argument(tokens)):
+        if not token or re.search(r"[$`*?]", token):
+            continue
+        if state:
+            source = state["files"].get(_image_path(state["workdir"], token))
+            if source:
+                return source
+        if ("/" in token or "." in token) and not (state and state["copies"]):
+            # Legacy images without literal copies may still name a source path directly.
             parts = [p for p in token.split("/") if p not in ("", ".")]
             for k in range(len(parts)):
                 for base in (here, ""):
@@ -281,67 +623,142 @@ def _docker_entry(ws, here, tokens, scripts):
     return None
 
 
+def _project_scripts(ws):
+    return {d["name"]: d["entries"][0][1] for d in pyproject(ws)[0] + package_json(ws)[0]
+            if d["display_kind"] == "cli" and d["entries"][0][1]}
+
+
+def _idle_command(tokens):
+    """Known intentional keepalive commands, with literal shell/exec wrappers only."""
+    tokens = _runtime_argv(tokens)
+    if not tokens:
+        return False
+    command = [posixpath.basename(tokens[0]), *tokens[1:]]
+    return command in (["tail", "-f", "/dev/null"], ["tail", "-F", "/dev/null"],
+                       ["tail", "--follow", "/dev/null"], ["sleep", "infinity"], ["sleep", "inf"])
+
+
 def dockerfile(ws):
-    """Each Dockerfile, `Dockerfile.*` and Containerfile is a container image; its entry comes from
-    the last ENTRYPOINT and CMD where they name a tracked file or a project script."""
-    deployables = []
-    scripts = {d["name"]: d["entries"][0][1] for d in pyproject(ws)[0] + package_json(ws)[0]
-               if d["display_kind"] == "cli" and d["entries"][0][1]}
+    """Container image entries resolved through literal stage-local COPY/ADD paths and argv."""
+    deployables, builds = [], _docker_builds(ws)
     for path in sorted(p for p in ws.paths if DOCKERFILE.search(p) and not p.endswith((".tmpl", ".dockerignore"))):
         here, base = posixpath.dirname(path), posixpath.basename(path)
         name = posixpath.basename(here) or ws.name
         if "." in base:
             name += "-" + base.split(".", 1)[1]
-        text = re.sub(r"\\\n", " ", ws.text(path) or "")
-        commands = {}
-        for instruction, value in DOCKER_RUN.findall(text):
-            commands[instruction.upper()] = value.strip()
-        tokens = []
-        for key in ("ENTRYPOINT", "CMD"):
-            value = commands.get(key, "")
-            try:
-                parts = json.loads(value) if value.startswith("[") else [value]
-                tokens += [t for part in parts for t in shlex.split(str(part))]
-            except ValueError:
-                tokens += value.split()
-        raw = " ".join(tokens) or "no CMD or ENTRYPOINT"
-        deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile",
-                                          [(raw, _docker_entry(ws, here, tokens, scripts))]),
-                            "ref": f"file:{ws.top(path)}"})
+        entries, artifacts = [], []
+        for context, target in dict.fromkeys(builds.get(path) or [(here, None)]):
+            state = _docker_state(ws, path, context, target)
+            command = _effective_command(state["commands"])
+            raw = " ".join(_tokens(command)) or "no CMD or ENTRYPOINT"
+            if _idle_command(command):
+                artifacts.append(raw)
+                continue
+            resolved = _command_entries(ws, context, command, state) if command else _compose_image_entries(ws, path)
+            entries += resolved or [(raw, None)]
+        deployables.append({**_deployable(name + "-image", "container image", path, "Dockerfile", entries),
+                            "ref": f"file:{ws.top(path)}",
+                            **({"artifact_command": "; ".join(artifacts)} if artifacts else {})})
     return deployables, []
 
 
 COMPOSE = re.compile(r"(^|/)(docker-compose[^/]*|compose[^/]*)\.ya?ml$")
-# A compose `command` that names a Python module: `python -m pkg.mod` or `uvicorn pkg.mod:app`.
-_PY_MODULE = re.compile(r"\bpython3?\s+-m\s+([A-Za-z_][\w.]*)")
-_ASGI_APP = re.compile(r"\b(?:uvicorn|gunicorn|hypercorn)\s+([A-Za-z_][\w.]*)")
+def _npm_entries(ws, here, tokens, state, seen):
+    """Follow package scripts at the runtime package, with a cycle guard and tracked web roots."""
+    if not tokens or posixpath.basename(tokens[0]) != "npm":
+        return []
+    package = state["files"].get(_image_path(state["workdir"], "package.json")) if state else None
+    package = package or _join(here, "package.json")
+    data = ws.json(package) if package in ws.paths else None
+    if not isinstance(data, dict):
+        return []
+    script = tokens[2] if len(tokens) > 2 and tokens[1] in ("run", "run-script") else tokens[1] if len(tokens) > 1 else ""
+    key = (package, script)
+    command = (data.get("scripts") or {}).get(script)
+    if key in seen or not isinstance(command, str):
+        return []
+    here = posixpath.dirname(package)
+    found = _command_entries(ws, here, command, state, (*seen, key))
+    script_tokens = _runtime_argv(command)
+    raw = _script_argument(script_tokens)
+    if raw:
+        path = ws.to_source(_join(here, raw))
+        if path:
+            found.append((raw, path))
+    if script_tokens and script_tokens[0] == "vite":
+        configs = [d for d in vite(ws)[0] if posixpath.dirname(d["manifest"]) == here]
+        if configs:
+            found += [entry for d in configs for entry in d["entries"] if entry[1]]
+        else:
+            html = _join(here, "index.html")
+            if html in ws.paths:
+                parser = _ModuleScripts()
+                parser.feed(ws.text(html) or "")
+                found += [(src, ws.to_source(_join(here, src.lstrip("/")))) for src in parser.srcs]
+    return [(raw, path) for raw, path in found if path]
 
 
-def _command_text(command):
-    if isinstance(command, str):
-        return command
-    if isinstance(command, list):
-        return " ".join(str(part) for part in command)
-    return ""
-
-
-def _command_entries(ws, here, command):
-    """Resolved `(raw, workspace path)` pairs for modules named in a service command.
-
-    A shell wrapper that names nothing tracked is ignored. The image's own CMD stays the entry then.
-    """
-    text = _command_text(command)
-    modules = list(dict.fromkeys(_PY_MODULE.findall(text) + _ASGI_APP.findall(text)))
+def _command_entries(ws, here, command, state=None, seen=()):
+    """Resolve literal module commands and simple shell wrappers without running target code."""
+    tokens = _runtime_argv(command)
+    if not tokens or _idle_command(tokens):
+        return []
+    text = " ".join(_tokens(command))
+    module = _module_argument(tokens)
     found = []
-    for module in modules:
-        path = _py_module(ws, here, module) or _py_module(ws, "", module)
-        if path and path not in {p for _, p in found}:
+    if module:
+        path = None
+        if state:
+            stem = _image_path(state["workdir"], module.replace(".", "/"))
+            path = state["files"].get(stem + ".py") or state["files"].get(stem + "/__init__.py")
+        path = path or _py_module(ws, here, module) or _py_module(ws, "", module)
+        if path:
             found.append((module, path))
-    return found
+    found += _npm_entries(ws, here, tokens, state, seen)
+    entry = _docker_entry(ws, here, tokens, _project_scripts(ws), state)
+    if entry:
+        found.append((text, entry))
+        if entry not in seen and (entry.endswith(".sh") or (ws.text(entry) or "").startswith("#!/bin/sh")):
+            for line in (ws.text(entry) or "").splitlines():
+                # Only literal executable lines, including branches, not comments or echoed commands.
+                if re.match(r"^\s*(?:exec\s+|uvicorn\s+|gunicorn\s+|hypercorn\s+|python3?\s+)", line):
+                    found += _command_entries(ws, here, line, state, (*seen, entry))
+    return [(raw, path) for path, raw in {path: raw for raw, path in found}.items()]
+
+
+def _service_entries(ws, svc, docker, context):
+    state = _docker_state(ws, docker, context, (svc.get("build") or {}).get("target")
+                          if isinstance(svc.get("build"), dict) else None)
+    if isinstance(svc.get("working_dir"), str):
+        state["workdir"] = _image_path(state["workdir"], svc["working_dir"])
+    commands = dict(state["commands"])
+    if svc.get("entrypoint") is not None:
+        commands["ENTRYPOINT"] = _tokens(svc["entrypoint"])
+        commands.pop("CMD", None)
+    if svc.get("command") is not None:
+        commands["CMD"] = _tokens(svc["command"])
+    return _command_entries(ws, context, _effective_command(commands), state)
+
+
+def _compose_image_entries(ws, docker):
+    """A commandless build gets startup evidence from its Compose services."""
+    entries = []
+    for path in sorted(p for p in ws.paths if COMPOSE.search(p)):
+        for svc in _compose_services(ws, path).values():
+            build = svc.get("build") if isinstance(svc, dict) else None
+            build = {"context": build} if isinstance(build, str) else build
+            if not isinstance(build, dict):
+                continue
+            context = _join(posixpath.dirname(path), build.get("context") or ".")
+            if _join(context, build.get("dockerfile") or "Dockerfile") == docker:
+                entries += _service_entries(ws, svc, docker, context)
+    return list(dict.fromkeys(entries))
 
 
 def _yaml_scalar(text):
     text = re.sub(r"^[&!]\S+\s*", "", text.strip())  # anchors and tags
+    if text in ("null", "Null", "NULL", "~"):
+        return None
     if text.startswith("[") and text.endswith("]"):
         return [_yaml_scalar(t) for t in text[1:-1].split(",") if t.strip()]
     if text.startswith("{") and text.endswith("}"):
@@ -445,9 +862,7 @@ def compose(ws):
     paths = sorted((p for p in ws.paths if COMPOSE.search(p)), key=lambda p: (posixpath.dirname(p), len(p), p))
     for path in paths:
         here = posixpath.dirname(path)
-        data = _yaml(ws.text(path) or "")
-        services = data.get("services") if isinstance(data, dict) else None
-        for name, svc in (services if isinstance(services, dict) else {}).items():
+        for name, svc in _compose_services(ws, path).items():
             if not isinstance(svc, dict):
                 continue
             ref = f"compose:{ws.top(here)}:{{}}"
@@ -460,7 +875,8 @@ def compose(ws):
                 build = {"context": build} if isinstance(build, str) else build
                 context = _join(here, build.get("context") or ".")
                 docker = _join(context, build.get("dockerfile") or "Dockerfile")
-                entries = _command_entries(ws, here, svc.get("command"))
+                entries = (_service_entries(ws, svc, docker, context)
+                           if any(svc.get(key) is not None for key in ("command", "entrypoint", "working_dir")) else [])
                 if not entries:
                     entries = [] if docker in ws.paths else [(docker, None)]
                 found[ref.format(name)] = {**_deployable(name, "service", path, f"compose service {name}", entries),
@@ -794,7 +1210,8 @@ def apply(conn, root, structure_text):
         nodes.append({"id": did, "display_kind": d["display_kind"], "name": d["name"], "ws": ws.id,
                       "path": d.get("manifest"), "kind": "deployable",
                       "attrs": {"entry_points": [e for _, e in d["entries"] if e], "evidence": d["evidence"],
-                                "members": len(members)}})
+                                "members": len(members),
+                                **({"artifact_command": d["artifact_command"]} if d.get("artifact_command") else {})}})
     for pid, p in sorted(packages.items()):
         nodes.append({"id": pid, "display_kind": p["display_kind"], "name": p["name"], "ws": p["ws"].id,
                       "path": p.get("directory"), "kind": "package",

@@ -4,10 +4,40 @@ version = "0.2.0"
 description = "Deterministic CLI that maps a codebase into a layered model for AI agents and a static viewer."
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Joshua Vial", email = "joshua@codewithjv.com"},
+]
+keywords = [
+    "codebase",
+    "architecture",
+    "code-graph",
+    "ast",
+    "tree-sitter",
+    "coding-agents",
+    "mcp",
+    "code-review",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "tree-sitter>=0.25,<0.26",
     "tree-sitter-language-pack>=1.21",
 ]
+
+[project.urls]
+Homepage = "https://github.com/joshuavial/codebase-inspector"
+Repository = "https://github.com/joshuavial/codebase-inspector"
+Issues = "https://github.com/joshuavial/codebase-inspector/issues"
+Changelog = "https://github.com/joshuavial/codebase-inspector/blob/main/CHANGELOG.md"
 
 [project.scripts]
 cbi = "cbi.cli:main"

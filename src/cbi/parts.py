@@ -398,6 +398,86 @@ def _screen_chunks(conn, brief, root):
     return chunks
 
 
+def json_part(body, nbytes=0):
+    """The exact CLI JSON envelope, including its own byte count and final newline."""
+    while True:
+        text = json.dumps({**body, "bytes": nbytes}, indent=2) + "\n"
+        size = len(text.encode())
+        if size == nbytes:
+            return text
+        nbytes = size
+
+
+
+def _divide(value):
+    """Divide a payload at a list boundary, retaining ancestor identity on both sides.
+
+    Splitting a singleton descends into its subtree or file list. Other sibling
+    payloads occur on the first side only, so every fact remains available.
+    """
+    if isinstance(value, list):
+        if len(value) > 1:
+            mid = len(value) // 2
+            return value[:mid], value[mid:]
+        if value:
+            divided = _divide(value[0])
+            if divided:
+                return [divided[0]], [divided[1]]
+    if isinstance(value, dict):
+        keys = [key for key, item in value.items() if isinstance(item, (list, dict)) and item]
+        keys.sort(key=lambda key: len(json.dumps(value[key])), reverse=True)
+        for key in keys:
+            divided = _divide(value[key])
+            if divided:
+                left, right = dict(value), dict(value)
+                left[key], right[key] = divided
+                # Ancestor scalar metadata gives fragments their tree location.
+                for other in keys:
+                    if other != key:
+                        right[other] = [] if isinstance(value[other], list) else {}
+                return left, right
+        if len(keys) > 1:
+            left, right = dict(value), dict(value)
+            for key in keys[1:]:
+                left[key] = [] if isinstance(value[key], list) else {}
+            right[keys[0]] = [] if isinstance(value[keys[0]], list) else {}
+            return left, right
+    return None
+
+
+def _bounded_concept_chunks(chunks):
+    """Enforce the budget after area grouping, for text AND JSON serialization."""
+    payload_keys = ("files", "pairs", "concepts", "env", "removed", "areas", "deployables", "packages")
+    while True:
+        # Splitting changes both the count and later indices. Re-number every
+        # pass, including parts that fitted before crossing a digit boundary.
+        numbered = _number(chunks)
+        next_chunks = []
+        split = False
+        oversized = False
+        for chunk, part in zip(chunks, numbered):
+            if max(part["bytes"], part["json_bytes"]) <= budget():
+                next_chunks.append(chunk)
+                continue
+            oversized = True
+            body = chunk["brief"]
+            payload = {key: body[key] for key in payload_keys if key in body}
+            divided = _divide(payload)
+            if divided is None:
+                # Finish splitting and numbering before rejecting an indivisible
+                # item, using its actual final envelope rather than a reserve.
+                next_chunks.append(chunk)
+                continue
+            split = True
+            next_chunks.extend({"name": chunk["name"], "brief": {**body, **fragment}}
+                               for fragment in divided)
+        if not oversized:
+            return chunks
+        if not split:
+            raise ValueError("brief_budget is too small for the task envelope or an indivisible item")
+        chunks = next_chunks
+
+
 def _number(chunks):
     total = len(chunks)
     parts = []
@@ -405,7 +485,7 @@ def _number(chunks):
         body = chunk["brief"]
         body["part"] = {"index": index, "count": total, "name": chunk["name"]}
         text = tasks.sized(render_text(body))
-        parts.append({"name": chunk["name"], "text": text, "bytes": len(text.encode()), "brief": body})
+        parts.append({"name": chunk["name"], "text": text, "bytes": len(text.encode()), "brief": body, "json_bytes": len(json_part(body).encode())})
     return parts
 
 
@@ -414,9 +494,9 @@ def split_brief(conn, brief, root):
     whole = render_text(brief)
     nbytes = len(whole.encode())
     limit = budget()
-    over = nbytes > limit
+    over = max(len(tasks.sized(whole).encode()), len(json_part(brief).encode())) > limit
     if over and brief["kind"] == "define-concepts":
-        chunks = _concept_chunks(conn, brief)
+        chunks = _bounded_concept_chunks(_concept_chunks(conn, brief))
     elif over and brief["kind"] == "sketch-screens":
         chunks = _screen_chunks(conn, brief, root)
     else:
@@ -437,7 +517,7 @@ def index_payload(spec):
     return {
         "id": spec["id"], "kind": spec["kind"], "budget": spec["budget"],
         "brief_bytes": spec["brief_bytes"], "split": spec["split"],
-        "parts": [{"index": index, "name": part["name"], "bytes": part["bytes"]}
+        "parts": [{"index": index, "name": part["name"], "bytes": part["bytes"], "json_bytes": part.get("json_bytes", len(json_part(part["brief"]).encode()))}
                   for index, part in enumerate(spec["parts"], 1)],
     }
 

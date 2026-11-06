@@ -200,18 +200,39 @@ function relChangeClass(rels) {
 
 const MARK_LABEL = { new: "new", removed: "removed", volume: "volume changed", mechanism: "mechanism changed" };
 
+function conceptChangeItem(id) {
+  const find = (items) => {
+    for (const item of items) {
+      if (item.id === id) return item;
+      const child = find(item.children || []);
+      if (child) return child;
+    }
+    return null;
+  };
+  return find(diffOverviewItems());
+}
+
 function conceptTag(id) {
   if (!DIFF || !byId[id] || byId[id].ext) return null;
-  if (PROVISIONAL.has(id)) return "provisional";
-  return CONCEPT_MARK.get(id) || null;
+  const item = conceptChangeItem(id);
+  if (item) {
+    if (item.state === "added") return "Added";
+    if (item.state === "removed") return "Removed";
+    if (item.state === "moved") return "Moved";
+    return item.change_scope === "descendants" ? "Changes inside" : "Changed here";
+  }
+  const mark = CONCEPT_MARK.get(id);
+  if (!mark) return null;
+  return mark === "changed" ? "Changed here" : mark[0].toUpperCase() + mark.slice(1);
 }
 
 function conceptClass(id) {
   if (!DIFF) return "";
   const marks = [];
-  const own = CONCEPT_MARK.get(id);
+  const item = conceptChangeItem(id);
+  const own = item ? (item.change_scope === "descendants" ? "inside" : item.state) : CONCEPT_MARK.get(id);
   if (own) marks.push("chg-" + own);
-  if (PROVISIONAL.has(id)) marks.push("chg-provisional");
+  if (PROVISIONAL.has(id)) marks.push("ownership-uncertain");
   return marks.length ? " " + marks.join(" ") : "";
 }
 
@@ -369,7 +390,9 @@ function initCompare() {
     if (!button) return;
     go(view.focus, view.sel, { side: button.dataset.side, v: view.mode, w: view.screen });
   };
-  document.getElementById("chg-toggle").onclick = () => document.body.classList.toggle("changes-open");
+  document.getElementById("chg-toggle").onclick = () => {
+    document.getElementById("changes").scrollIntoView({ block: "start", behavior: "smooth" });
+  };
 }
 
 function diffActive() {
@@ -388,17 +411,29 @@ function diffViewScope() {
   if (!diffActive()) return null;
   const raw = (view && view.scope) || "";
   if (raw === "all") return "all";
-  if (raw && raw !== "changed" && diffOverviewItems().some((item) => item.id === raw)) return raw;
+  if (raw && raw !== "changed" && diffConceptItems().some((item) => item.id === raw)) return raw;
   return "changed";
 }
 
-// One tab per ranked area when the labels fit on one desktop row with Changed and Full map.
-function diffAreaTabs(items) {
-  if (!Array.isArray(items)) return [];
-  const rows = items.filter((item) => item && item.id && item.id !== "all" && item.id !== "changed");
-  if (rows.length < 2 || rows.length > 10) return [];
-  const labels = rows.reduce((n, item) => n + String(item.name || item.id).length, "Changed".length + "Full map".length);
-  return labels > 160 ? [] : rows;
+function diffConceptItems() {
+  const rows = [];
+  const walk = (items) => { for (const item of items) { rows.push(item); walk(item.children || []); } };
+  walk(diffOverviewItems());
+  return rows;
+}
+
+function selectedChangeConcept() {
+  const items = diffConceptItems();
+  const symbol = view.sel && symById[view.sel];
+  const id = symbol ? symbol.leaf.id : (byId[view.sel] ? view.sel : view.focus);
+  if (id) {
+    const chain = [id, ...ancestors(id)];
+    for (const cid of chain) {
+      const item = items.find((row) => row.id === cid);
+      if (item) return item;
+    }
+  }
+  return items.find((row) => row.id === view.scope) || items[0] || null;
 }
 
 function paintDiffScope() {
@@ -410,7 +445,6 @@ function paintDiffScope() {
   const scope = diffViewScope();
   const tabs = [
     ["changed", "Changed"],
-    ...diffAreaTabs(diffOverviewItems()).map((item) => [item.id, item.name || item.id]),
     ["all", "Full map"],
   ];
   bar.replaceChildren(...tabs.map(([id, label]) => {
@@ -432,9 +466,11 @@ function setDiffScope(scope) {
   let focus = view.focus;
   let sel = view.sel;
   const area = scope !== "changed" && scope !== "all";
-  if (area && byId[scope] && !byId[scope].ext) {
+  const headOnly = area && shownSide === "base" && (ADDED.has(scope) || HEAD_ONLY.has(scope));
+  if (area && ((byId[scope] && !byId[scope].ext) || headOnly)) {
     focus = scope;
     sel = null;
+    if (headOnly) extra.side = "head";
   } else if (!area && view.scope && view.scope !== "changed" && view.scope !== "all" && view.focus === view.scope) {
     focus = null;
     sel = null;
@@ -444,11 +480,16 @@ function setDiffScope(scope) {
 
 function paintCompare() {
   const on = diffActive();
+  document.body.classList.toggle("comparison", on);
+  const note = document.getElementById("snapshot-note");
+  if (note) note.hidden = !on;
   document.getElementById("compare").hidden = !on;
   document.getElementById("chg-toggle").hidden = !on;
   if (!on) return;
   for (const button of document.querySelectorAll("#compare button")) {
-    button.classList.toggle("on", (button.dataset.side || "head") === (shownSide || "head"));
+    const selected = (button.dataset.side || "head") === (shownSide || "head");
+    button.classList.toggle("on", selected);
+    button.setAttribute("aria-pressed", String(selected));
   }
 }
 
@@ -539,35 +580,286 @@ function groupFocus(g) {
   return node && !node.ext ? g.id : null;
 }
 
+// ---------- agent change summaries ----------
+
+function changeSummary(parent, conceptId = null) {
+  if (!DIFF || (HISTORY && !historyCompare)) return;
+  const changes = DIFF.changes || {};
+  const summaries = changes.summaries || {};
+  const concepts = summaries.concepts || {};
+  if (conceptId && !concepts[conceptId] && !diffConceptItems().some((item) => item.id === conceptId) && !(changes.groups || []).some((g) => g.id === conceptId)) return;
+  if (!conceptId && !summaries.overall && !diffOverviewItems().length && !(changes.groups || []).length) return;
+  const answer = conceptId ? concepts[conceptId] : summaries.overall;
+  const section = el("section", "change-summary");
+  if (answer && answer.state === "answered" && answer.narrative) {
+    section.append(el("h3", "", "Agent summary"), el("p", "", answer.narrative));
+    if (answer.citations && answer.citations.length) {
+      const sources = el("details", "summary-sources");
+      sources.append(el("summary", "", `Sources (${answer.citations.length})`));
+      for (const citation of answer.citations) {
+        const symbol = symById[citation];
+        const item = conceptId && diffConceptItems().find((row) => row.id === conceptId);
+        const file = diffConceptItems().flatMap((row) => (row.own_modules || row.modules || []).flatMap((mod) => mod.files || [])).find((row) => row.path === citation || row.id === citation);
+        const owner = file && diffConceptItems().find((row) => row.id === file.owner_id);
+        if (symbol || (file && (owner || item))) sources.append(link(citation, () => inspectChangeEvidence(symbol ? citation : file.id, owner || item || {id: symbol.leaf.id}, file && file.state)));
+        else if (byId[citation]) sources.append(link(citation, () => jump(citation, null, { force: true })));
+        else if (/\.[a-z0-9]+(?:#.*)?$/i.test(citation)) {
+          const path = citation.split("#")[0].split(":").pop();
+          sources.append(link(`Copy source command: ${citation}`, () => copyChangeSource(path)));
+        } else sources.append(el("p", "path", citation));
+      }
+      section.append(sources);
+    }
+  } else {
+    const status = answer && answer.state && answer.state !== "pending" ? ` (${answer.state})` : "";
+    section.append(el("p", "hint", `Summary pending: run cbi tasks${status}`));
+    const item = conceptId && diffConceptItems().find((row) => row.id === conceptId);
+    if (item) section.append(el("p", "mechanical-summary", `${changeState(item)} · ${changeCounts(item)}. Intent, user impact and risk await an answered summary.`));
+  }
+  parent.append(section);
+}
+
+// ---------- comparison details ----------
+
+function countLabel(count, singular, plural = singular + "s") {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function changeCounts(item) {
+  const m = item.measures || {};
+  const files = countLabel((m.files || {}).total || 0, "file");
+  return m.lines_known === true ? `${files} · +${m.additions || 0} −${m.deletions || 0}` : `${files} · Line counts unavailable`;
+}
+
+function changeState(item) {
+  return item.state_label || ({ added: "Added", removed: "Removed", moved: "Moved" }[item.state])
+    || (item.change_scope === "descendants" ? "Changes inside" : "Changed here");
+}
+
+function changeDisclosure(title, cls = "") {
+  const details = el("details", cls);
+  details.append(el("summary", "", title));
+  return details;
+}
+
+function changeFile(id) {
+  return diffConceptItems().flatMap((item) => (item.own_modules || item.modules || []).flatMap((module) => module.files || []))
+    .find((file) => file.id === id || file.canonical_id === id || file.path === id);
+}
+
+function copyChangeSource(path, state) {
+  const revision = state === "removed" ? DIFF.base : state === "added" ? DIFF.head : shownSide === "base" ? DIFF.base : DIFF.head;
+  const command = `git show ${revision}:${path}`;
+  if (typeof copyText === "function") copyText(command);
+  else if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(command).then(() => showToast("Copied git show command"), () => fallbackCopy(command));
+  else fallbackCopy(command);
+}
+
+function fileEvidenceDrawer(parent, file) {
+  parent.append(el("h2", "", file.name), el("p", "path", file.path), el("p", "", `${changeState(file)} · ${changeCounts(file)}`));
+  if (file.old_path && file.old_path !== file.path) parent.append(el("p", "path", `Previous path: ${file.old_path}`));
+  parent.append(link("Copy git show command", () => copyChangeSource(shownSide === "base" ? file.old_path || file.path : file.path, file.state)));
+  if (typeof editorButton === "function" && file.state !== "removed") {
+    const button = editorButton(file.path, 1);
+    if (button) parent.append(button);
+  }
+  const item = selectedChangeConcept();
+  for (const symbol of file.symbols || []) parent.append(link(`${symbol.name} — ${symbol.verb || changeState(symbol)}`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+  if (!(file.symbols || []).length) parent.append(el("p", "hint", "No changed symbols were projected for this file. Inspect its source at the compared revision."));
+}
+
+function inspectChangeEvidence(id, item, state) {
+  if (state === "removed" && shownSide !== "base") return go(item.id, id, { side: "base", scope: item.id });
+  if (state === "added" && shownSide === "base") return go(item.id, id, { side: "head", scope: item.id });
+  const symbol = symById[id];
+  if (symbol) return jump(symbol.leaf.id, id, { force: true });
+  return jump(groupFocus(item) || view.focus, id, { force: true });
+}
+
+function changeEvidence(parent, item) {
+  const modules = item.own_modules || item.modules || [];
+  const evidence = changeDisclosure("Evidence", "change-evidence");
+  for (const module of modules) {
+    const mod = changeDisclosure(`${module.name} · ${changeCounts(module)}`);
+    const production = (module.files || []).filter((file) => !file.is_test);
+    const tests = (module.files || []).filter((file) => file.is_test);
+    const addFiles = (target, files) => {
+      for (const file of files) {
+        const group = changeDisclosure(`${file.name} · ${changeState(file)}`);
+        group.append(el("p", "path", file.path));
+        if (file.old_path && file.old_path !== file.path) group.append(el("p", "path", `Moved from ${file.old_path}`));
+        for (const symbol of file.symbols || []) {
+          const row = el("div", "change-symbol");
+          row.append(link(`${symbol.name} — ${symbol.verb || changeState(symbol)}`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+          if (symbol.untested) row.append(el("span", "test-gap", "No static test link"));
+          group.append(row);
+        }
+        if (!(file.symbols || []).length) group.append(link("Inspect file", () => inspectChangeEvidence(file.id, item, file.state)));
+        target.append(group);
+      }
+    };
+    addFiles(mod, production);
+    if (tests.length) { const testGroup = changeDisclosure(`Tests (${tests.length})`); addFiles(testGroup, tests); mod.append(testGroup); }
+    evidence.append(mod);
+  }
+  for (const child of item.children || []) {
+    evidence.append(link(`${child.name} — ${changeState(child)} · inspect evidence`, () => setDiffScope(child.id)));
+  }
+  for (const move of item.moves || []) {
+    const row = el("p", "move-evidence");
+    row.append(`Moved: ${move.path || "code"} · `,
+      link(move.from_name || move.from, () => setDiffScope(move.from)), " → ",
+      link(move.to_name || move.to, () => setDiffScope(move.to)));
+    evidence.append(row);
+  }
+  const groups = ((DIFF.changes || {}).groups || []).filter((g) => g.id === item.id);
+  const records = groups.flatMap((g) => g.changes || []).filter((ch) => !ch.kind.startsWith("symbol-") && ch.kind !== "untested" && ch.kind !== "file-moved-concept");
+  if (records.length) {
+    const architecture = changeDisclosure("Architecture and test changes");
+    for (const ch of records) {
+      const target = changeTarget(ch, item);
+      const label = ch.kind.split("-").map((word, i) => i ? word : word[0].toUpperCase() + word.slice(1)).join(" ");
+      const row = el("p", "");
+      if (target) row.append(link(`${label}: ${ch.summary}`, () => jump(target.focus, target.sel, { force: true, extra: target.side ? { side: target.side } : {} })));
+      else row.append(`${label}: ${ch.summary}`);
+      architecture.append(row);
+    }
+    evidence.append(architecture);
+  }
+  if (!modules.length && !records.length && !(item.moves || []).length && !(item.children || []).length) evidence.append(el("p", "hint", "No changed code evidence; structural change only."));
+  parent.append(evidence);
+}
+
+function changeSourceLink(at, item, label = "Inspect source evidence") {
+  const path = String(at || "").split(":")[0];
+  const file = changeFile(path);
+  return link(label, () => file ? inspectChangeEvidence(file.id, item, file.state) : copyChangeSource(path));
+}
+
+function changeReviewSignals(parent, item) {
+  const wrapper = el("section", "review-signals");
+  wrapper.append(el("h3", "", "Review signals"));
+  const section = changeDisclosure("Review signal evidence");
+  const attention = item.attention || {};
+  const observed = (item.relationships || []).filter((row) => row.state !== "unchanged");
+  if (observed.length) {
+    section.append(el("h4", "", "Observed relationship changes"));
+    for (const row of observed) {
+      const p = el("p", "");
+      p.append(`${changeState(row)}: `, link(row.from_name || row.from, () => jump(row.from, null, { force: true })),
+        ` → ${row.label || "uses"} → `, link(row.to_name || row.to, () => jump(row.to, null, { force: true })),
+        row.mechanism ? ` · ${row.mechanism}` : "");
+      if (row.at) p.append(changeSourceLink(row.at, item, `Evidence: ${row.at}`));
+      section.append(p);
+    }
+  }
+  const modules = item.modules || [];
+  const gaps = modules.flatMap((module) => (module.files || []).flatMap((file) => (file.symbols || []).filter((symbol) => symbol.untested)));
+  for (const symbol of gaps) section.append(link(`${symbol.name}: no static test link`, () => inspectChangeEvidence(symbol.id, item, symbol.state)));
+  if (attention.removed_tests) section.append(el("p", "", `${countLabel(attention.removed_tests, "test link")} removed; inspect test evidence.`));
+  if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) section.append(el("p", "", item.unowned ? "Ownership unresolved: these changes have no concept owner." : "Ownership uncertain: provisional assignment needs review."));
+  for (const move of item.moves || []) {
+    const p = el("p", "");
+    p.append("Ownership move: ", link(move.from_name || "Unowned", () => setDiffScope(move.from)), " → ", link(move.to_name || "Unowned", () => setDiffScope(move.to)));
+    section.append(p);
+  }
+  for (const integration of attention.integrations || []) {
+    const p = el("p", "", `Integration evidence: ${integration}`);
+    const relationship = (item.relationships || []).find((row) => row.integration && row.at && integration.includes(row.at));
+    if (relationship) p.append(changeSourceLink(relationship.at, item, "Inspect integration source"));
+    section.append(p);
+  }
+  const context = (item.relationships || []).filter((row) => row.state === "unchanged");
+  if (context.length) {
+    const details = changeDisclosure("Possible downstream context (inferred)");
+    details.append(el("p", "hint", "These direct neighbours may be affected. The relationship alone does not establish behavioural impact."));
+    for (const row of context) {
+      const p = el("p", "");
+      p.append(link(row.from_name || row.from, () => jump(row.from, null, { force: true })), ` → ${row.label || "uses"} → `,
+        link(row.to_name || row.to, () => jump(row.to, null, { force: true })));
+      details.append(p);
+    }
+    section.append(details);
+  }
+  if (!observed.length && !gaps.length && !(attention.integrations || []).length && !(item.moves || []).length && !attention.removed_tests && !attention.provisional && !item.unowned)
+    section.append(el("p", "hint", "No additional review signals in the structural evidence."));
+  const signals = [];
+  if ((attention.integrations || []).length) signals.push(countLabel(attention.integrations.length, "integration signal"));
+  if (observed.length) signals.push(countLabel(observed.length, "observed relationship change"));
+  if (gaps.length) signals.push(`${countLabel(gaps.length, "changed symbol")} without a static test link`);
+  if ((item.moves || []).length) signals.push(countLabel(item.moves.length, "move"));
+  if (attention.removed_tests) signals.push(`${countLabel(attention.removed_tests, "test link")} removed`);
+  if (attention.provisional || PROVISIONAL.has(item.id) || item.unowned) signals.push("Ownership needs review");
+  wrapper.append(el("p", "", signals.length ? signals.join(" · ") : "No additional review signals in the structural evidence."));
+  const firstIntegration = (attention.integrations || [])[0];
+  if (firstIntegration) wrapper.append(el("p", "hint", `Inspect first: ${firstIntegration}`));
+  else if (gaps.length) wrapper.append(link(`Inspect first: ${gaps[0].name} has no static test link`, () => inspectChangeEvidence(gaps[0].id, item, gaps[0].state)));
+  else if (observed.length) {
+    const row = observed[0];
+    wrapper.append(el("p", "hint", `Inspect first: ${row.from_name || row.from} → ${row.label || "uses"} → ${row.to_name || row.to} (${row.state}).`));
+  }
+  wrapper.append(el("p", "hint", "Risk is unknown from structural evidence. Missing static test links do not establish test coverage."), section);
+  parent.append(wrapper);
+}
+
+let changesPanelStamp = null;
+let changesPanelRoot = null;
+
 function changesPanel() {
   const panel = document.getElementById("changes");
-  panel.hidden = !DIFF || (!!HISTORY && !historyCompare);
-  if (panel.hidden) return;
+  panel.hidden = !diffActive();
+  if (panel.hidden) { changesPanelStamp = null; return; }
+  const selected = selectedChangeConcept();
+  const stamp = JSON.stringify([DIFF.base, DIFF.head, shownSide, selected && selected.id, DIFF.overview, DIFF.changes]);
+  if (panel === changesPanelRoot && stamp === changesPanelStamp) return;
+  changesPanelRoot = panel;
+  changesPanelStamp = stamp;
   panel.replaceChildren();
   panel.append(el("h2", "", "Changes"));
   const base = DIFF.base ? String(DIFF.base).slice(0, 12) : "base";
   const head = DIFF.head ? String(DIFF.head).slice(0, 12) : "head";
   panel.append(el("p", "hint", `${base} → ${head}`));
-  const groups = (DIFF.changes && DIFF.changes.groups) || [];
-  if (!groups.length) { panel.append(el("p", "", "No architectural changes.")); return; }
-  for (const g of groups) {
-    const headEl = el("h3");
-    const focus = groupFocus(g);
-    if (focus) headEl.append(link(g.name, () => jump(focus, null, { force: true })));
-    else headEl.append(document.createTextNode(g.name));
-    panel.append(headEl);
+  changeSummary(panel);
+  const items = diffOverviewItems();
+  if (!items.length) { panel.append(el("p", "", "No architectural changes.")); return; }
+  const index = el("nav", "change-index");
+  index.setAttribute("aria-label", "Changed concepts");
+  const renderItems = (rows, parent) => {
     const ul = el("ul");
-    for (const ch of g.changes) {
+    for (const item of rows) {
       const li = el("li");
-      const target = changeTarget(ch, g);
-      const text = ch.summary;
-      if (target) li.append(link(text, () => jump(target.focus, target.sel, { force: true, extra: target.side ? { side: target.side } : {} })));
-      else li.append(el("span", "", text));
-      li.append(el("div", "kind", ch.kind));
+      const button = el("button", "change-concept" + (selected && selected.id === item.id ? " selected" : ""));
+      button.type = "button";
+      button.dataset.concept = item.id;
+      button.setAttribute("aria-current", selected && selected.id === item.id ? "true" : "false");
+      button.append(el("strong", "", item.name), el("span", "change-state", changeState(item)), el("small", "", changeCounts(item)));
+      button.onclick = () => setDiffScope(item.id);
+      li.append(button);
+      if ((item.children || []).length) {
+        const children = changeDisclosure(`Changes inside (${item.children.length})`);
+        children.open = !!selected && (selected.id === item.id || ancestors(selected.id).includes(item.id));
+        renderItems(item.children, children);
+        li.append(children);
+      }
       ul.append(li);
     }
-    panel.append(ul);
+    parent.append(ul);
+  };
+  renderItems(items, index);
+  if (selected) {
+    const section = el("section", "selected-change");
+    section.append(el("h2", "", selected.name));
+    changeSummary(section, selected.id);
+    changeReviewSignals(section, selected);
+    changeEvidence(section, selected);
+    if (selected.summary) {
+      const about = changeDisclosure("About this concept");
+      about.append(el("p", "", selected.summary));
+      section.append(about);
+    }
+    panel.append(section);
   }
+  panel.append(el("h3", "", "Changed concepts"), index);
 }
 
 function changeTarget(ch, g) {
@@ -716,6 +1008,14 @@ function paintSystemChrome(tab) {
 // The concept a jump came from. "~" is the workspace, whose focus is null.
 function originFocus() { return view.from === "~" ? null : view.from; }
 
+function navigationDiffScope(scope, focus, sel) {
+  if (!diffActive() || !scope || scope === "changed" || scope === "all") return scope;
+  const symbol = sel && symById[sel];
+  const target = symbol ? symbol.leaf.id : (sel && byId[sel] ? sel : focus);
+  if (!target || inDiffArea(target, scope)) return scope;
+  return "changed";
+}
+
 function go(focus, sel, extra = {}) {
   // Landing back on the origin restores its zoom and selection, same as the chip.
   const home = view.from && !("from" in extra) && (focus || null) === originFocus()
@@ -742,7 +1042,7 @@ function go(focus, sel, extra = {}) {
   const side = "side" in extra ? extra.side : cur.get("side");
   if (side === "base") h.set("side", "base");
   // scope=changed is the bare URL. all, or one overview id, is written.
-  const scope = "scope" in extra ? extra.scope : cur.get("scope");
+  const scope = "scope" in extra ? extra.scope : navigationDiffScope(cur.get("scope"), focus, sel);
   if (scope && scope !== "changed") h.set("scope", scope);
   writeHash(h.toString(), { replace: keep });
 }
@@ -778,6 +1078,13 @@ function databaseGo(table, page = 0) {
   h.set("tab", "database");
   if (table) h.set("table", table);
   if (page) h.set("dbpage", page);
+  if (table && view.databaseGroup) h.set("dbgroup", view.databaseGroup);
+  writeHash(h.toString());
+}
+
+function databaseGroupGo(group) {
+  const h = new URLSearchParams({ tab: "database" });
+  if (group) h.set("dbgroup", group);
   writeHash(h.toString());
 }
 
@@ -833,6 +1140,7 @@ function route() {
     from: byId[h.get("from")] || h.get("from") === "~" ? h.get("from") : null, backHash: h.get("bh") || "-",
     overlay: h.get("t"),
     tab, table: databaseById[h.get("table")] ? h.get("table") : null,
+    databaseGroup: h.get("dbgroup") || null,
     databasePage: Math.max(0, Math.floor(Number(h.get("dbpage")) || 0)),
     endpoint: (ENDPOINTS.endpoints || []).some((row) => row.id === h.get("endpoint")) ? h.get("endpoint") : null,
     endpointQuery: h.get("eq") || "", endpointMethod: h.get("method") || "",
@@ -854,7 +1162,7 @@ function route() {
   if (/(^|[#&])debug\b/.test(location.hash) && !debug) { debug = true; const b = document.getElementById("debug"); b.hidden = false; b.textContent = "wheel readout on: scroll or swipe over the map"; }
   // Same diagram: keep the camera. A view seen before (Back): restore its camera.
   const scopeChanged = !first && (prev.scope || "") !== (view.scope || "");
-  restore = refit || scopeChanged ? null : !first && prev.tab === view.tab && prev.table === view.table && prev.databasePage === view.databasePage && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
+  restore = refit || scopeChanged ? null : !first && prev.tab === view.tab && prev.table === view.table && prev.databaseGroup === view.databaseGroup && prev.databasePage === view.databasePage && prev.focus === view.focus && prev.mode === view.mode ? { ...cam } : camByHash[location.hash] || null;
   refit = false;
   crumbs();
   const f = view.focus && byId[view.focus];
@@ -873,7 +1181,7 @@ function route() {
 }
 
 function up() {
-  if (view.tab === "database" && view.table) return databaseGo(null);
+  if (view.tab === "database" && (view.table || view.databaseGroup)) return databaseGroupGo(view.table ? view.databaseGroup : null);
   if (view.tab === "endpoints" && view.endpoint) return endpointGo(null);
   if (view.focus) go(parentOf[view.focus]);
   else if (view.sel) go(null);
@@ -1380,8 +1688,6 @@ function nodeCarriesChange(node, area) {
   return false;
 }
 
-// Changed boxes plus siblings on the other end of one of their relationships.
-// changedIds is null when this view has nothing to drop, so the caller draws it whole.
 function filterScopeKids(kids, focus, scope) {
   const area = scope === "changed" ? null : scope;
   const changed = [];
@@ -1391,19 +1697,10 @@ function filterScopeKids(kids, focus, scope) {
     changed.push(kid);
     scopeNodeIds(kid, changedTree);
   }
-  if (!changed.length) return { kids: kids || [], changedIds: null };
+  if (!changed.length) return { kids: [], changedIds: new Set() };
   const changedIds = new Set(changed.map((kid) => kid.id));
-  const context = new Set();
-  for (const rel of (M && M.relationships) || []) {
-    const fromIn = changedTree.has(rel.from);
-    const toIn = changedTree.has(rel.to);
-    if (fromIn === toIn) continue;
-    const other = fromIn ? rel.to : rel.from;
-    const box = project(other, focus);
-    if (box && !changedIds.has(box) && (kids || []).some((kid) => kid.id === box)) context.add(box);
-  }
-  const keep = new Set([...changedIds, ...context]);
-  return { kids: kids.filter((kid) => keep.has(kid.id)), changedIds };
+  return { kids: (kids || []).filter((kid) => changedIds.has(kid.id)), changedIds };
+
 }
 
 function focusCarriesChange(focus, scope) {
@@ -1431,7 +1728,10 @@ function narrowLeaf(c) {
     if (marked.has(call[1]) && own.has(call[0])) keep.add(call[0]);
   }
   const next = symbols.filter((s) => keep.has(s.id));
-  const calls = (c.calls || []).filter((call) => keep.has(call[0]) || keep.has(call[1]));
+  // A neighbour may also call an unchanged function outside this slice. Both
+  // local ends must survive; foreign ends are drawn from the ghost list.
+  const visible = (id) => keep.has(id) || !!(c.ghosts && c.ghosts[id]);
+  const calls = (c.calls || []).filter((call) => visible(call[0]) && visible(call[1]));
   const ghosts = {};
   for (const call of calls) {
     if (c.ghosts && c.ghosts[call[0]]) ghosts[call[0]] = c.ghosts[call[0]];
@@ -1454,7 +1754,11 @@ function drawConcepts(f, enter) {
   const shown = new Set(kids.map((c) => c.id));
   const seedExternals = !f && !changedIds;
   let edges = conceptEdges(f ? f.id : null, new Set([...shown, ...(seedExternals ? M.externals.map((x) => x.id) : [])]));
-  if (changedIds) edges = edges.filter((e) => changeEdge(e, changedIds, focusCarriesChange(f ? f.id : null, scope)));
+  if (changedIds) edges = edges.filter((e) => {
+    const marked = !!relChangeClass(e.rels);
+    return changeEdge(e, changedIds, focusCarriesChange(f ? f.id : null, scope))
+      && (marked || (shown.has(e.a) && shown.has(e.b)));
+  });
   const outside = new Set(seedExternals ? M.externals.map((x) => x.id) : []);
   for (const e of edges) for (const x of [e.a, e.b]) if (x !== "boundary" && !shown.has(x)) outside.add(x);
 
@@ -1478,6 +1782,12 @@ function drawConcepts(f, enter) {
     cls: [kind(e), statedClass(e.stated, top), relChangeClass(e.rels)].filter(Boolean).join(" "),
     rels: e.rels, count: e.count, lane: e.lane,
   })), shown);
+  elkEdges = elkEdges.map((edge) => {
+    const states = (edge.cls || "").split(" ").filter((c) => c.startsWith("chg-")).map((c) => MARK_LABEL[c.slice(4)] || c.slice(4));
+    if (!states.length) return edge;
+    const text = `${states.join(", ")} · ${edge.text}`;
+    return { ...edge, text, labels: [text] };
+  });
   {
     // An outside concept or system linked to several inner boxes the same way gets one line, with its
     // labels on its own box so each label stays attached; hovering the box lights up the inner boxes.
@@ -1503,7 +1813,7 @@ function drawConcepts(f, enter) {
       const text = labels.slice(0, 3).join(", ") + (labels.length > 3 ? ` +${labels.length - 3}` : "") + (vias.length ? ` (${vias.join(", ")})` : "");
       const ctx = node.cls.includes("ctx");
       node.w = Math.max(node.w, 232);
-      const summary = ctx ? [] : wrap(byId[other].summary || "", node.w - 32, 12, 1);
+      const summary = ctx ? [] : wrap(diffActive() ? "Unchanged context" : byId[other].summary || "", node.w - 32, 12, 1);
       node.lines = [...summary, ...wrap(text, node.w - 32, 12, 3)];
       node.h = (ctx ? 40 : 46) + node.lines.length * 16;
       const inner = childEs.map((e) => (incoming ? e.b : e.a));
@@ -1542,12 +1852,18 @@ function box(c, cls, startsHere = !!c.entry) {
   const tone = c.ext ? "kind-" + c.kind : "role-" + c.role;
   const mark = conceptClass(c.id);
   const tag = conceptTag(c.id);
-  if (cls === "ctx") return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(c.name, 500, 14) + 36, h: 38, name: c.name, lines: [], tag };
-  const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
-  const lines = wrap(c.summary || "", w - 32, 12, 3);
-  const env = envOf(c).length, entry = !c.ext && startsHere;
   const tagW = tag ? textW(tag, 600, 10.5, true) + 18 : 0;
-  const extra = (env ? 44 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0) + tagW;
+  if (cls === "ctx") {
+    const name = diffActive() && !tag ? `${c.name} · unchanged context` : c.name;
+    return { id: c.id, cls: `node ctx ${c.ext ? "ext " : ""}${tone}${mark}`, w: textW(name, 500, 14) + 42 + tagW, h: 38, name, lines: [], tag };
+  }
+  const w = Math.max(cls === "ext" ? 170 : 200, textW(c.name, 600, 14) + 32);
+  const context = diffActive() && !tag;
+  const description = diffActive() ? (context ? "Unchanged context" : "") : (c.summary || "");
+  const lines = wrap(description, w - 32, 12, 3);
+  if (PROVISIONAL.has(c.id)) lines.push("Ownership uncertain");
+  const env = diffActive() ? 0 : envOf(c).length, entry = !c.ext && startsHere;
+  const extra = (env ? textW(`env ${env}`, 600, 10.5, true) + 18 : 0) + (entry ? textW(START, 600, 10.5, true) + 18 : 0) + tagW;
   return { id: c.id, cls: `node ${cls} ${tone}${mark}`, w: w + extra, h: 46 + lines.length * 16, name: c.name, lines, stack: !!c.children, env, entry, tag };
 }
 
@@ -1863,160 +2179,152 @@ function databaseGroups(nodes, edges) {
   return groups;
 }
 
-function databaseGrid(groups, edges, avail) {
-  const gap = 18, frameX = 20, frameTop = 40, frameBottom = 20;
-  const laid = groups.map((group) => {
-    const children = group.children || [group];
-    const averageWidth = children.reduce((sum, node) => sum + node.w, 0) / children.length;
-    const columns = Math.max(1, Math.ceil(Math.sqrt(children.length * (avail.w / avail.h) * 38 / averageWidth)));
-    const widths = Array(columns).fill(0);
-    for (let index = 0; index < children.length; index++) widths[index % columns] = Math.max(widths[index % columns], children[index].w);
-    const starts = widths.map((_width, index) => frameX + widths.slice(0, index).reduce((sum, width) => sum + width + gap, 0));
-    const rows = Math.ceil(children.length / columns);
-    const heights = Array.from({ length: rows }, (_, row) => Math.max(...children.slice(row * columns, (row + 1) * columns).map((node) => node.h)));
-    const tops = heights.map((_, row) => frameTop + heights.slice(0, row).reduce((sum, height) => sum + height + gap, 0));
-    const placed = children.map((node, index) => ({ ...node, x: starts[index % columns],
-      y: tops[Math.floor(index / columns)], width: node.w, height: node.h }));
-    const width = frameX * 2 + widths.reduce((sum, value) => sum + value, 0) + gap * (columns - 1);
-    const height = frameTop + heights.reduce((sum, height) => sum + height, 0) + Math.max(0, rows - 1) * gap + frameBottom;
-    if (!group.children) return { ...placed[0], width: group.w, height: group.h, children: null, meta: group };
-    return { id: group.id, width, height, children: placed, meta: group };
-  }).sort((left, right) => right.width * right.height - left.width * left.height);
-  const totalArea = laid.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
-  const targets = [Math.max(...laid.map((item) => item.width)), Math.sqrt(totalArea * avail.w / avail.h),
-    laid.reduce((sum, item) => sum + item.width + gap, -gap) / 2];
+// Choose the grid with the largest fitted text, using actual card sizes.
+function databaseGrid(nodes, avail) {
   let best = null;
-  for (const target of targets) {
-    let x = 12, y = 12, rowHeight = 0, width = 0;
-    const children = [];
-    for (const item of laid) {
-      if (x > 12 && x + item.width > target) { x = 12; y += rowHeight + gap; rowHeight = 0; }
-      children.push({ ...item, x, y });
-      x += item.width + gap;
-      rowHeight = Math.max(rowHeight, item.height);
-      width = Math.max(width, x - gap + 12);
-    }
-    const height = y + rowHeight + 12;
+  for (let columns = 1; columns <= nodes.length; columns++) {
+    const widths = Array(columns).fill(0), heights = [];
+    nodes.forEach((node, i) => {
+      widths[i % columns] = Math.max(widths[i % columns], node.w);
+      const row = Math.floor(i / columns);
+      heights[row] = Math.max(heights[row] || 0, node.h);
+    });
+    const starts = (sizes) => sizes.map((_, i) => 12 + sizes.slice(0, i).reduce((sum, size) => sum + size + 20, 0));
+    const xs = starts(widths), ys = starts(heights);
+    const width = xs.at(-1) + widths.at(-1) + 12, height = ys.at(-1) + heights.at(-1) + 12;
     const scale = Math.min(avail.w / width, avail.h / height);
-    if (!best || scale > best.scale) best = { children, width, height, scale };
+    if (!best || scale > best.scale) best = { id: "root", width, height, scale, edges: [],
+      children: nodes.map((node, i) => ({ id: node.id, x: xs[i % columns], y: ys[Math.floor(i / columns)], width: node.w, height: node.h })) };
   }
-  const at = {};
-  for (const group of best.children) {
-    if (group.children) for (const node of group.children) at[node.id] = {
-      x: group.x + node.x, y: group.y + node.y, width: node.width, height: node.height };
-    else at[group.id] = group;
-  }
-  const routed = edges.map((edge) => {
-    const a = at[edge.a], b = at[edge.b];
-    if (!a || !b) return { id: edge.id, sections: [], labels: [] };
-    const ac = { x: a.x + a.width / 2, y: a.y + a.height / 2 };
-    const bc = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-    const horizontal = Math.abs(bc.x - ac.x) >= Math.abs(bc.y - ac.y);
-    let start, end, bends;
-    if (horizontal) {
-      const sign = bc.x >= ac.x ? 1 : -1, mid = (ac.x + bc.x) / 2;
-      start = { x: ac.x + sign * a.width / 2, y: ac.y };
-      end = { x: bc.x - sign * b.width / 2, y: bc.y };
-      bends = [{ x: mid, y: ac.y }, { x: mid, y: bc.y }];
-    } else {
-      const sign = bc.y >= ac.y ? 1 : -1, mid = (ac.y + bc.y) / 2;
-      start = { x: ac.x, y: ac.y + sign * a.height / 2 };
-      end = { x: bc.x, y: bc.y - sign * b.height / 2 };
-      bends = [{ x: ac.x, y: mid }, { x: bc.x, y: mid }];
-    }
-    return { id: edge.id, sections: [{ startPoint: start, endPoint: end, bendPoints: bends }], labels: [] };
-  });
-  return { id: "root", width: best.width, height: best.height, children: best.children,
-    edges: routed, mode: "grid" };
+  return best;
+}
+
+function databaseOverview(tables, relationships) {
+  const edges = relationships.map((rel) => ({ a: rel.from, b: rel.to }));
+  return databaseGroups(tables, edges).map((group) => {
+    const members = group.children || [group], ids = new Set(members.map((table) => table.id));
+    const links = relationships.filter((rel) => ids.has(rel.from) && ids.has(rel.to));
+    const degree = (table) => links.filter((rel) => rel.from === table.id || rel.to === table.id).length;
+    const hubs = members.slice().sort((a, b) => degree(b) - degree(a) || a.name.localeCompare(b.name));
+    const lines = [`${links.length} foreign keys · open group`,
+      ...hubs.slice(0, 3).map((table) => `${degree(table) ? "Hub" : "Table"}: ${table.name} (${degree(table)})`)];
+    const name = group.label || group.name;
+    return { id: group.id, cls: "node db-cluster", name, lines, members,
+      w: Math.max(260, textW(name, 600, 14) + 32, ...lines.map((line) => textW(line, 400, 12, true) + 32)),
+      h: 58 + lines.length * 16 };
+  }).sort((a, b) => b.members.length - a.members.length || a.name.localeCompare(b.name));
 }
 
 // A bounded neighbourhood keeps hubs readable. Every neighbour remains reachable through pages.
+const DATABASE_PAGE_SIZE = 6;
 function databaseSlice(tables, relationships, selected, page = 0) {
   const table = tables.find((row) => row.id === selected);
-  if (!table) return { tables, relationships, neighbours: [], page: 0, pages: 0 };
-  const neighbours = tables.filter((row) => row.id !== selected && relationships.some((rel) =>
-    rel.from === selected && rel.to === row.id || rel.to === selected && rel.from === row.id));
-  const pages = Math.ceil(neighbours.length / 2);
+  if (!table) return { tables, relationships, neighbours: [], page: 0, pages: 0, selected };
+  const links = relationships.filter((rel) => rel.from === selected || rel.to === selected);
+  const count = (id) => links.filter((rel) => rel.from === id || rel.to === id).length;
+  const neighbours = tables.filter((row) => row.id !== selected && count(row.id))
+    .sort((a, b) => count(b.id) - count(a.id) || a.name.localeCompare(b.name));
+  const pages = Math.ceil(neighbours.length / DATABASE_PAGE_SIZE);
   page = Math.min(Math.max(0, Math.floor(page) || 0), Math.max(0, pages - 1));
-  const shown = new Set([selected, ...neighbours.slice(page * 2, page * 2 + 2).map((row) => row.id)]);
-  return { tables: tables.filter((row) => shown.has(row.id)), neighbours, page, pages,
-    relationships: relationships.filter((rel) => shown.has(rel.from) && shown.has(rel.to)
-      && (rel.from === selected || rel.to === selected)) };
+  const shown = new Set([selected, ...neighbours.slice(page * DATABASE_PAGE_SIZE, (page + 1) * DATABASE_PAGE_SIZE).map((row) => row.id)]);
+  return { tables: [table, ...neighbours.filter((row) => shown.has(row.id))], neighbours, page, pages, selected,
+    relationships: links.filter((rel) => shown.has(rel.from) && shown.has(rel.to)) };
 }
 
 function databaseDetailGraph(slice) {
   const nodes = slice.tables.map((table) => {
+    const focus = table.id === slice.selected;
     const required = new Set(slice.relationships.flatMap((rel) =>
       [rel.from === table.id ? rel.column : null, rel.to === table.id ? rel.targetColumn : null]));
-    // Keep all endpoints and primary keys; other columns are available in the drawer.
     const columns = table.columns.filter((column) => required.has(column.id) || column.primaryKey);
     const extra = table.columns.filter((column) => !columns.includes(column));
-    columns.push(...extra.slice(0, Math.max(0, 8 - columns.length)));
-    const lines = columns.map((column) => databaseColumnLine(table, column));
-    if (columns.length < table.columns.length) lines.push(`+${table.columns.length - columns.length} columns · select table for all`);
-    const w = Math.max(210, textW(table.name, 600, 14) + 32,
-      ...lines.map((line) => textW(line, 400, 11, true) + 32));
-    return { id: table.id, cls: "node db-table", name: table.name, lines, columns,
-      w, h: 58 + lines.length * 16 };
+    if (focus) columns.push(...extra.slice(0, Math.max(0, 6 - columns.length)));
+    // Neighbours show only keys and linked columns. Full types and columns stay in the drawer.
+    const lines = columns.map((column) => databaseColumnLine(table, { ...column, type: "" }));
+    if (focus) {
+      for (const rel of slice.relationships.filter((rel) => rel.from === table.id && rel.to === table.id)) {
+        const name = (id) => table.columns.find((column) => column.id === id)?.name || id;
+        lines.push(`Self: ${name(rel.column)} → ${name(rel.targetColumn)}`);
+      }
+      if (columns.length < table.columns.length) lines.push(`+${table.columns.length - columns.length} columns in details`);
+    }
+    const incoming = slice.relationships.filter((rel) => rel.from === table.id && rel.to === slice.selected).length;
+    const outgoing = slice.relationships.filter((rel) => rel.to === table.id && rel.from === slice.selected).length;
+    const w = Math.max(180, textW(table.name, 600, 14) + 32,
+      ...lines.map((line) => textW(line, 400, 12, true) + 32));
+    return { id: table.id, cls: "node db-table" + (focus ? " db-focus" : " db-neighbour"), name: table.name,
+      lines, columns, side: focus ? "focus" : incoming >= outgoing ? "incoming" : "outgoing",
+      w, h: (focus ? 58 : 42) + lines.length * 16 };
   });
-  const children = nodes.map((node) => ({ id: node.id, width: node.w, height: node.h,
-    layoutOptions: { "elk.portConstraints": "FIXED_POS" },
-    ports: node.columns.flatMap((column, index) => ["WEST", "EAST"].map((side) => ({
-      id: column.id + ":" + side, x: side === "WEST" ? 0 : node.w, y: 42 + index * 16,
-      width: 0, height: 0, layoutOptions: { "elk.port.side": side },
-    }))),
+  const edges = slice.relationships.filter((rel) => rel.from !== rel.to).map((rel, index) => ({
+    id: "db" + index, a: rel.from, b: rel.to, column: rel.column, targetColumn: rel.targetColumn,
+    cls: "foreign-key", text: "",
   }));
-  const edges = slice.relationships.map((rel, index) => ({ id: "db" + index,
-    a: rel.from, b: rel.to, cls: "foreign-key", text: "",
-    sourcePort: rel.column + ":EAST", targetPort: rel.targetColumn + ":WEST" }));
-  return { nodes, edges, graph: { id: "root", children,
-    layoutOptions: elkOptions({ dir: "RIGHT", layer: 64, gap: 32 }),
-    edges: edges.map((edge) => ({ id: edge.id, sources: [edge.sourcePort], targets: [edge.targetPort] })),
-  } };
+  return { nodes, edges };
 }
 
-async function drawDatabase() {
+// A star has known lanes: place neighbours by relevance and route only through the gutters.
+function databaseFocusLayout(detail) {
+  const focus = detail.nodes.find((node) => node.side === "focus");
+  const left = detail.nodes.filter((node) => node.side === "incoming"), right = detail.nodes.filter((node) => node.side === "outgoing");
+  const heightOf = (nodes) => nodes.reduce((sum, node) => sum + node.h + 14, -14);
+  const leftW = Math.max(0, ...left.map((node) => node.w)), rightW = Math.max(0, ...right.map((node) => node.w));
+  const height = Math.max(focus.h, heightOf(left), heightOf(right)) + 24;
+  const focusX = 12 + (left.length ? leftW + 64 : 0), rightX = focusX + focus.w + 64;
+  const children = [{ id: focus.id, x: focusX, y: (height - focus.h) / 2, width: focus.w, height: focus.h }];
+  for (const [lane, x] of [[left, 12], [right, rightX]]) {
+    let y = (height - heightOf(lane)) / 2;
+    for (const node of lane) {
+      children.push({ id: node.id, x: x + (lane === left ? leftW - node.w : 0), y, width: node.w, height: node.h });
+      y += node.h + 14;
+    }
+  }
+  const at = Object.fromEntries(children.map((node) => [node.id, node]));
+  const meta = Object.fromEntries(detail.nodes.map((node) => [node.id, node]));
+  const laneEdges = { incoming: [], outgoing: [] };
+  for (const edge of detail.edges) laneEdges[meta[edge.a === focus.id ? edge.b : edge.a].side].push(edge);
+  const edges = [];
+  for (const [side, links] of Object.entries(laneEdges)) links.forEach((edge, index) => {
+    const a = at[edge.a], b = at[edge.b], forward = a.x < b.x;
+    const rowY = (id, column) => at[id].y + 42 + meta[id].columns.findIndex((row) => row.id === column) * 16;
+    const start = { x: a.x + (forward ? a.width : 0), y: rowY(edge.a, edge.column) };
+    const end = { x: b.x + (forward ? 0 : b.width), y: rowY(edge.b, edge.targetColumn) };
+    const gutter = side === "incoming" ? focusX - 64 : focusX + focus.w;
+    const x = gutter + 16 + 32 * (index + 1) / (links.length + 1);
+    edges.push({ id: edge.id, sections: [{ startPoint: start, endPoint: end,
+      bendPoints: [{ x, y: start.y }, { x, y: end.y }] }], labels: [] });
+  });
+  return { id: "root", children, edges, width: (right.length ? rightX + rightW : focusX + focus.w) + 12, height };
+}
+
+function drawDatabase() {
   const tables = DATABASE.tables || [];
   view.sel = view.table;
   if (!tables.length) {
     empty("No database schema detected. Add SQL migrations or supported ORM models, then scan again.");
     return databaseDrawer();
   }
-  if (view.table) {
-    const gen = ++layoutGen;
-    const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
-    const detail = databaseDetailGraph(slice);
-    try {
-      const out = await elk.layout(detail.graph);
-      if (gen !== layoutGen) return;
-      externalGroups = {};
-      document.getElementById("diagram").dataset.layout = "database focus";
-      render(out, detail.nodes, detail.edges, databaseGo, null);
-    } catch (err) {
-      if (gen === layoutGen) empty("Layout failed: " + err.message);
-    }
-    return;
-  }
-  const compact = tables.length > 60;
-  const nodes = tables.map((table) => {
-    const lines = compact ? [] : table.columns.map((column) => databaseColumnLine(table, column));
-    const width = Math.max(190, textW(table.name, 600, 14) + 32,
-      ...lines.map((line) => textW(line, 400, 11, true) + 32));
-    return { id: table.id, cls: "node db-table", name: table.name, lines,
-      w: width, h: compact ? 38 : 58 + lines.length * 16 };
-  });
-  const edges = (DATABASE.relationships || []).map((rel, index) => ({
-    id: "db" + index, a: rel.from, b: rel.to, text: "", cls: "foreign-key",
-  }));
-  // The overview is an index. Routes belong to the focused column-level diagram.
-  const groups = databaseGroups(nodes, edges);
-  const out = databaseGrid(groups, [], availSize());
   ++layoutGen;
   externalGroups = {};
   const diagram = document.getElementById("diagram");
-  diagram.dataset.layout = "database overview";
-  diagram.dataset.databaseGroups = String(groups.filter((node) => node.children).length);
-  render(out, groups, [], databaseGo, null);
+  if (view.table) {
+    const slice = databaseSlice(tables, DATABASE.relationships || [], view.table, view.databasePage);
+    const detail = databaseDetailGraph(slice);
+    diagram.dataset.layout = "database focus";
+    render(databaseFocusLayout(detail), detail.nodes, detail.edges, databaseGo, null);
+    return;
+  }
+  const groups = databaseOverview(tables, DATABASE.relationships || []);
+  const group = groups.find((row) => row.id === view.databaseGroup);
+  const clustered = tables.length > 16;
+  const shown = group ? group.members : tables;
+  const nodes = clustered && !group ? groups : shown.map((table) => ({
+    id: table.id, cls: "node db-table", name: table.name, lines: [],
+    w: Math.max(150, textW(table.name, 600, 14) + 32), h: 38,
+  }));
+  diagram.dataset.layout = group ? "database group" : "database overview";
+  diagram.dataset.databaseGroups = String(groups.length);
+  render(databaseGrid(nodes, availSize()), nodes, [], clustered && !group ? databaseGroupGo : databaseGo, null);
 }
 
 function drawEndpoints() {
@@ -2104,13 +2412,16 @@ function databaseDrawer() {
     d.append(el("h2", "", "Database"),
       el("p", "", "Select a table to view its columns, connected neighbours and code access."));
     if (DATABASE.tables.length) d.append(el("p", "hint", `${DATABASE.tables.length} detected table${DATABASE.tables.length === 1 ? "" : "s"}.`));
+    const group = databaseOverview(DATABASE.tables, DATABASE.relationships || []).find((row) => row.id === view.databaseGroup);
+    if (group) d.append(link("← Database overview", () => databaseGroupGo(null)), el("h3", "", group.name));
+    else if (DATABASE.tables.length > 16) d.append(el("p", "hint", "Open a cluster to browse its tables, or find a table below."));
     const input = el("input");
     input.type = "search";
     input.placeholder = "Find a table";
     input.setAttribute("aria-label", "Find a database table");
     const list = el("div", "db-table-list");
     const paint = () => {
-      const rows = DATABASE.tables.filter((row) => row.name.toLowerCase().includes(input.value.toLowerCase()));
+      const rows = (group ? group.members : DATABASE.tables).filter((row) => row.name.toLowerCase().includes(input.value.toLowerCase()));
       list.replaceChildren(...rows.map((row) => link(row.name, () => databaseGo(row.id))));
       if (!rows.length) list.append(el("p", "hint", "No tables match."));
     };
@@ -2119,12 +2430,12 @@ function databaseDrawer() {
     paint();
     return;
   }
-  d.append(link("← Database overview", () => databaseGo(null)), el("h2", "", table.name));
+  d.append(link(view.databaseGroup ? "← Table group" : "← Database overview", () => databaseGroupGo(view.databaseGroup)), el("h2", "", table.name));
   const slice = databaseSlice(DATABASE.tables, DATABASE.relationships || [], table.id, view.databasePage);
-  d.append(el("p", "hint", "Diagram shows this table and up to two neighbours. Select a neighbour to explore it. All columns are listed here."));
+  d.append(el("p", "hint", "Up to six neighbours, ranked by links then name. Incoming references on the left; outgoing on the right. All columns are listed here."));
   if (slice.pages > 1) {
     const pager = el("div", "db-pages");
-    pager.append(el("span", "", `Neighbours ${slice.page * 2 + 1}–${Math.min(slice.page * 2 + 2, slice.neighbours.length)} of ${slice.neighbours.length}`));
+    pager.append(el("span", "", `Neighbours ${slice.page * DATABASE_PAGE_SIZE + 1}–${Math.min((slice.page + 1) * DATABASE_PAGE_SIZE, slice.neighbours.length)} of ${slice.neighbours.length}`));
     if (slice.page) pager.append(link("Previous", () => databaseGo(table.id, slice.page - 1)));
     if (slice.page + 1 < slice.pages) pager.append(link("Next", () => databaseGo(table.id, slice.page + 1)));
     d.append(pager);
@@ -2383,6 +2694,47 @@ function componentPanel(s) {
 
 // ---------- layout and render ----------
 
+// Validate the actual drawn graph, including nested nodes and column ports,
+// rather than the full model: filtering and collapsing can remove endpoints.
+function prepareLayoutGraph(graph) {
+  const shapes = new Set();
+  const index = (node) => {
+    shapes.add(node.id);
+    for (const port of node.ports || []) shapes.add(port.id);
+    for (const child of node.children || []) index(child);
+  };
+  index(graph);
+  let omittedEdges = 0;
+  const clean = (node) => ({
+    ...node,
+    ...(node.children ? { children: node.children.map(clean) } : {}),
+    ...(node.edges ? { edges: node.edges.filter((edge) => {
+      const valid = edge.sources && edge.sources.length && edge.targets && edge.targets.length
+        && [...edge.sources, ...edge.targets].every((id) => shapes.has(id));
+      if (!valid) omittedEdges++;
+      return valid;
+    }) } : {}),
+  });
+  const cleaned = clean(graph);
+  return { graph: cleaned, omittedEdges };
+}
+
+async function layoutGraph(graph) {
+  const prepared = prepareLayoutGraph(graph);
+  const out = await elk.layout(prepared.graph);
+  out.omittedEdges = prepared.omittedEdges;
+  return out;
+}
+
+function layoutNotice(count = 0) {
+  const notice = document.getElementById("layout-notice");
+  if (!notice) return;
+  notice.hidden = !count;
+  notice.textContent = count
+    ? `${count} connection${count === 1 ? "" : "s"} hidden because an endpoint is absent from this view.`
+    : "";
+}
+
 async function layout(nodes, edges, opt, onClick, enter, onDbl) {
   const gen = ++layoutGen;
   const toElk = (n) => ({
@@ -2396,7 +2748,7 @@ async function layout(nodes, edges, opt, onClick, enter, onDbl) {
   const a = availSize();
   const graph = { id: "root", layoutOptions: { ...elkOptions(opt), "elk.aspectRatio": String(a.w / a.h) }, children: nodes.map(toElk), edges: edges.map(elkEdge) };
   let out;
-  try { out = await elk.layout(graph); } catch (err) {
+  try { out = await layoutGraph(graph); } catch (err) {
     if (gen !== layoutGen) return;
     return empty("Layout failed: " + err.message);
   }
@@ -3129,7 +3481,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
   };
 
   const pinned = firstTier(boundary.children, insideEdges);
-  const layoutInside = (dir, wrapping, ratio) => elk.layout({
+  const layoutInside = (dir, wrapping, ratio) => layoutGraph({
     id: "inner",
     layoutOptions: { ...elkOptions({ dir, layer: 30, gap: 24 }), ...(wrapping ? { "elk.layered.wrapping.strategy": wrapping, "elk.aspectRatio": String((avail.w / avail.h) * ratio) } : {}) },
     children: boundary.children.map((n) => ({ id: n.id, width: n.w, height: n.h, ...(pinned.has(n.id) ? { layoutOptions: { "elk.layered.layering.layerConstraint": "FIRST" } } : {}) })),
@@ -3257,7 +3609,7 @@ async function layoutBridged(boundary, outside, edges, onClick, enter, onDbl) {
       return { ...e, sections: (e.sections || []).map((q) => ({ startPoint: shift(q.startPoint), endPoint: shift(q.endPoint), bendPoints: (q.bendPoints || []).map(shift) })), labels: (e.labels || []).map((l) => ({ ...l, ...shift(l) })) };
     });
     const out = {
-      width: best.width, height: best.height,
+      width: best.width, height: best.height, omittedEdges: p1.omittedEdges || 0,
       edges: [...insideOut, ...crossEdges],
       children: [
         { id: "boundary", x: bx, y: by, width: W, height: H, children: p1.children.map((k) => ({ ...k, x: k.x + OX, y: k.y + OY })) },
@@ -3432,6 +3784,7 @@ function placeEdgeLabels(out, em, obstacles) {
 
 function render(out, nodes, edges, onClick, enter, onDbl) {
   setStage("diagram");
+  layoutNotice(out.omittedEdges);
   // Grouped (big) leaves keep 13px names at 9px or more and pan; everything else fits whole.
   minScale = nodes.some((n) => n.children && n.children.some((k) => k.toggle || (k.children && k.toggle))) ? 0.7 : 0;
   const svg = document.getElementById("diagram");
@@ -3559,6 +3912,9 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
         g.classList.add("clickable");
         t.setAttribute("tabindex", 0);
         t.setAttribute("role", "button");
+        t.setAttribute("aria-label", [m.label, conceptTag(m.concept)].filter(Boolean).join(", "));
+        t.onfocus = () => { if (m.concept) linkHover(m.concept, true); };
+        t.onblur = () => { if (m.concept) linkHover(m.concept, false); };
         t.onclick = (ev) => { ev.stopPropagation(); if (!moved) onClick(n.id); };
         t.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
       }
@@ -3566,7 +3922,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       continue;
     }
     const groupedSel = !!(sel && externalGroups[n.id] && externalGroups[n.id].members.includes(sel));
-    const g = svgEl("g", { class: m.cls + (n.id === sel || groupedSel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": m.name || n.id });
+    const g = svgEl("g", { class: m.cls + (n.id === sel || groupedSel ? " sel" : "") + (glowing.has(n.id) ? " glow" : ""), transform: `translate(${x},${y})`, tabindex: 0, role: "button", "aria-label": [m.name || n.id, m.tag || m.mark || (diffActive() ? "Unchanged context" : "")].filter(Boolean).join(", "), "aria-pressed": String(n.id === sel || groupedSel) });
     const ov = overlayClass(n.id, m);
     if (ov) g.classList.add(ov);
     if (m.stack) g.append(svgEl("rect", { class: "stack", x: 4, y: 4, width: n.width, height: n.height, rx: 10 }));
@@ -3593,7 +3949,7 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       if (m.tag) {
         px -= textW(m.tag, 600, 10.5, true) + 12;
         const p = envPill(m.tag, px, 9, m.tag);
-        p.classList.add("mark-" + m.tag);
+        p.classList.add("mark-" + m.tag.toLowerCase().replaceAll(" ", "-"));
         g.append(p);
       }
       m.lines.forEach((line, i) => {
@@ -3608,6 +3964,8 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
     g.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onClick(n.id); } };
     g.onmouseenter = () => { hot(edgeEls, n.id, true); touch(m.touches, true); };
     g.onmouseleave = () => { hot(edgeEls, n.id, false); touch(m.touches, false); };
+    g.onfocus = g.onmouseenter;
+    g.onblur = g.onmouseleave;
     g.dataset.id = n.id;
     if (m.lane) g.dataset.lane = m.lane;
     const concept = byId[n.id] ? n.id : m.cls.includes("ghost") && m.sym ? m.sym.concept : null;
@@ -3615,13 +3973,15 @@ function render(out, nodes, edges, onClick, enter, onDbl) {
       g.dataset.concept = concept;
       g.addEventListener("mouseenter", () => linkHover(concept, true));
       g.addEventListener("mouseleave", () => linkHover(concept, false));
+      g.addEventListener("focus", () => linkHover(concept, true));
+      g.addEventListener("blur", () => linkHover(concept, false));
     }
     nodeG.append(g);
   }
   if (sel) hot(edgeEls, sel, true);
   svg.onclick = () => {
     if (!moved && view.sel) {
-      if (view.tab === "database") databaseGo(null);
+      if (view.tab === "database") databaseGroupGo(view.databaseGroup);
       else go(view.focus, null, { v: view.mode });
     }
   };
@@ -3748,6 +4108,7 @@ function empty(msg) {
 }
 
 function setStage(mode) {
+  layoutNotice();
   const stage = document.getElementById("stage");
   stage.dataset.mode = mode;
   const f = view.focus && byId[view.focus];
@@ -3772,7 +4133,7 @@ const KEY_STORE = "cbi.keyCollapsed";
 function keyCollapsed() {
   if (window.cbiRender) return true; // the headless render page draws its own key
   try { const v = localStorage.getItem(KEY_STORE); if (v !== null) return v === "1"; } catch { /* private mode */ }
-  return innerWidth <= 1100; // narrow windows start folded
+  return diffActive() || innerWidth <= 1100;
 }
 function setKeyCollapsed(v) { try { localStorage.setItem(KEY_STORE, v ? "1" : "0"); } catch { /* private mode */ } }
 
@@ -3859,7 +4220,8 @@ function legendFromDiagram(svg) {
       has(".chg-added") && [miniBox("node chg-added", true), "Added"],
       has(".chg-removed") && [miniBox("node chg-removed", true), "Removed"],
       has(".chg-changed") && [miniBox("node chg-changed", true), "Changed"],
-      has(".chg-provisional") && [miniBox("node chg-provisional", true), "Provisional"],
+      has(".ownership-uncertain") && [miniBox("node ownership-uncertain", true), "Ownership uncertain"],
+      has(".chg-inside") && [miniBox("node chg-inside", true), "Changes inside"],
       has(".edge.chg-new") && [miniLine("chg-new"), "New line"],
       has(".edge.chg-removed") && [miniLine("chg-removed"), "Removed line"],
       has(".edge.chg-volume") && [miniLine("chg-volume"), "Volume changed"],
@@ -3877,6 +4239,7 @@ function legendFromDiagram(svg) {
     const pill = el("button", "key-pill", "Key");
     pill.type = "button";
     pill.title = "Show the key";
+    pill.setAttribute("aria-expanded", "false");
     pill.onclick = () => { setKeyCollapsed(false); legendFromDiagram(svg); refit = true; route(); };
     lg.append(pill);
     return;
@@ -3886,6 +4249,7 @@ function legendFromDiagram(svg) {
   fold.type = "button";
   fold.title = "Hide the key";
   fold.setAttribute("aria-label", "Hide the key");
+  fold.setAttribute("aria-expanded", "true");
   fold.onclick = () => { setKeyCollapsed(true); legendFromDiagram(svg); refit = true; route(); };
   head.append(el("strong", "", "Key"), fold);
   for (const [title, rows] of sections) {
@@ -3956,7 +4320,45 @@ function fitCam(minK = 0) {
 }
 
 let minScale = 0;
-function fit(animated, full) { const c = fitCam(full ? 0 : minScale); animated ? animate(c, 250) : setCam(c); }
+const CHANGE_READABLE_SCALE = 1;
+
+function changedFocusBounds() {
+  const focus = view.focus || (selectedChangeConcept() || {}).id;
+  const belongs = (id) => !focus || id === focus || ancestors(id).includes(focus);
+  const changed = Object.entries(rects).filter(([id]) => {
+    const symbol = symById[id];
+    return symbol ? symbolMark(id) && belongs(symbol.leaf.id) : CONCEPT_MARK.has(id) && belongs(id);
+  }).map(([, rect]) => rect);
+  if (!changed.length) return rects[view.sel] || rects[focus] || rects.boundary || { x: 0, y: 0, w: content.w, h: content.h };
+  const x = Math.min(...changed.map((r) => r.x)), y = Math.min(...changed.map((r) => r.y));
+  return { x, y, w: Math.max(...changed.map((r) => r.x + r.w)) - x, h: Math.max(...changed.map((r) => r.y + r.h)) - y };
+}
+
+function readableChangeCamera(fitted) {
+  const size = stageSize();
+  if (size.w / fitted.w >= CHANGE_READABLE_SCALE) return fitted;
+  const bounds = changedFocusBounds();
+  const w = size.w / CHANGE_READABLE_SCALE, h = size.h / CHANGE_READABLE_SCALE;
+  return { x: bounds.x + bounds.w / 2 - w / 2, y: bounds.y + bounds.h / 2 - h / 2, w, h };
+}
+
+function paintZoomNotice(readable) {
+  const notice = document.getElementById("diagram-zoom-note");
+  if (!notice) return;
+  notice.hidden = !readable;
+  notice.textContent = readable ? "Readable zoom centres changed code; some context is off-screen. Use Fit to see the entire diagram." : "";
+}
+
+function fit(animated, full) {
+  const minimum = full || diffActive() ? 0 : minScale;
+  const fitted = fitCam(minimum);
+  const comparison = diffActive() && view.tab !== "database" && view.tab !== "endpoints";
+  const readable = comparison && !full && readableChangeCamera(fitted) !== fitted;
+  paintZoomNotice(readable);
+  const settled = fitCam(minimum);
+  const camera = readable ? readableChangeCamera(settled) : settled;
+  animated ? animate(camera, 250) : setCam(camera);
+}
 
 // A camera that frames rect r with some margin, at the stage's aspect ratio.
 function around(r, margin) {
@@ -4189,6 +4591,8 @@ function drawer() {
     b.classList.add("overview");
     d.append(b);
   }
+  const selectedFile = diffActive() && view.sel && changeFile(view.sel);
+  if (selectedFile) return fileEvidenceDrawer(d, selectedFile);
   if (view.sel && externalGroups[view.sel]) return groupDrawer(d, externalGroups[view.sel]);
   if (view.sel && view.sel.startsWith("bundle:")) return bundleDrawer(d, view.sel);
   if (s && here && !here.children && s.leaf !== here) return linkDrawer(d, here, s);
@@ -4197,13 +4601,19 @@ function drawer() {
   const g = view.sel && ghostById[view.sel];
   const c = byId[view.sel] || byId[view.focus];
   if (!c) {
-    d.append(el("h2", "", M.workspace), el("p", "", M.summary));
+    d.append(el("h2", "", M.workspace));
+    if (!diffActive()) d.append(el("p", "", M.summary));
     d.append(el("p", "hint", "Click a box to open it. Scroll to pan, pinch to zoom. Esc goes up. Backspace goes back."));
     integrationList(d, integrationPoints(null), false);
     envList(d, null, false);
     return;
   }
-  d.append(el("h2", "", c.name), el("p", "", c.summary));
+  d.append(el("h2", "", c.name));
+  if (diffActive()) {
+    const about = changeDisclosure("About this concept");
+    about.append(el("p", "", c.summary));
+    d.append(about);
+  } else d.append(el("p", "", c.summary));
   if (!view.sel && c.id === view.focus) {
     const u = usage(c);
     usageList(d, "Used by", u.by, true);

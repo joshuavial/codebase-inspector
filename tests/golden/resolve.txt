@@ -44,5 +44,5 @@
 ["edge", "tests", "treesitter", "local:repo:src/lib/shapes.test.ts", "local:repo:src/lib/shapes.ts", 0.5, 1]
 ["edge", "tests", "treesitter", "local:repo:src/lib/shapes.test.ts#area", "local:repo:src/lib/shapes.ts#Circle", 1.0, 1]
 ["edge", "tests", "treesitter", "local:repo:src/ui/styles.test.ts", "local:repo:src/ui/theme.css", 1.0, 1]
-["diagnostic", "ambiguous_call", "local:repo:src/legacy.js", "1 calls with more than one candidate"]
+["diagnostic", "ambiguous_call", "local:repo:src/legacy.js", "src/legacy.js:6:25: call pick has more than one candidate: local:repo:src/legacy.js#pick~aab3175b, local:repo:src/legacy.js#pick~e6943713"]
 ["diagnostic", "unmatched_test", "local:repo:src/orphan.test.ts", "no call, import, file read or file name reaches tracked code; imports only node:assert/strict, node:test"]

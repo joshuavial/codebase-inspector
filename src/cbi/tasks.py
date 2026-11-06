@@ -12,10 +12,12 @@ import json
 import os
 import posixpath
 import re
+import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-from cbi import concepts, manifests, resolve, screens, store
+from cbi import change_summaries, concepts, manifests, resolve, screens, store
 from cbi.files import PARSER_VERSION, blob_id
 
 # Bump when briefs or answers change meaning; cached answers from older versions are ignored.
@@ -200,6 +202,9 @@ SCHEMAS["summarise-change"] = {
     },
 }
 
+SCHEMAS[change_summaries.KIND] = change_summaries.ANSWER_SCHEMA
+INSTRUCTIONS[change_summaries.KIND] = change_summaries.INSTRUCTIONS
+
 # A manifest file anywhere under a top-level directory means that directory is not "bare".
 _MANIFEST = re.compile(
     r"(^|/)(?:package\.json|pyproject\.toml|wrangler\.toml|compose\.ya?ml|"
@@ -226,8 +231,9 @@ def attach_cache(conn, *, readonly=False):
 
     A writable attach creates the file and its tables, so one transaction covers both
     databases. A read-only attach opens an existing file with ``mode=ro`` and does not
-    create it, its directory, or a journal. When that file is missing or cannot be
-    opened, the cache is skipped and the model connection stays usable.
+    create the cache or its directory. A protected cache without WAL sidecars is
+    read as a frozen snapshot; a mutable cache uses normal SQLite locking. When
+    the file is missing or cannot be opened, it is skipped and the model stays usable.
     """
     path = cache_path()
     if readonly:
@@ -247,13 +253,17 @@ def attach_cache(conn, *, readonly=False):
 
 
 def _attach_cache_readonly(conn, path):
-    if not path.is_file():
-        return
-    uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     try:
+        if not path.is_file():
+            return
+        uri = store.read_uri(path, frozen_fallback=True)
+        uri = store.validate_read_uri(path, uri, frozen_fallback=True)
         conn.execute("ATTACH DATABASE ? AS cache", (uri,))
         conn.execute("SELECT 1 FROM cache.sqlite_master LIMIT 1").fetchone()
-    except sqlite3.Error:
+        store.note_frozen_read(path, uri)
+    except (OSError, sqlite3.Error) as err:
+        print(f"Cannot read answer cache at {path}: {err}. Continuing with the local model. "
+              "Check cache read permissions or set CBI_CACHE_DIR to an accessible cache directory.", file=sys.stderr)
         try:
             conn.execute("DETACH DATABASE cache")
         except sqlite3.Error:
@@ -764,7 +774,7 @@ def _with_ids(doc, ws_id):
 def _atomic_write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -777,7 +787,7 @@ def refresh_structure(conn, root, out=None, force_ws=None):
     """
     snapshots = _snapshots(conn, root)
     path = Path(out) / "structure.json" if out else None
-    existing_text = path.read_text() if path and path.exists() else None
+    existing_text = path.read_text(encoding="utf-8") if path and path.exists() else None
     existing = _load_doc(existing_text)
     updates = {}
     for ws_id, snap in snapshots.items():
@@ -928,6 +938,10 @@ def brief(conn, task_id, root=None):
         out.update(screens.brief_body(conn, task, root))
         out["answer_schema"] = SCHEMAS[task["kind"]]
         return out
+    if task["kind"] == change_summaries.KIND:
+        out.update(task["inputs"])
+        out["answer_schema"] = SCHEMAS[task["kind"]]
+        return out
     if task["kind"] == "summarise-change":
         data = task["inputs"] if isinstance(task["inputs"], dict) else {}
         out["base"] = data.get("base")
@@ -1066,7 +1080,7 @@ def _summary_brief(conn, task, root):
             try:
                 src = _content_root(root) / path
                 if isinstance(src, Path):
-                    with open(src, errors="replace") as f:
+                    with open(src, encoding="utf-8", errors="replace") as f:
                         head = "".join(line for _, line in zip(range(README_LINES), f))
                 else:
                     lines = src.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
@@ -1081,6 +1095,8 @@ def _summary_brief(conn, task, root):
 
 def answer_template(b):
     """A skeleton answer for a brief, with "..." where the agent writes."""
+    if b["kind"] == change_summaries.KIND:
+        return {"input_hash": b["input_hash"], "narrative": "...", "citations": b.get("citations", [])[:1]}
     if b["kind"] == "summarise-change":
         return {"input_hash": b["input_hash"], "narrative": "..."}
     if b["kind"] == "define-concepts":
@@ -1164,6 +1180,9 @@ def _format_change(b):
 
 def format_brief(b):
     """Text form of a group, workspace, structure, deployable or change brief."""
+    if b["kind"] == change_summaries.KIND:
+        return _format_tail(b, [f"# Task {b['id']}: {b['kind']}", b["instructions"],
+                               "## Diff evidence", json.dumps({k: b[k] for k in ("concept_id", "changes", "citations")}, indent=2)])
     if b["kind"] == "summarise-change":
         return _format_change(b)
     if b["kind"] == "confirm-structure":
@@ -1375,6 +1394,10 @@ def _validated(conn, task_id, text):
         extra, _files = _file_errors(conn, task, answer)
         if extra:
             raise AnswerError("\n".join(extra))
+    if task["kind"] == change_summaries.KIND:
+        extra = change_summaries.problems(task, answer)
+        if extra:
+            raise AnswerError("\n".join(extra))
     return task, answer
 
 
@@ -1404,6 +1427,19 @@ def submit(conn, task_id, text, root=None, out=None):
     directory; accepting confirm-structure writes structure.json there and reruns detection.
     A busy database rolls the transaction back and retries it.
     """
+    from cbi import team
+
+    def write():
+        # Keep this branch's imported answers protected until refresh and export
+        # finish. Nested task writers join this transaction rather than ending it.
+        team.import_answers(conn, out)
+        return _submit(conn, task_id, text, root, out)
+
+    return store.retry_write(conn, write, immediate=True)
+
+
+def _submit(conn, task_id, text, root, out):
+    """Dispatch within submit's model/cache writer transaction."""
     task, answer = _validated(conn, task_id, text)
     if task["kind"] == "confirm-structure":
         return _submit_structure(conn, task, answer, root, out)
@@ -1411,7 +1447,7 @@ def submit(conn, task_id, text, root=None, out=None):
         return concepts.accept(conn, task, answer, out, root)
     if task["kind"] == "sketch-screens":
         return screens.accept(conn, task, answer, out, root)
-    if task["kind"] == "summarise-change":
+    if task["kind"] in ("summarise-change", change_summaries.KIND):
         return _submit_change(conn, task, answer, out)
     if task["kind"] != "summarise-files":
         return _submit_summary(conn, task, answer, out)
@@ -1440,6 +1476,7 @@ def submit(conn, task_id, text, root=None, out=None):
         conn.execute("UPDATE tasks SET state = 'done' WHERE id = ?", (task_id,))
         before = _open_ids(conn)
         refresh_summaries(conn)
+        concepts.refresh(conn, out)
         _sync_team(conn, out)
         return changed, _opened(before, conn)
 
@@ -1452,6 +1489,8 @@ def submit(conn, task_id, text, root=None, out=None):
 def _submit_change(conn, task, answer, out=None):
     """Cache the narrative by the task's input hash, which is the commit pair, and close the task."""
     stored = {"narrative": answer["narrative"].strip()}
+    if task["kind"] == change_summaries.KIND:
+        stored["citations"] = answer["citations"]
 
     def write():
         previous = _cached_answer(conn, task["input_hash"])

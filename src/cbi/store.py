@@ -1,7 +1,11 @@
 """SQLite model store: schema, version check and the queries scan needs."""
 
+import hashlib
 import json
+import os
 import sqlite3
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -174,17 +178,96 @@ def open_db(path):
     return conn
 
 
-def read_only(path):
-    """Open a model without creating, migrating, or changing its journal.
+def _has_sidecars(path):
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            Path(str(path) + suffix).stat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True  # An inaccessible sidecar cannot be assumed absent.
+        return True
+    return False
 
-    ``mode=ro`` refuses writes. ``immutable=1`` stops SQLite creating ``-wal`` and
-    ``-shm`` beside the file: a plain ``mode=ro`` open of a WAL database still
-    creates them, and that creation fails when the directory cannot be written.
-    No journal-mode pragma is issued.
+
+def _windows_frozen(path):
+    # access() does not inspect Windows ACLs. Test actual create permission,
+    # then open the database for writing without truncating or writing bytes.
+    try:
+        fd, probe = tempfile.mkstemp(prefix=".cbi-read-probe-", dir=path.parent)
+    except PermissionError:
+        try:
+            fd = os.open(path, os.O_WRONLY)
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        os.close(fd)
+        return False
+    except OSError:
+        return False  # Resource errors do not prove that the directory is frozen.
+    else:
+        os.close(fd)
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass  # Successful creation still proves the directory is mutable.
+        return False
+
+
+def _frozen_database(path):
+    if not path.is_file():
+        return False
+    if sys.platform == "win32":
+        return _windows_frozen(path)
+    try:
+        return (path.stat().st_mode & 0o222 == 0
+                and path.parent.stat().st_mode & 0o222 == 0)
+    except OSError:
+        return False
+
+
+def read_uri(path, *, immutable=False, frozen_fallback=False):
+    """Select a frozen URI only under a snapshot guarantee and without sidecars.
+
+    POSIX fallback requires no owner/group/other write bit on either file or
+    directory, not merely denied access for this reader. Windows uses ACL probes.
+    Callers must validate again immediately before connecting or attaching.
     """
-    uri = Path(path).resolve().as_uri() + "?mode=ro&immutable=1"
+    path = Path(path).resolve()
+    if immutable or frozen_fallback:
+        if _has_sidecars(path):
+            immutable = False
+        elif not immutable:
+            immutable = _frozen_database(path)
+    uri = path.as_uri() + "?mode=ro"
+    return uri + "&immutable=1" if immutable else uri
+
+
+def validate_read_uri(path, uri, *, frozen_fallback=False):
+    """Recheck a candidate immediately before SQLite connects or attaches it."""
+    path = Path(path).resolve()
+    if "&immutable=1" in uri and (
+            (frozen_fallback and not _frozen_database(path)) or _has_sidecars(path)):
+        return uri.replace("&immutable=1", "")
+    return uri
+
+
+def note_frozen_read(path, uri):
+    """Describe only the frozen connection that actually opened successfully."""
+    if "&immutable=1" in uri:
+        print(f"Reading {path} as a frozen snapshot; this connection does not follow updates.",
+              file=sys.stderr)
+
+
+def read_only(path, *, immutable=False):
+    """Read with locks, or freeze a protected database that cannot create sidecars."""
+    uri = read_uri(path, immutable=immutable, frozen_fallback=not immutable)
+    uri = validate_read_uri(path, uri, frozen_fallback=not immutable)
     conn = sqlite3.connect(uri, uri=True, timeout=BUSY_SECONDS)
-    return prepare(conn, wal=False)
+    prepare(conn, wal=False)
+    note_frozen_read(path, uri)
+    return conn
 
 
 def _busy_codes():
@@ -206,16 +289,21 @@ def is_busy(err):
     return "locked" in text or "busy" in text
 
 
-def retry_write(conn, fn, attempts=8):
-    """Run fn inside one write transaction. On SQLITE_BUSY, roll back and run it again.
+def retry_write(conn, fn, attempts=8, *, immediate=False):
+    """Run a write unit, retrying its whole transaction on SQLITE_BUSY.
 
-    The connection's busy timeout already waits, and still raises when a deferred
-    transaction has to be restarted after another writer committed. fn must only write.
+    Nested callers participate in the owner's transaction without committing or
+    retrying a fragment. immediate reserves attached databases in SQLite's normal
+    order (model, then cache), as scan does, before reading task/cache state.
     """
+    if conn.in_transaction:
+        return fn()
     delay = 0.02
     for attempt in range(attempts):
         try:
             with conn:
+                if immediate:
+                    conn.execute("BEGIN IMMEDIATE")
                 return fn()
         except sqlite3.OperationalError as err:
             if not is_busy(err) or attempt + 1 == attempts:
@@ -224,8 +312,15 @@ def retry_write(conn, fn, attempts=8):
             delay = min(delay * 2, 0.4)
 
 
-def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None):
-    """True when a commit model still matches its parser, ignore file and projections."""
+def ref_judgement(structure_text, team_text, answers_text):
+    """Versioned provenance for ref inputs not covered by the projection metadata."""
+    inputs = json.dumps([1, structure_text, team_text, answers_text], ensure_ascii=False)
+    return hashlib.sha256(inputs.encode()).hexdigest()
+
+
+def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_text=None,
+                 *, classification_version, structure_text=None, team_text=None, answers_text=None):
+    """True when a ref model matches every judgement input and has current provenance."""
     if not Path(path).exists():
         return False
     try:
@@ -243,9 +338,11 @@ def ref_reusable(path, ignore_hash, parser_version, concepts_text=None, screens_
         conn.close()
     return (
         meta.get("parser_version") == str(parser_version)
+        and meta.get("classification_version") == str(classification_version)
         and meta.get("ignore") == ignore_hash
         and meta.get("concepts_json", "") == (concepts_text or "")
         and meta.get("screens_json", "") == (screens_text or "")
+        and meta.get("ref_judgement") == ref_judgement(structure_text, team_text, answers_text)
     )
 
 

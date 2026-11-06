@@ -54,13 +54,22 @@ Relationships: imports, calls, tests (test case to the code it exercises), part-
 
 - R1. Enumerate files from git for the repo and every initialised submodule; never walk the filesystem or follow tracked symlinks.
 - R2. Model submodules as nested workspaces identified by their normalised remote URL. Record the pinned and checked-out commits, flag when they differ, and show uninitialised submodules as empty nodes.
-- R3. Detect deployables and packages from manifests: `package.json`, `vite.config.*`, `pyproject.toml` (including `[project.scripts]` and uv path sources), `Dockerfile*`, `Containerfile`, compose files, `wrangler.toml`, `Cargo.toml`. Map entry points that name build output (`dist-*/…/main.js`) or HTML script tags back to source files. Ignore template files such as `*.tmpl`.
+- R3. Detect deployables and packages from manifests: `package.json`, `vite.config.*`, `pyproject.toml` (including `[project.scripts]` and uv path sources), `Dockerfile*`, `Containerfile`, compose files, `wrangler.toml`, `Cargo.toml`. Map build-output and HTML entries back to tracked sources, using the [manifest entry resolution rules](#manifest-entry-resolution). Ignore template files such as `*.tmpl`.
 - R4. Parse TypeScript, TSX, JavaScript and Python into classes, functions, methods, React components and interfaces, with signatures, docstrings and line ranges. Other languages appear as file nodes.
 - R5. Resolve import edges between files and packages. Resolve call edges where the callee name can be bound (same file, explicitly imported name, method on the same class); mark each edge with its source and confidence.
 - R6. Detect test files and test cases for node:test, vitest, jest and pytest. Link test cases to the code they import and call, and boost links where file names match.
 - R7. Treat skills, repertoires and other agent assets as packages and parse them like code. Treat markdown as doc nodes, collapse large doc-only directories to one node, and exclude data, fixtures, eval snapshots, generated and tracked build output through an ignore file that `init` writes and the user can edit.
 - R8. Give every node a stable ID derived from its workspace, path and qualified name, so the same code keeps the same ID across scans.
 - R9. Re-scan incrementally by the content of files on disk, including unstaged edits, deletions and changes to the ignore file.
+
+### Manifest entry resolution
+
+- Docker instructions and COPY flags accept whitespace separators, including tabs. Literal COPY/ADD destinations map back to tracked sources within the build context, including inherited stages and local `COPY --from` stages. Earlier WORKDIRs, their parents and copied-file parents remain known directories across stage inheritance.
+- Remote, generated and dynamic copy sources remain unresolved. Invalidate only source mappings their destinations may overwrite. Variable-bearing sources, including remote URLs, invalidate the destination before any filename narrowing. Directory destinations retain siblings excluded by literal remote source basenames or COPY glob constraints; unknown directory contents remain conservative.
+- Retain Docker exec versus shell form and quoted or escaped argument boundaries. Literal operator characters in exec arguments or quoted shell words remain data. Compound shell programs, redirections and command substitutions stay unresolved. Shell options, including combined flags, distinguish script-file invocation from `-c` command strings. Echoed commands and interpolated Python/ASGI module arguments do not create roots.
+- Compose command, entrypoint and working-directory overrides use the build context and image runtime directory. A working-directory override alone still resolves the service entry. Literal Python/ASGI commands in simple shell wrappers become service roots; commandless images can use Compose startup evidence. Non-mapping Compose documents and service collections are ignored by every manifest reader.
+- Image npm commands follow package scripts, with cycle detection, to tracked Node sources or Vite HTML module entries at the runtime package. Build-output entries use tsconfig output/source mappings.
+- Known idle image commands (`tail -f /dev/null`, `sleep infinity`) retain their command as image artifact metadata, without a code entry or unresolved-source diagnostic.
 
 ### Judgement tasks
 

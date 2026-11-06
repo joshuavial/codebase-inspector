@@ -805,3 +805,61 @@ def test_hosted_renderer_is_not_an_entry(make_repo, monkeypatch, capsys, tmp_pat
     shell = run(capsys, "show", "shell")[1]
     assert "starts here" not in shell and "hosted by" not in shell
     assert "starts here (a.ts)" in run(capsys, "show", "desktop")[1]
+
+
+def test_concept_input_hash_includes_file_summaries(make_repo, monkeypatch, capsys, tmp_path):
+    root = repo_fixture(make_repo, monkeypatch, capsys, tmp_path)()
+    before = concept_brief(capsys)["input_hash"]
+    conn = store.open_db(root / ".cbi" / "model.db")
+    tasks.attach_cache(conn)
+    with conn:
+        conn.execute("UPDATE nodes SET summary = 'Revised file summary.' WHERE path = 'a.ts' AND kind = 'file'")
+        concepts.refresh(conn, root / ".cbi", root)
+    conn.close()
+    assert concept_brief(capsys)["input_hash"] != before
+
+
+def test_shell_sql_and_shebang_files_require_owners(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({
+        "scripts/run.sh": "#!/bin/sh\necho ready\n",
+        "scripts/launch": "#!/usr/bin/env -S bash -eu\necho ready\n",
+        "db/schema.sql": "CREATE TABLE items (id INTEGER);\n",
+        "tests/test_run.sh": "#!/bin/sh\ntest 1 = 1\n",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    confirm_structure(capsys, tmp_path)
+    brief = concept_brief(capsys)
+    assert {f["path"] for f in brief["files"]} == {
+        "scripts/run.sh", "scripts/launch", "db/schema.sql", "tests/test_run.sh",
+    }
+    assert next(f for f in brief["files"] if f["path"] == "tests/test_run.sh")["role"] == "test"
+    conn = store.open_db(root / ".cbi" / "model.db")
+    errors, _ = concepts.problems(conn, {
+        "summary": "A utility.", "concepts": [], "externals": [], "relationships": [],
+    })
+    conn.close()
+    assert all(any(path in error for error in errors) for path in ("scripts/run.sh", "scripts/launch", "db/schema.sql"))
+
+
+def test_style_and_markup_ownership_does_not_need_a_parser(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({"web/app.css": "body { color: red }\n", "web/index.html": "<main>Hello</main>\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    confirm_structure(capsys, tmp_path)
+    brief = concept_brief(capsys)
+    assert {f["path"] for f in brief["files"]} == {"web/app.css", "web/index.html"}
+    conn = store.open_db(root / ".cbi" / "model.db")
+    from cbi import check
+    findings = check._file_findings(conn, ["web/app.css", "web/index.html"])
+    assert {f["file"] for f in findings if f["kind"] == "summary"} == {"web/app.css", "web/index.html"}
+    conn.close()
+    (root / ".cbi" / "concepts.json").write_text(json.dumps({
+        "summary": "A web page.", "concepts": [{"id": "web", "name": "Web", "summary": "The page.",
+        "role": "ui", "files": []}], "externals": [], "relationships": [],
+    }))
+    code, output, _ = run(capsys, "check")
+    assert code == 1
+    assert "web/app.css" in output and "web/index.html" in output and "unowned" in output

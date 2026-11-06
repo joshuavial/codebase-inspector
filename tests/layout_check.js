@@ -44,6 +44,33 @@ function hits(a, b) {
 
 async function main() {
   const app = load("src/cbi/viewer/app.js");
+  // A stale comparison edge must not blank a nested graph; ports are valid ends.
+  const RealELK = require("../src/cbi/viewer/vendor/elk.bundled.js");
+  const guarded = load("src/cbi/viewer/app.js", { ELK: RealELK });
+  const damaged = {
+    id: "root", layoutOptions: { "elk.algorithm": "layered" },
+    children: [{ id: "frame", children: [
+      { id: "kept", width: 100, height: 40, ports: [{ id: "kept:out", width: 0, height: 0 }] },
+      { id: "peer", width: 100, height: 40 },
+    ], edges: [{ id: "nested-missing", sources: ["filtered"], targets: ["peer"] }] }],
+    edges: [
+      { id: "good", sources: ["kept:out"], targets: ["peer"] },
+      { id: "missing", sources: ["kept"], targets: ["filtered"] },
+    ],
+  };
+  await assert.rejects(new RealELK().layout(damaged), /Referenced shape does not exist/);
+  const degraded = await guarded.layoutGraph(damaged);
+  assert.strictEqual(degraded.omittedEdges, 2);
+  assert.strictEqual(degraded.edges.length, 1);
+  assert.strictEqual(degraded.children[0].children.length, 2);
+  assert.strictEqual(damaged.edges.length, 2, "validation must not mutate the model");
+  const notice = {};
+  guarded.document.getElementById = () => notice;
+  guarded.layoutNotice(degraded.omittedEdges);
+  assert.strictEqual(notice.hidden, false);
+  assert.match(notice.textContent, /2 connections hidden/);
+  guarded.layoutNotice();
+  assert.strictEqual(notice.hidden, true);
   assert.strictEqual(app.historyTickPosition(0, 15), 0);
   assert.strictEqual(app.historyTickPosition(7, 15), 50);
   assert.strictEqual(app.historyTickPosition(14, 15), 100);
@@ -189,47 +216,67 @@ async function main() {
   relationships.push({ from: tables[0].id, to: tables[0].id,
     column: tables[0].columns[1].id, targetColumn: tables[0].columns[0].id });
   for (const rel of relationships) tables.find((table) => table.id === rel.from).foreignKeys.push(rel);
-  const reached = new Set();
-  const covered = new Set();
-  for (let page = 0; page < 30; page++) {
+  const reached = new Set(), covered = new Set();
+  const hub = app.databaseSlice(tables, relationships, tables[0].id);
+  assert.strictEqual(hub.pages, 10, "a hub with 59 neighbours must use six per page");
+  for (let page = 0; page < hub.pages; page++) {
     const slice = app.databaseSlice(tables, relationships, tables[0].id, page);
-    assert.ok(slice.tables.length <= 3, "a hub must have a bounded neighbourhood");
+    assert.strictEqual(slice.tables.length, page === 9 ? 6 : 7);
     slice.tables.forEach((table) => reached.add(table.id));
     slice.relationships.forEach((rel) => covered.add(rel));
-    const detail = app.databaseDetailGraph(slice);
-    assert.strictEqual(detail.edges.length, slice.relationships.length, "parallel column keys must survive");
-    const out = await elk.layout(JSON.parse(JSON.stringify(detail.graph)));
+    const detail = app.databaseDetailGraph(slice), out = app.databaseFocusLayout(detail);
+    assert.strictEqual(detail.edges.length, slice.relationships.filter((rel) => rel.from !== rel.to).length);
+    const positions = Object.fromEntries(out.children.map((node) => [node.id, node]));
+    const meta = Object.fromEntries(detail.nodes.map((node) => [node.id, node]));
+    const focus = positions[tables[0].id];
+    assert.ok(detail.nodes[0].lines.some((line) => line === "Self: field_1 → id"));
     for (const size of [{ w: 932, h: 688 }, { w: 1252, h: 888 }]) {
       const scale = Math.min(1.4, size.w / out.width, size.h / out.height);
-      assert.ok(11 * scale >= 10, "focus column text must remain readable at fit");
+      assert.ok(12 * scale >= 11, "focus columns must remain readable at fit");
     }
-    const positions = Object.fromEntries(out.children.map((node) => [node.id, node]));
-    for (let i = 0; i < detail.edges.length; i++) {
-      const edge = out.edges.find((edge) => edge.id === detail.edges[i].id);
-      const rel = slice.relationships[i], source = positions[rel.from], target = positions[rel.to];
-      const sourcePort = source.ports.find((port) => port.id === rel.column + ":EAST");
-      const targetPort = target.ports.find((port) => port.id === rel.targetColumn + ":WEST");
-      const section = edge.sections[0];
-      assert.strictEqual(section.startPoint.x, source.x + source.width);
-      assert.strictEqual(section.startPoint.y, source.y + sourcePort.y);
-      assert.strictEqual(section.endPoint.x, target.x);
-      assert.strictEqual(section.endPoint.y, target.y + targetPort.y);
+    for (const edge of detail.edges) {
+      assert.notStrictEqual(edge.a, edge.b, "self references must not route outside the card");
+      const section = out.edges.find((row) => row.id === edge.id).sections[0];
+      const source = positions[edge.a], target = positions[edge.b], forward = source.x < target.x;
+      assert.strictEqual(section.startPoint.x, source.x + (forward ? source.width : 0));
+      assert.strictEqual(section.startPoint.y, source.y + 42 + meta[edge.a].columns.findIndex((row) => row.id === edge.column) * 16);
+      assert.strictEqual(section.endPoint.x, target.x + (forward ? 0 : target.width));
+      assert.strictEqual(section.endPoint.y, target.y + 42 + meta[edge.b].columns.findIndex((row) => row.id === edge.targetColumn) * 16);
     }
-    for (const node of detail.nodes) {
-      assert.ok(node.lines.length <= 10, "long tables must disclose overflow in the drawer");
-      if (node.id === tables[0].id) assert.match(node.lines.at(-1), /columns/);
+    for (const node of detail.nodes.slice(1)) {
+      assert.ok(positions[node.id].x + node.w < focus.x, "incoming neighbours must be on the left");
+      assert.strictEqual(node.columns.length, 3, "neighbours must contain only keys and linked columns");
+      assert.strictEqual(node.lines.length, node.columns.length, "neighbours must not contain filler previews");
     }
   }
   assert.strictEqual(reached.size, 60, "every hub neighbour must be reachable");
   assert.strictEqual(covered.size, relationships.filter((rel) => rel.from === tables[0].id || rel.to === tables[0].id).length);
   assert.strictEqual(app.databaseSlice(tables, relationships, tables[91].id).tables.length, 1);
-  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, Infinity).page, 29);
+  assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, Infinity).page, 9);
   assert.strictEqual(app.databaseSlice(tables, relationships, tables[0].id, -4).page, 0);
-  const overviewNodes = tables.map((table) => ({ id: table.id, name: table.name, w: 190, h: 38 }));
-  const overviewGroups = app.databaseGroups(overviewNodes, relationships.map((rel) => ({ a: rel.from, b: rel.to })));
-  const overview = app.databaseGrid(overviewGroups, [], { w: 1252, h: 888 });
-  assert.strictEqual(overview.edges.length, 0, "the overview must not draw a hairball");
-  assert.ok(overviewGroups.length >= 2);
+  const mixedDatabase = relationships.concat([{ from: tables[50].id, column: tables[50].columns[3].id,
+    to: tables[0].id, targetColumn: tables[0].columns[0].id }, { from: tables[0].id, column: tables[0].columns[2].id,
+    to: tables[90].id, targetColumn: tables[90].columns[0].id },
+    { from: tables[90].id, column: tables[90].columns[1].id, to: tables[0].id, targetColumn: tables[0].columns[0].id },
+    { from: tables[0].id, column: tables[0].columns[3].id, to: tables[91].id, targetColumn: tables[91].columns[0].id }]);
+  const mixedSlice = app.databaseSlice(tables, mixedDatabase, tables[0].id);
+  assert.strictEqual(mixedSlice.neighbours[0].id, tables[50].id, "more links must rank first");
+  assert.strictEqual(mixedSlice.neighbours[1].name, "sample_table_1", "equal link counts must sort by name");
+  // An outgoing-only table appears on a later page because neighbours with two links rank first.
+  const lastSlice = app.databaseSlice(tables, mixedDatabase, tables[0].id, 10);
+  const mixedDetail = app.databaseDetailGraph(lastSlice), mixedOut = app.databaseFocusLayout(mixedDetail);
+  const focusCenter = mixedOut.children[0];
+  const outgoing = mixedOut.children.find((node) => node.id === tables[91].id);
+  assert.ok(outgoing.x > focusCenter.x + focusCenter.width, "outgoing neighbours must be on the right");
+  const clusters = app.databaseOverview(tables, relationships);
+  assert.strictEqual(clusters.reduce((sum, node) => sum + node.members.length, 0), 92);
+  const overview = app.databaseGrid(clusters, { w: 932, h: 688 });
+  assert.strictEqual(overview.edges.length, 0);
+  assert.ok(clusters.length >= 2);
+  assert.match(clusters[0].lines[0], /foreign keys/);
+  assert.ok(clusters[0].lines[1].includes(tables[0].name), "overview must identify the top hub");
+  const overviewScale = Math.min(1.4, 932 / overview.width, 688 / overview.height);
+  assert.ok(12 * overviewScale >= 11, "overview cluster text must be legible at fit");
 
   const graph = await elk.layout({
     id: "root",
@@ -247,16 +294,16 @@ async function main() {
   assert.strictEqual(graph.edges.length, 2);
   for (const edge of graph.edges) assert.ok(edge.labels && edge.labels[0], "ELK placed a label");
 
-  // Entries that call each other (a fundsorter top level). ELK threw "fromIndex: 2 > toIndex: 1"
+  // Top-level entries that call each other. ELK threw "fromIndex: 2 > toIndex: 1"
   // while both ends of an edge were in its first layer.
-  const entryIds = ["admin-ui", "api", "client-ui", "crawler", "platform", "public-ui", "workers"];
-  const kids = [...entryIds, "funding-engine", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
-  const calls = [["admin-ui", "api"], ["api", "crawler"], ["client-ui", "api"], ["public-ui", "api"], ["platform", "records"],
-    ["workers", "crawler"], ["workers", "funding-engine"], ["workers", "records"], ["funding-engine", "api"], ["platform", "api"],
-    ["records", "api"], ["workers", "api"], ["records", "crawler"], ["funding-engine", "records"], ["funding-engine", "platform"]]
+  const entryIds = ["control-ui", "api", "client-ui", "fetcher", "tools", "public-ui", "workers"];
+  const kids = [...entryIds, "compute-core", "records"].map((id) => ({ id, w: 307, h: 94, pinned: entryIds.includes(id) }));
+  const calls = [["control-ui", "api"], ["api", "fetcher"], ["client-ui", "api"], ["public-ui", "api"], ["tools", "records"],
+    ["workers", "fetcher"], ["workers", "compute-core"], ["workers", "records"], ["compute-core", "api"], ["tools", "api"],
+    ["records", "api"], ["workers", "api"], ["records", "fetcher"], ["compute-core", "records"], ["compute-core", "tools"]]
     .map(([a, b], i) => ({ id: "e" + i, a, b }));
   const first = app.firstTier(kids, calls);
-  assert.deepStrictEqual([...first].sort(), ["admin-ui", "client-ui", "platform", "public-ui", "workers"]);
+  assert.deepStrictEqual([...first].sort(), ["client-ui", "control-ui", "public-ui", "tools", "workers"]);
   for (const [dir, wrapping] of [["RIGHT", null], ["RIGHT", "MULTI_EDGE"], ["DOWN", null]]) {
     await elk.layout({
       id: "inner",
@@ -671,7 +718,7 @@ async function main() {
     `, app);
     assert.strictEqual(app.diffViewScope(), "changed");
     const changed = app.filterScopeKids(app.__kids, null, "changed");
-    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["app", "ui", "store", "billing"]);
+    assert.deepStrictEqual(changed.kids.map((row) => row.id), ["ui", "store", "billing"]);
     assert.ok(changed.changedIds.has("ui") && changed.changedIds.has("billing") && changed.changedIds.has("store"));
     assert.ok(!changed.changedIds.has("app") && !changed.changedIds.has("quiet"));
     const billing = app.filterScopeKids(app.__kids, null, "billing");
@@ -689,26 +736,19 @@ async function main() {
     assert.strictEqual(app.diffViewScope(), "all");
     vm.runInContext('view = { scope: "ui", tab: "concept" };', app);
     assert.strictEqual(app.diffViewScope(), "ui");
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 8 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 8);
-    assert.strictEqual(app.diffAreaTabs(Array.from({ length: 12 }, (_, i) => ({ id: "c" + i, name: "Area " + i }))).length, 0);
-    assert.strictEqual(app.diffAreaTabs([{ id: "billing", name: "Billing" }, { id: "ui", name: "UI" }]).length, 2);
-    assert.strictEqual(app.diffAreaTabs([
-      { id: "a", name: "Release check and desktop update flow" },
-      { id: "b", name: "Static viewer comparison chrome" },
-      { id: "c", name: "Command line history replay" },
-      { id: "d", name: "Architecture history judgement tasks" },
-      { id: "e", name: "Desktop shell update check banner" },
-    ]).length, 0);
+    assert.strictEqual(typeof app.diffAreaTabs, "undefined", "concept navigation lives in Changes only");
     vm.runInContext('view = { scope: "", tab: "concept" }; SYMBOL_MARK.set("fn", "changed");', app);
     const narrowed = app.narrowLeaf({
       id: "ui",
       symbols: [{ id: "fn", name: "run", file: "ui.ts" }, { id: "helper", name: "help", file: "ui.ts" }, { id: "other", name: "other", file: "other.ts" }],
-      calls: [["fn", "helper"], ["other", "zzz"]],
+      calls: [["fn", "helper"], ["helper", "other"], ["other", "helper"], ["helper", "zzz"], ["other", "zzz"]],
       ghosts: { zzz: { name: "zzz", concept: "app" } },
       importsIn: [{ concept: "app", files: ["ui.ts"] }, { concept: "store", files: ["other.ts"] }],
       reexports: [{ name: "run", def: "fn" }, { name: "other", def: "other" }],
     });
     assert.deepStrictEqual(narrowed.symbols.map((s) => s.id), ["fn", "helper"]);
+    assert.deepStrictEqual(narrowed.calls, [["fn", "helper"], ["helper", "zzz"]],
+      "a retained neighbour must not keep calls to filtered-out local functions");
     assert.deepStrictEqual(narrowed.importsIn.map((imp) => imp.concept), ["app"]);
     assert.deepStrictEqual(narrowed.reexports.map((row) => row.name), ["run"]);
     vm.runInContext('view = { scope: "billing", tab: "concept" };', app);
@@ -726,6 +766,23 @@ async function main() {
     assert.match(css, /#diff-scope\[hidden\] \{ display: none; \}/);
   }
 
+  // Use measured SVG header geometry for compact neighbours and full cards.
+  // A shared SVG transform preserves this separation at every zoom level.
+  vm.runInContext('DIFF = {};', app);
+  for (const name of ["Shared tooling", "Billing core", "Worker pool"]) {
+    const concept = { id: "badge-test", name, role: "core", summary: "", env: [] };
+    app.__badgeConcept = concept;
+    vm.runInContext('byId["badge-test"] = __badgeConcept; CONCEPT_MARK.set("badge-test", "changed");', app);
+    for (const cls of ["ctx", ""]) {
+      const card = app.box(concept, cls, false);
+      const titleRight = (cls === "ctx" ? 24 : 16) + app.textW(name, cls === "ctx" ? 500 : 600, 14);
+      const badgeLeft = card.w - 10 - app.textW(card.tag, 600, 10.5, true) - 12;
+      for (const zoom of [0.2, 0.7, 1, 2, 4]) {
+        assert.ok((badgeLeft - titleRight) * zoom >= 8 * zoom,
+          `${name} (${cls || "full"}) must have an 8px title/badge gap at zoom ${zoom}`);
+      }
+    }
+  }
   console.log("layout checks passed");
 }
 

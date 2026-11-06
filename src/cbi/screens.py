@@ -351,7 +351,7 @@ def _read(root, path, cache, limit=True):
     try:
         # A ref scan passes a commit tree, which supports `/` but is not a filesystem path.
         base = Path(root) if isinstance(root, (str, bytes)) else root
-        text = (base / path).read_text(errors="replace")
+        text = (base / path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         cache[path] = None
         return None
@@ -860,7 +860,7 @@ def refresh(conn, out=None, root=None):
     text = store.get_meta(conn, "screens_json")
     if text is None and out is not None:
         path = out / "screens.json"
-        text = path.read_text() if path.exists() else ""
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
         store.set_meta(conn, "screens_json", text)
     data = _document(text)
     digest = _input_hash(listed, pairs, entries, states)
@@ -868,7 +868,7 @@ def refresh(conn, out=None, root=None):
     absent = out is not None and not (out / "screens.json").exists()
     if cached and data is None and absent and not problems(conn, cached, root):
         written = json.dumps(cached, indent=2) + "\n"
-        (out / "screens.json").write_text(written)
+        (out / "screens.json").write_text(written, encoding="utf-8")
         apply(conn, written, root)
         data = cached
     state = "done" if data is not None and not problems(conn, data, root) else "open"
@@ -893,12 +893,12 @@ def accept(conn, task, answer, out, root=None):
         raise tasks.AnswerError("\n".join(errors))
     body = _body(answer)
     text = json.dumps(body, indent=2) + "\n"
-    current = (out / "screens.json").read_text() if (out / "screens.json").exists() else None
+    current = (out / "screens.json").read_text(encoding="utf-8") if (out / "screens.json").exists() else None
     if _cached(conn, task["input_hash"]) == body and current == text:
         team.sync(conn, out)
         return f"{task['id']}: already accepted, nothing changed"
     def write():
-        (out / "screens.json").write_text(text)
+        (out / "screens.json").write_text(text, encoding="utf-8")
         old, new = apply(conn, text, root)
         conn.execute("INSERT OR REPLACE INTO cache.summary_answers (input_hash, answer) VALUES (?, ?)",
                      (task["input_hash"], json.dumps(body)))

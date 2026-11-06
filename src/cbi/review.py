@@ -15,7 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
 
-from cbi import change_overview, concepts, diff, files, render, store, tasks
+from cbi import change_overview, change_summaries, concepts, diff, files, render, store, tasks
 
 HELP = """\
 Write a review of the architectural changes in a pull request, branch or commit.
@@ -118,7 +118,7 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
         repo_name=repo_name,
     )
     path = folder / "review.md"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     if post:
         if not spec.get("pr"):
             raise ReviewError(f"wrote {path}\n--post needs a pull request number", code=2)
@@ -706,6 +706,7 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
         lines += [f"Pull request: {spec['url']}", ""]
     if narrative:
         lines += ["## Agent summary", "", narrative.strip(), ""]
+    lines += change_summaries.render(result, markdown=True).splitlines()
     for line in change_overview.render(result, markdown=True).rstrip("\n").splitlines():
         if line.startswith("Drill down with"):
             line = f"Drill down with `cbi diff {base_sha[:12]} {head_sha[:12]} --concept ID`, or `--detail` for every structural change."

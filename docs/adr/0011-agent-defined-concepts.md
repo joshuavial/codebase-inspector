@@ -31,3 +31,23 @@ With no concepts yet, the viewer shows deployables, packages and externals as bo
 ## Consequences
 
 PRD-02 records the change and names the PRD-01 requirements it replaces (ADR-0015). The CLI checks consistency, not whether the concepts are good ones. One answer for sample-monorepo may be too large for an agent's context. Splitting the task per deployable stays open until that repository is mapped this way. Layout runs in the page with vendored elkjs. Incoming links sit on the left and outgoing links on the right. Scroll pans both axes. Pinch or Cmd/Ctrl+scroll zooms around the cursor.
+
+
+## Source ownership (2026-11-03)
+
+Ownership and file summaries cover shell scripts (`.sh`, `.bash`, `.zsh`,
+`.ksh`, `.fish`), SQL schema and migration files, and scripts identified by
+shell, Python or Node shebangs. Files under conventional test directories are
+test support. These files participate in the same task validation and changed
+file gate as parsed languages even when no symbol parser supports them.
+
+
+Styles (`.css`, `.scss`, `.sass`, `.less`) and markup (`.html`, `.htm`,
+`.svelte`, `.astro`) follow the same ownership policy. `SOURCE_LANGS` defines
+source inclusion separately from the symbol parser registry. Missing parser
+support leaves a file without symbols; it still requires a summary and an owner.
+Other tracked assets and documentation may remain unowned.
+
+HTML pages remain browser-loaded roots for orphan analysis; their script
+references are followed when computing reachability. Requiring owners for HTML
+does not make an independently opened page an unused module.

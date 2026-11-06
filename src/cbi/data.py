@@ -533,7 +533,7 @@ def parse_uses(text, tables):
 def _source(root, workspace_root, path):
     try:
         rel = "/".join(part for part in (workspace_root, path) if part)
-        return (root / rel).read_text(errors="replace")
+        return (root / rel).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
 

@@ -11,9 +11,9 @@ import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from cbi import diff, review, store, tasks
+from cbi import change_summaries, diff, review, store, tasks
 
-VERSION = 3
+VERSION = 4
 DEFAULT_DAYS = 183
 PR_RE = re.compile(r"(?:Merge pull request #|\(#)(\d+)\)?")
 
@@ -86,7 +86,7 @@ def _pull_requests(root, out):
     cache = Path(out) / "history" / "pulls.json"
     if cache.is_file():
         try:
-            value = json.loads(cache.read_text())
+            value = json.loads(cache.read_text(encoding="utf-8"))
             return value if isinstance(value, dict) else {}
         except (OSError, json.JSONDecodeError):
             pass
@@ -246,7 +246,7 @@ def _concept_token(text):
 
 def _write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _narrative(conn, entry):
@@ -268,10 +268,12 @@ def _project_model(root, out, sha, current_text, current_conn):
         conn.close()
     text = json.dumps(projected, indent=2) + "\n"
     concept_path = home / "concepts.json"
-    changed = not concept_path.exists() or concept_path.read_text() != text
+    changed = not concept_path.exists() or concept_path.read_text(encoding="utf-8") != text
     if changed:
-        concept_path.write_text(text)
-        resolved, _again, _counts, _open = scan_ref(root, out, sha, force=True)
+        concept_path.write_text(text, encoding="utf-8")
+        resolved, _again, _counts, _open = scan_ref(
+            root, out, sha, force=True, restore_judgement=False
+        )
         reused = False
     return resolved, reused, provisional
 
@@ -302,7 +304,7 @@ def ensure_point(root, out, sha):
         raise HistoryError(f"history needs {out / 'concepts.json'} and {out / 'model.db'}. Run `cbi scan` first.")
     conn = diff.open_model(out / "model.db")
     try:
-        return point_model(root, out, sha, (out / "concepts.json").read_text(), conn)[0]
+        return point_model(root, out, sha, (out / "concepts.json").read_text(encoding="utf-8"), conn)[0]
     finally:
         conn.close()
 
@@ -324,7 +326,7 @@ def build_history(root, out, since=None, until=None):
     model_path = out / "model.db"
     if not model_path.is_file():
         raise HistoryError(f"no model at {model_path}. Run `cbi scan` first.")
-    current_text = concept_path.read_text()
+    current_text = concept_path.read_text(encoding="utf-8")
     token = _concept_token(current_text)
     points = history_points(root, since, until)
     pulls = _pull_requests(root, out)
@@ -348,7 +350,7 @@ def build_history(root, out, since=None, until=None):
             cached = None
             if number and entry_path.is_file():
                 try:
-                    cached = json.loads(entry_path.read_text())
+                    cached = json.loads(entry_path.read_text(encoding="utf-8"))
                 except (OSError, json.JSONDecodeError):
                     cached = None
                 if cached and (cached.get("version") != VERSION or cached.get("concepts") != token
@@ -374,12 +376,18 @@ def build_history(root, out, since=None, until=None):
                               "changes": changes, "change_count": sum(len(g["changes"]) for g in changes["groups"])}
                     _write_json(entry_path, cached)
             if number:
+                # Answer state changes independently of the immutable structural diff.
+                # Cached entries carry their keys/evidence, so even a dropped point
+                # can pick up a newly submitted summary without rebuilding its model.
+                changed = change_summaries.refresh(current_conn, cached["changes"])
                 narrative = _narrative(current_conn, cached)
                 if narrative != cached.get("narrative"):
                     if narrative:
                         cached["narrative"] = narrative
                     else:
                         cached.pop("narrative", None)
+                    changed = True
+                if changed:
                     _write_json(entry_path, cached)
                 if _has_changes(cached["changes"]):
                     entries.append(cached)
@@ -443,7 +451,7 @@ def render(entries, fmt="text"):
 
 def write_changelog(out, entries):
     path = Path(out) / "CHANGELOG-ARCHITECTURE.md"
-    path.write_text(render(entries, "markdown"))
+    path.write_text(render(entries, "markdown"), encoding="utf-8")
     return path
 
 
@@ -453,7 +461,7 @@ def narrate(root, out, sha):
     index_path = out / "history" / "index.json"
     if not index_path.is_file():
         raise HistoryError("history has not been built. Run `cbi history` first.")
-    entries = json.loads(index_path.read_text()).get("entries") or []
+    entries = json.loads(index_path.read_text(encoding="utf-8")).get("entries") or []
     matches = [entry for entry in entries if entry["sha"].startswith(sha)]
     if len(matches) != 1:
         state = "ambiguous" if matches else "not found"

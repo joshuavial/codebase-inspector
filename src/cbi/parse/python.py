@@ -478,9 +478,11 @@ class _Collector:
         modules, environs, getenvs = _os_env_bindings(self.imports)
 
         calls, reads, envs, patches = [], [], [], []
+        self.call_locations = []
         stack = [(root, None, None, None)]
         while stack:
             n, d, c, scope = stack.pop()
+            before = len(calls)
             index = self.anchors.get((n.start_byte, n.end_byte, n.type))
             if index is not None:
                 d = index
@@ -522,6 +524,8 @@ class _Collector:
             found = _py_env_read(n, modules, environs, getenvs, scope)
             if found:
                 envs.append([d, found[0], found[1]])
+            self.call_locations.extend([n.start_point.row + 1, n.start_point.column + 1]
+                                       for _ in range(len(calls) - before))
             for child in reversed(n.named_children):
                 stack.append((child, d, c, scope))
         return calls, reads, envs, patches
@@ -752,6 +756,7 @@ def parse(source, lang, is_test):
         "reexports": collector.reexports,
         "locals": sorted(collector.locals),
         "calls": calls,
+        "call_locations": collector.call_locations,
         "reads": reads,
         "patches": patches,
         "envs": envs,

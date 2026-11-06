@@ -284,6 +284,28 @@ def _aboves(key, mount_of, routers, stack):
     return list(dict.fromkeys(out))
 
 
+def _dynamic_consumer(client, server):
+    """A possible consumer only: unknown resource segments never create edges."""
+    left, right = segments(client), segments(server)
+    if not any(is_param(part) for part in left):
+        return False
+    width = min(len(left), len(right))
+    return bool(width) and all(
+        is_param(a) or is_param(b) or a == b
+        for a, b in zip(left[-width:], right[-width:])
+    )
+
+
+def _route_boundary(route, calls):
+    if any(method == route["method"] and _dynamic_consumer(path, route["path"])
+           for _caller, method, path in calls):
+        return "dynamic_client", "a dynamic/generic client may consume this route; binding unresolved"
+    words = {part.lower().replace("-", "_") for part in segments(route["path"])}
+    if words & {"webhook", "webhooks", "callback", "callbacks"}:
+        return "external_callback_candidate", "callback-shaped path; external consumer cannot be established statically"
+    return "static_unresolved", "no statically resolved consumer; usage is unknown"
+
+
 def link(model):
     """(edge rows, diagnostics, handler attrs) from the model's HTTP facts.
 
@@ -295,6 +317,7 @@ def link(model):
     mounts = []
     raw_routes = []
     raw_calls = []
+    unresolved_calls = set()
     for fid, facts in model.facts.items():
         if fid not in model.files or _test_helper(model.files[fid]):
             continue
@@ -314,6 +337,10 @@ def link(model):
             if hid is None and handler_name:
                 hid = _lookup(model, fid, handler_name)
             raw_routes.append((fid, hid or fid, str(method).upper(), path, router_name))
+        for caller, method, line in facts.get("http_unresolved_calls") or []:
+            cid = caller if caller in model.nodes else fid
+            detail = f"{method} <dynamic URL> at {model.files[fid][1]}:{line}: no static path [resolution=dynamic_client]"
+            unresolved_calls.add((cid, "unmatched_http_call", detail))
         for row in facts.get("http_calls") or []:
             caller, method, path = _pad(row, 3)[:3]
             if not method or not path:
@@ -364,7 +391,7 @@ def link(model):
 
     matched = set()
     edges = []
-    diagnostics = []
+    diagnostics = sorted(unresolved_calls)
     for (caller, method, path), weight in sorted(grouped.items()):
         best = None
         best_rank = None
@@ -378,7 +405,7 @@ def link(model):
                 best = route
                 best_rank = rank
         if best is None:
-            diagnostics.append((caller, "unmatched_http_call", f"{method} {path}: no route"))
+            diagnostics.append((caller, "unmatched_http_call", f"{method} {path}: no route [resolution={'dynamic_client' if any(is_param(p) for p in segments(path)) else 'static_unresolved'}]"))
             continue
         matched.add((best["method"], best["path"], best["handler"]))
         extra = -best_rank[2]
@@ -387,8 +414,9 @@ def link(model):
     for route in routes:
         key = (route["method"], route["path"], route["handler"])
         if key not in matched:
+            boundary, explanation = _route_boundary(route, raw_calls)
             diagnostics.append((route["handler"], "unmatched_http_call",
-                                f"{route['method']} {route['path']}: no client call"))
+                                f"{route['method']} {route['path']}: {explanation} [resolution={boundary}]"))
 
     by_handler = defaultdict(list)
     seen_attr = set()

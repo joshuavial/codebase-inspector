@@ -62,3 +62,85 @@ def test_doc_collection_is_over_100_files_mostly_markdown_and_little_code():
     # research artefacts that are not code do not stop the collapse
     assert doc_collections(notes + [f"docs/notes/r{i}.log" for i in range(30)]) == {"docs"}
     assert doc_collections([f"img/{i}.png" for i in range(150)]) == set()
+
+
+def test_shebang_classification_reads_only_bounded_prefixes(make_repo, monkeypatch):
+    from pathlib import Path
+    from cbi import files
+
+    root = make_repo({"asset.bin": "x" * (2 * 1024 * 1024),
+                      "launch": "#!/bin/sh\n" + "# padding\n" * 100000})
+    workspaces, tracked = files.enumerate_repo(root)
+    states = {path: (0, 0, "blob", files.PARSER_VERSION, False) for path, _, _ in tracked}
+    original = Path.read_bytes
+
+    def no_whole_file(path):
+        if path.parent == root:
+            raise AssertionError("classification requested the whole file")
+        return original(path)
+
+    original_open = Path.open
+    reads = []
+
+    class BoundedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+        def read(self, size=-1):
+            assert 0 <= size <= 4096, "classification reads must be bounded"
+            reads.append(size)
+            return self.stream.read(size)
+
+    def bounded_open(path, *args, **kwargs):
+        stream = original_open(path, *args, **kwargs)
+        return BoundedReader(stream) if path.parent == root else stream
+
+    monkeypatch.setattr(Path, "read_bytes", no_whole_file)
+    monkeypatch.setattr(Path, "open", bounded_open)
+    nodes = files.build_nodes(workspaces, tracked, states, root)
+    assert next(n for n in nodes if n.get("path") == "launch")["lang"] == "shell"
+    assert reads and max(reads) <= 4096
+
+
+def test_shebang_classification_streams_git_prefix_without_caching_blob(make_repo, monkeypatch):
+    import subprocess
+    from cbi import files
+
+    root = make_repo({"asset.bin": "x" * (2 * 1024 * 1024),
+                      "launch": "#!/bin/sh\n" + "# padding\n" * 100000})
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    tree = files.CommitTree(root, sha)
+
+    def no_whole_blob(*args):
+        raise AssertionError("classification requested the whole Git blob")
+
+    monkeypatch.setattr(files._Batch, "get", no_whole_blob)
+    reads = []
+
+    class BoundedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read(self, size=-1):
+            assert 0 <= size <= 65536, "Git blob reads must use a fixed-size buffer"
+            reads.append(size)
+            return self.stream.read(size)
+
+    batch = tree._batch(tree.git_dir)
+    batch.proc.stdout = BoundedReader(batch.proc.stdout)
+    try:
+        nodes = files.build_nodes(tree.workspaces, tree.tracked, tree.file_states(), tree)
+        assert next(n for n in nodes if n.get("path") == "launch")["lang"] == "shell"
+        assert reads and max(reads) <= 65536
+        assert not batch.cache
+    finally:
+        tree.close()

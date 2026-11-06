@@ -458,7 +458,7 @@ def ingest(conn, repo_root, cwd, artifact):
     """Load one artifact file, replacing rows from an earlier load of the same path. Returns counts."""
     artifact = Path(os.path.realpath(artifact))
     key = str(artifact)
-    text = artifact.read_text()
+    text = artifact.read_text(encoding="utf-8")
     fmt = detect(text)
     model = Model(conn, repo_root, cwd, artifact.parent)
     ws = model.workspace[0] if model.workspace else ""

@@ -21,3 +21,5 @@ If Chrome or Chromium is not on the machine, the images are skipped and the comm
 ## Consequences
 
 The Python package does not ship a browser. Image generation uses the browser the machine already has, so colours, layout and change marks stay the ones the viewer draws. A checkout without Chrome still gets the Markdown review and can post it. The render page is static, same as ADR-0007, and takes the change list as data.
+
+Browser teardown kills its process group and allows up to 60 seconds per wait to reap the leader before deleting the temporary profile. The longer reap budget accommodates loaded hosts; capture readiness retains its existing 120-second limit. A browser that cannot be reaped still fails rather than silently leaking its process or profile.
