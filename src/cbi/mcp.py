@@ -6,6 +6,7 @@ CBI's local codebase model directly via stdio JSON-RPC.
 
 import argparse
 import contextlib
+import datetime as dt
 import io
 import json
 import sqlite3
@@ -13,7 +14,21 @@ import sys
 import threading
 from pathlib import Path
 
-from cbi import concepts, context, diff, files, graph, query, store, system_views, tasks
+from cbi import (
+    change_overview,
+    change_summaries,
+    concepts,
+    context,
+    diff,
+    files,
+    graph,
+    history,
+    query,
+    review,
+    store,
+    system_views,
+    tasks,
+)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "cbi"
@@ -320,6 +335,60 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_history",
+        "description": "Show architectural evolution and changelog across history points on the default branch.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": "string",
+                    "description": "ISO date string or git date to filter commits since (default: 183 days ago).",
+                },
+                "until": {
+                    "type": "string",
+                    "description": "ISO date string or git date to filter commits until.",
+                },
+                "concept": {
+                    "type": "string",
+                    "description": "Optional concept ID to filter architectural changes by concept.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of history points to return.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'markdown' (default), 'json', or 'text'.",
+                    "enum": ["markdown", "json", "text"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_review",
+        "description": "Architectural review between two versions (branch, commit, PR, or HEAD against base) including a Mermaid diagram, changed concepts, and untested changes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "A branch, commit SHA, PR number, or HEAD (default: current HEAD against default branch / merge-base).",
+                },
+                "base": {
+                    "type": "string",
+                    "description": "Optional base git ref (e.g. 'main', commit SHA).",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'markdown' (default) or 'json'.",
+                    "enum": ["markdown", "json"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -432,8 +501,11 @@ class MCPServer:
             "cbi_deps": self.handle_deps,
             "cbi_endpoints": self.handle_endpoints,
             "cbi_tables": self.handle_tables,
+            "cbi_history": self.handle_history,
+            "cbi_review": self.handle_review,
         }
         self._stdout_lock = threading.Lock()
+        self._scan_lock = threading.Lock()
 
     def _get_connection(self):
         if not self.model_path.is_file():
@@ -956,6 +1028,107 @@ class MCPServer:
             return json.dumps({"tables": tables, "relationships": rels}, indent=2)
         finally:
             conn.close()
+
+    def handle_history(self, args: dict) -> str:
+        since = args.get("since")
+        until = args.get("until")
+        concept = args.get("concept")
+        limit = args.get("limit")
+        if limit is not None:
+            try:
+                limit = int(limit)
+                if limit < 1:
+                    raise ValueError("limit must be positive")
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid limit: {limit!r}") from err
+        fmt = args.get("format", "markdown")
+        if fmt not in ("markdown", "json", "text"):
+            fmt = "markdown"
+
+        build_since = since
+        if build_since is None:
+            build_since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=history.DEFAULT_DAYS)).date().isoformat()
+
+        with self._scan_lock:
+            try:
+                entries = history.build_history(self.root, self.out, since=build_since, until=until)
+                shown = history.select(entries, since=since, until=until, concept=concept, limit=limit)
+                return history.render(shown, fmt=fmt).rstrip()
+            except history.HistoryError as err:
+                raise ValueError(str(err)) from err
+
+    def handle_review(self, args: dict) -> str:
+        target = args.get("target") or "HEAD"
+        base = args.get("base")
+        fmt = args.get("format", "markdown")
+        if fmt not in ("markdown", "json"):
+            fmt = "markdown"
+
+        with self._scan_lock:
+            try:
+                spec = review.resolve_target(self.root, target, base)
+                base_sha = files.resolve_commit(self.root, spec["base"])
+                head_sha = files.resolve_commit(self.root, spec["head"])
+            except (review.ReviewError, files.BadRef) as err:
+                raise ValueError(str(err)) from err
+
+            try:
+                base_conn, head_conn = diff.open_pair(None, None, base_sha, head_sha, self.root, self.out)
+            except diff.DiffError as err:
+                raise ValueError(f"Diff error: {err}") from err
+
+            try:
+                try:
+                    line_stats = change_overview.git_line_stats(self.root, base_sha, head_sha)
+                except Exception:
+                    line_stats = None
+                result = diff.compare(base_conn, head_conn, line_stats=line_stats)
+                result["overview"].update({"base": base_sha, "head": head_sha})
+                change_summaries.enrich(base_conn, head_conn, result)
+                diagram = review.build_diagram(result, base_conn, head_conn)
+                mermaid = review.render_mermaid(diagram)
+                repo_name = review._top_name(head_conn)
+            finally:
+                base_conn.close()
+                head_conn.close()
+
+            narrative, change_task, define_task = None, None, None
+            head_db = self.out / "refs" / head_sha / "model.db"
+            if head_db.is_file():
+                try:
+                    narrative, change_task, define_task = review._open_tasks(head_db, base_sha, head_sha, result)
+                except Exception:
+                    pass
+
+            if fmt == "json":
+                payload = {
+                    "base": base_sha,
+                    "head": head_sha,
+                    "spec": spec,
+                    "result": result,
+                    "diagram": diagram,
+                    "mermaid": mermaid,
+                    "narrative": narrative,
+                    "change_task": change_task,
+                    "define_task": define_task,
+                }
+                return json.dumps(payload, indent=2)
+
+            text = review.render_review(
+                self.root,
+                base_sha,
+                head_sha,
+                spec,
+                result,
+                diagram,
+                mermaid,
+                narrative,
+                change_task,
+                define_task,
+                images=None,
+                repo_name=repo_name,
+            )
+            return text.rstrip()
 
     def run(self, stdin=None, stdout=None):
         if stdin is None:

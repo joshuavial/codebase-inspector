@@ -107,6 +107,7 @@ def test_tools_list():
     expected = {
         "cbi_status", "cbi_context", "cbi_tests_for", "cbi_search", "cbi_hotspots",
         "cbi_cycles", "cbi_orphans", "cbi_deps", "cbi_endpoints", "cbi_tables",
+        "cbi_history", "cbi_review",
     }
     assert expected.issubset(tool_names)
 
@@ -602,6 +603,14 @@ def test_tools_call_deps(repo):
 def test_concurrent_requests_stress(repo):
     import concurrent.futures
 
+    concepts_doc = {
+        "summary": "Concepts for concurrent stress test",
+        "concepts": [{"id": "shapes", "name": "Shapes", "summary": "Shapes", "role": "core", "files": ["src/shapes/circle.ts"]}],
+        "externals": [],
+        "relationships": [],
+    }
+    (repo / ".cbi" / "concepts.json").write_text(json.dumps(concepts_doc))
+
     server = MCPServer(root=repo)
 
     tools_and_args = [
@@ -616,6 +625,10 @@ def test_concurrent_requests_stress(repo):
         ("cbi_deps", {"level": "folder", "format": "json"}),
         ("cbi_endpoints", {"format": "json"}),
         ("cbi_tables", {"format": "json"}),
+        ("cbi_history", {"format": "json"}),
+        ("cbi_history", {"format": "markdown"}),
+        ("cbi_review", {"target": "HEAD", "base": "HEAD", "format": "json"}),
+        ("cbi_review", {"target": "HEAD", "base": "HEAD", "format": "markdown"}),
     ]
 
     def make_call(pair):
@@ -729,4 +742,172 @@ def test_tools_call_system_views_with_data(make_repo, monkeypatch):
     res = server.execute_tool("cbi_tables", {"format": "text"})
     assert not res["isError"]
     assert "table accounts (2 columns)" in res["content"][0]["text"]
+
+
+def test_tool_history(make_repo, monkeypatch):
+    import subprocess
+    root = make_repo({"a.py": "def a():\n    return 1\n"}, name="mcp-history-repo")
+
+    def commit_file(rel, content, msg):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run([
+            "git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+            "-c", "commit.gpgsign=false", "commit", "-q", "-m", msg,
+        ], cwd=root, check=True)
+
+    commit_file("b.py", "def b():\n    return 2\n", "feat: add b (#1)")
+    commit_file("c.py", "def c():\n    return 3\n", "feat: add c (#2)")
+
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    concepts = {
+        "summary": "History test concepts",
+        "concepts": [
+            {"id": "core", "name": "Core", "summary": "Core logic", "role": "core", "files": ["a.py"]},
+            {"id": "app", "name": "App", "summary": "App logic", "role": "app", "files": ["b.py", "c.py"]},
+        ],
+        "externals": [],
+        "relationships": [],
+    }
+    (root / ".cbi" / "concepts.json").write_text(json.dumps(concepts))
+    assert main(["scan"]) == 0
+
+    server = MCPServer(root=root)
+
+    # Default markdown format
+    res_md = server.execute_tool("cbi_history", {})
+    assert not res_md["isError"]
+    text_md = res_md["content"][0]["text"]
+    assert "# Architecture changelog" in text_md
+    assert "PR #1" in text_md or "PR #2" in text_md
+
+    # JSON format
+    res_json = server.execute_tool("cbi_history", {"format": "json"})
+    assert not res_json["isError"]
+    payload = json.loads(res_json["content"][0]["text"])
+    assert "entries" in payload
+    assert len(payload["entries"]) >= 2
+
+    # Limit option
+    res_limit = server.execute_tool("cbi_history", {"limit": 1, "format": "json"})
+    assert not res_limit["isError"]
+    payload_limit = json.loads(res_limit["content"][0]["text"])
+    assert len(payload_limit["entries"]) == 1
+
+    # Concept filter
+    res_concept = server.execute_tool("cbi_history", {"concept": "app", "format": "json"})
+    assert not res_concept["isError"]
+    payload_concept = json.loads(res_concept["content"][0]["text"])
+    for entry in payload_concept["entries"]:
+        groups = entry.get("changes", {}).get("groups", [])
+        assert any(g.get("id") == "app" for g in groups)
+
+    # Text format
+    res_text = server.execute_tool("cbi_history", {"format": "text"})
+    assert not res_text["isError"]
+    text = res_text["content"][0]["text"]
+    assert "Architecture changelog" not in text
+
+    # Error handling: invalid limit
+    res_err_limit = server.execute_tool("cbi_history", {"limit": -1})
+    assert res_err_limit["isError"]
+    assert "limit" in res_err_limit["content"][0]["text"]
+
+    # Error handling: invalid date
+    res_err_date = server.execute_tool("cbi_history", {"since": "not-a-date"})
+    assert res_err_date["isError"]
+    assert "invalid date" in res_err_date["content"][0]["text"]
+
+
+def test_tool_review(make_repo, monkeypatch):
+    import subprocess
+    root = make_repo({"core/a.ts": "export function a() { return 1; }\n"}, name="mcp-review-repo")
+
+    def commit_file(rel, content, msg):
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run([
+            "git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+            "-c", "commit.gpgsign=false", "commit", "-q", "-m", msg,
+        ], cwd=root, check=True)
+
+    commit_file("app/b.ts", "import { a } from '../core/a';\nexport function b() { return a(); }\n", "feat: add app caller")
+
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    concepts = {
+        "summary": "Review test concepts",
+        "concepts": [
+            {"id": "core", "name": "Core", "summary": "Core logic", "role": "core", "files": ["core/a.ts"]},
+            {"id": "app", "name": "App", "summary": "App logic", "role": "app", "files": ["app/b.ts"]},
+        ],
+        "externals": [],
+        "relationships": [{"from": "app", "to": "core", "label": "calls", "basis": "imports"}],
+    }
+    (root / ".cbi" / "concepts.json").write_text(json.dumps(concepts))
+    assert main(["scan"]) == 0
+
+    server = MCPServer(root=root)
+
+    # Markdown format with target/base: verify Mermaid diagram
+    res_md = server.execute_tool("cbi_review", {
+        "target": "HEAD",
+        "base": "HEAD~1",
+        "format": "markdown",
+    })
+    assert not res_md["isError"]
+    text_md = res_md["content"][0]["text"]
+    assert "cbi://open?" in text_md
+    assert "<!-- cbi-review -->" in text_md
+    assert "```mermaid" in text_md
+    assert "flowchart LR" in text_md
+    assert "classDef added" in text_md
+    assert 'app["App"]' in text_md
+    assert "## Details" in text_md
+
+    # JSON format with target/base
+    res_json = server.execute_tool("cbi_review", {
+        "target": "HEAD",
+        "base": "HEAD~1",
+        "format": "json",
+    })
+    assert not res_json["isError"]
+    data = json.loads(res_json["content"][0]["text"])
+    assert "base" in data and "head" in data
+    assert "spec" in data
+    assert "result" in data
+    assert "diagram" in data
+    assert "mermaid" in data
+    assert "flowchart LR" in data["mermaid"]
+    assert any(n["id"] == "app" for n in data["diagram"]["nodes"])
+
+    # Branch target with automatic merge-base default
+    subprocess.run(["git", "checkout", "-q", "-b", "feature-branch"], cwd=root, check=True)
+    commit_file("app/c.ts", "export function c() { return 3; }\n", "feat: branch commit")
+    res_branch = server.execute_tool("cbi_review", {
+        "target": "HEAD",
+        "format": "markdown",
+    })
+    assert not res_branch["isError"]
+    assert "flowchart LR" in res_branch["content"][0]["text"]
+
+    # Target range syntax (HEAD~1..HEAD)
+    res_range = server.execute_tool("cbi_review", {
+        "target": "HEAD~1..HEAD",
+        "format": "json",
+    })
+    assert not res_range["isError"]
+    range_data = json.loads(res_range["content"][0]["text"])
+    assert range_data["spec"]["base"] == "HEAD~1"
+    assert range_data["spec"]["head"] == "HEAD"
+
+    # Error handling: invalid target ref
+    res_bad = server.execute_tool("cbi_review", {"target": "nonexistent_ref_9999"})
+    assert res_bad["isError"]
+
 

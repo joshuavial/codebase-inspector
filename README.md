@@ -112,6 +112,8 @@ Exposed MCP tools:
 * `cbi_concepts`: Query concept taxonomy, hierarchy, role descriptions, and file ownership.
 * `cbi_endpoints`: List HTTP route endpoints detected in the codebase model with their handlers, caller references, downstream code calls, and database tables (optional filters: path, method, handler, table).
 * `cbi_tables`: List database tables, columns, foreign keys, and code references detected in the codebase model (optional filter: table).
+* `cbi_history`: Architecture evolution and changelog across git history points on the default branch (optional filters: since, until, concept, limit; format: markdown, json, text).
+* `cbi_review`: Architectural review between two versions (branch, commit, PR, or HEAD against base) including a Mermaid diagram, changed concepts, and untested changes (format: markdown or json).
 
 ### System Views
 
