@@ -208,6 +208,7 @@
             "tests/test_http_paths.py",
             "tests/test_indirect_paths.py",
             "tests/test_injection.py",
+            "tests/test_jsonc.py",
             "tests/test_inprocess_bindings.py",
             "tests/test_named_build_sources.py",
             "tests/test_path_expansion.py",
