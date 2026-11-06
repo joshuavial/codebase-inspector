@@ -1706,6 +1706,10 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert gemini_json.is_file()
     g_data = json.loads(gemini_json.read_text())
     assert "codebase-inspector" in g_data["mcpServers"]
+    gemini_settings = fake_home / ".gemini" / "settings.json"
+    assert gemini_settings.is_file()
+    s_data = json.loads(gemini_settings.read_text())
+    assert "codebase-inspector" in s_data["mcpServers"]
 
     # 4. Install windsurf
     res_windsurf = install_client_config("windsurf", root=root)
@@ -1715,13 +1719,14 @@ def test_install_client_config(tmp_path, monkeypatch):
     w_data = json.loads(windsurf_json.read_text())
     assert "codebase-inspector" in w_data["mcpServers"]
 
-    # 5. Install vscode
+    # 5. Install vscode (both servers and mcpServers)
     res_vscode = install_client_config("vscode", root=root)
     assert res_vscode == 0
     vscode_json = root / ".vscode" / "mcp.json"
     assert vscode_json.is_file()
     v_data = json.loads(vscode_json.read_text())
     assert "codebase-inspector" in v_data["mcpServers"]
+    assert "codebase-inspector" in v_data["servers"]
 
     # 6. Install claude (Claude Code)
     res_claude = install_client_config("claude", root=root)
@@ -1736,7 +1741,13 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert res_all == 0
     assert len(res_all) >= 5
 
-    # 8. Test CLI integration
+    # 8. Unparseable/corrupted config is preserved, not overwritten
+    corrupt_file = fake_home / ".cursor" / "mcp.json"
+    corrupt_file.write_text("{bad json syntax")
+    install_client_config("cursor", root=root)
+    assert corrupt_file.read_text() == "{bad json syntax"
+
+    # 9. Test CLI integration
     monkeypatch.chdir(root)
     assert main(["mcp", "--install", "cursor"]) == 0
     assert main(["mcp", "--install"]) == 0

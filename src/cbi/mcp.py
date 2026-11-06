@@ -1924,6 +1924,7 @@ def install_client_config(client_name: str = "all", root=None):
         targets.append(home / ".cursor" / "mcp.json")
 
     if client in ("gemini", "antigravity", "all"):
+        targets.append(home / ".gemini" / "settings.json")
         targets.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
 
     if client in ("windsurf", "all"):
@@ -1934,22 +1935,32 @@ def install_client_config(client_name: str = "all", root=None):
 
     updated = InstallResult()
     for target in targets:
-        target.parent.mkdir(parents=True, exist_ok=True)
         data = {}
         if target.is_file():
             try:
                 content = target.read_text(encoding="utf-8").strip()
                 if content:
                     data = json.loads(content)
-            except Exception:
-                data = {}
+            except Exception as err:
+                print(f"Skipping {target}: existing file could not be parsed as JSON ({err})", file=sys.stderr)
+                continue
+
         if not isinstance(data, dict):
-            data = {}
+            print(f"Skipping {target}: expected JSON object at top level", file=sys.stderr)
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        # VS Code uses "servers", whereas Claude, Cursor, Gemini, and Windsurf use "mcpServers"
+        if "servers" in data or target == root / ".vscode" / "mcp.json":
+            if "servers" not in data or not isinstance(data["servers"], dict):
+                data["servers"] = {}
+            data["servers"]["codebase-inspector"] = server_entry
 
         if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
             data["mcpServers"] = {}
-
         data["mcpServers"]["codebase-inspector"] = server_entry
+
         target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         updated.append(target)
         print(f"Installed codebase-inspector MCP server configuration in {target}")
