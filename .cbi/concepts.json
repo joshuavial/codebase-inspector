@@ -142,10 +142,12 @@
             "src/cbi/check.py",
             "src/cbi/cli.py",
             "src/cbi/editor.py",
+            "src/cbi/mcp.py",
             "tests/test_bug_report.py",
             "tests/test_check.py",
             "tests/test_cli.py",
-            "tests/test_editor.py"
+            "tests/test_editor.py",
+            "tests/test_mcp.py"
           ]
         },
         {
