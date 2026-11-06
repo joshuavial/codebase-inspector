@@ -19,7 +19,7 @@ from fnmatch import fnmatchcase
 from glob import has_magic
 from urllib.parse import unquote, urlsplit
 
-from cbi import resolve
+from cbi.jsonc import _jsonc
 
 # A build-output extension maps back to these source extensions, in order.
 SOURCE_EXTS = {".js": (".ts", ".tsx", ".js", ".jsx"), ".mjs": (".mts", ".mjs"), ".cjs": (".cts", ".cjs"),
@@ -44,7 +44,7 @@ class _Workspace:
     def json(self, path):
         if path not in self._json:
             try:
-                self._json[path] = resolve._jsonc((self.dir / path).read_text(encoding="utf-8"))
+                self._json[path] = _jsonc((self.dir / path).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 self._json[path] = None
         return self._json[path]

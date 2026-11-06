@@ -22,6 +22,7 @@ from html.parser import HTMLParser
 
 from cbi import http, manifests
 from cbi.files import CODE_LANGS
+from cbi.jsonc import _jsonc, jsonc_loads
 
 EXTS = (".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 # A compiled-extension import (`./x.js`) names the TypeScript source (`./x.ts`).
@@ -44,14 +45,6 @@ TYPE_KINDS = {"class", "record", "struct", "interface", "enum", "object"}
 CONCRETE_KINDS = {"class", "record", "struct"}
 REFERENCE_KINDS = {"function", "method", "component"}
 OWNED_SOURCES = ("treesitter", "naming", "html")
-
-
-def _jsonc(text):
-    """Parse tsconfig-style JSON: comments and trailing commas allowed."""
-    strings_or_comments = r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/'
-    text = re.sub(strings_or_comments, lambda m: m.group(0) if m.group(0)[0] == '"' else "", text, flags=re.S)
-    text = re.sub(r'"(?:\\.|[^"\\])*"|,(\s*[}\]])', lambda m: m.group(1) if m.group(1) is not None else m.group(0), text)
-    return json.loads(text)
 
 
 def _norm(path):

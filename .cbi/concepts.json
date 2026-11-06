@@ -180,6 +180,7 @@
             "src/cbi/data.py",
             "src/cbi/env.py",
             "src/cbi/http.py",
+            "src/cbi/jsonc.py",
             "src/cbi/parse/__init__.py",
             "src/cbi/parse/csharp.py",
             "src/cbi/parse/endpoints.py",
