@@ -217,7 +217,7 @@ def _fill_missing_concepts(root, out, shas, scan_ref):
         if text is not None:
             continue
         (home / "concepts.json").write_text(fallback, encoding="utf-8")
-        scan_ref(root, out, sha)
+        scan_ref(root, out, sha, restore_judgement=False)
 
 
 def open_model(path):

@@ -271,7 +271,9 @@ def _project_model(root, out, sha, current_text, current_conn):
     changed = not concept_path.exists() or concept_path.read_text(encoding="utf-8") != text
     if changed:
         concept_path.write_text(text, encoding="utf-8")
-        resolved, _again, _counts, _open = scan_ref(root, out, sha, force=True)
+        resolved, _again, _counts, _open = scan_ref(
+            root, out, sha, force=True, restore_judgement=False
+        )
         reused = False
     return resolved, reused, provisional
 

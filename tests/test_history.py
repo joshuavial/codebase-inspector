@@ -190,6 +190,42 @@ def test_narrative_uses_summarise_change_and_appears_in_outputs(make_repo, monke
         root / ".cbi" / "viewer" / "data" / "history.js").read_text()
 
 
+def test_project_model_preserves_projected_concepts_when_ref_has_committed_map(make_repo, monkeypatch):
+    root = make_repo({"a.py": "x = 1\n"}, name="history-ref-committed-map")
+    old_map = {
+        "summary": "Old map.",
+        "concepts": [{"id": "old_c", "name": "Old", "summary": "Old.", "role": "core", "files": ["a.py"]}],
+        "externals": [], "relationships": [],
+    }
+    commit(root, "commit with map (#1)", **{".cbi/concepts.json": json.dumps(old_map)})
+    commit(root, "add b (#2)", **{"b.py": "y = 2\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    today_map = {
+        "summary": "Today map.",
+        "concepts": [{"id": "new_c", "name": "New", "summary": "New.", "role": "core", "files": ["a.py", "b.py"]}],
+        "externals": [], "relationships": [],
+    }
+    (root / ".cbi" / "concepts.json").write_text(json.dumps(today_map))
+    assert main(["scan"]) == 0
+
+    out = root / ".cbi"
+    from cbi import diff, files
+    conn = diff.open_model(out / "model.db")
+    try:
+        sha = files.resolve_commit(root, "HEAD~1")
+        _db, _prov = history.point_model(root, out, sha, json.dumps(today_map), conn)
+        ref_concepts_file = out / "refs" / sha / "concepts.json"
+        assert ref_concepts_file.is_file()
+        ref_data = json.loads(ref_concepts_file.read_text())
+        concept_ids = [c["id"] for c in ref_data.get("concepts", [])]
+        assert "new_c" in concept_ids
+        assert "old_c" not in concept_ids
+    finally:
+        conn.close()
+
+
+
 def test_cached_history_refreshes_architecture_answers_without_old_models(make_repo, monkeypatch, capsys, tmp_path):
     root = make_repo({"a.py": "def a():\n    return 1\n"}, name="summary-history")
     older = commit(root, "add another function", **{"b.py": "def b():\n    return 2\n"})

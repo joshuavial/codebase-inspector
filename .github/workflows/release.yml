@@ -132,6 +132,8 @@ jobs:
       url: https://pypi.org/p/codebase-inspector
     permissions:
       id-token: write
+      actions: read
+      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:

@@ -577,7 +577,7 @@ def scan(root, out):
     return _map(root, out, ignore_text, workspaces, tracked, states, reporter=reporter)
 
 
-def scan_ref(root, out, ref, *, force=False):
+def scan_ref(root, out, ref, *, force=False, restore_judgement=True):
     """Map one commit from git objects into out/refs/<sha>/model.db.
 
     Returns (sha, reused, counts, (open, blocked)). A stored model is reused when
@@ -591,14 +591,15 @@ def scan_ref(root, out, ref, *, force=False):
     db = home / "model.db"
     # Ref judgement comes from that commit, never from the current worktree.
     # Keep locally answered ref tasks when no committed projection exists.
-    for name in ("structure.json", "concepts.json", "screens.json", "team.toml", "answers.jsonl"):
-        result = subprocess.run(
-            ["git", "cat-file", "blob", f"{sha}:.cbi/{name}"], cwd=root, capture_output=True)
-        if result.returncode == 0:
-            home.mkdir(parents=True, exist_ok=True)
-            path = home / name
-            if not path.exists() or path.read_bytes() != result.stdout:
-                path.write_bytes(result.stdout)
+    if restore_judgement:
+        for name in ("structure.json", "concepts.json", "screens.json", "team.toml", "answers.jsonl"):
+            result = subprocess.run(
+                ["git", "cat-file", "blob", f"{sha}:.cbi/{name}"], cwd=root, capture_output=True)
+            if result.returncode == 0:
+                home.mkdir(parents=True, exist_ok=True)
+                path = home / name
+                if not path.exists() or path.read_bytes() != result.stdout:
+                    path.write_bytes(result.stdout)
     if not force and store.ref_reusable(
             db, files.ignore_token(ignore_text), files.PARSER_VERSION,
             _read(home / "concepts.json"), _read(home / "screens.json"),
