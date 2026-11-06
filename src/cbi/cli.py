@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, tasks, team, update_check
+from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, mcp, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, tasks, team, update_check
 from cbi.ids import file_id
 
 COMMANDS = {
@@ -42,6 +42,7 @@ COMMANDS = {
     "open-file": "Open one file, symbol or test in the editor.",
     "review": "Write a review of a pull request, branch or commit.",
     "history": "Print the architecture changelog for the default branch.",
+    "mcp": "Run the stdio MCP server for coding agents.",
 }
 
 
@@ -211,7 +212,7 @@ def build_parser():
 
 
 READERS = ("search", "show", "context", "tests-for", "tasks", "task", "submit", "build",
-           "hotspots", "orphans", "cycles", "deps", "open-file")
+           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp")
 
 TEAM_INIT_HELP = """\
 Opt in to team mode. Writes team.toml, rewrites .gitignore so only derived
@@ -443,6 +444,10 @@ one file, the file is missing, or the editor program was not found, 2 the
 template is empty or has an unclosed quote.""",
     "review": review.HELP,
     "check": check.HELP,
+    "mcp": """\
+Run the stdio Model Context Protocol (MCP) server for coding agents.
+Allows AI tools (Claude Code, Cursor, Codex, Antigravity) to query
+CBI's local codebase model directly via stdio JSON-RPC 2.0.""",
 }
 
 
@@ -1307,11 +1312,16 @@ def cmd_team(args):
     return 2
 
 
+def cmd_mcp(args):
+    root, out = _paths(args)
+    return mcp.run_server(root=root, out=out)
+
+
 HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
             "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,
-            "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps}
+            "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp}
 HANDLERS["ingest"] = cmd_ingest
 
 
