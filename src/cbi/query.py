@@ -120,6 +120,18 @@ cycle. scanned_at is local ISO time, null before the first scan.
 Exit codes: 0 done, 1 no model (run `cbi init` and `cbi scan`).
 
 Example: cbi status --json""",
+    "query": """\
+Execute a read-only SQL query against the codebase model (.cbi/model.db).
+
+Only read-only statements (SELECT, WITH, EXPLAIN, PRAGMA) are permitted.
+Use --schema to inspect available tables and column definitions.
+Use --json for machine-readable JSON output.
+Use --limit N to set the maximum number of rows returned (default: 50).
+
+Example:
+  cbi query "SELECT id, name FROM nodes WHERE kind = 'concept'"
+  cbi query "SELECT src, dst, kind FROM edges WHERE kind = 'relates'" --json
+  cbi query --schema""",
 }
 
 DIAGNOSTIC_EXAMPLES = 3
@@ -772,3 +784,74 @@ def status(conn, args):
         for e in d["examples"]:
             print(f"    {e['path'] or e['node_id']}" + (f": {e['detail'].splitlines()[0]}" if e["detail"] else ""))
     return 0
+
+
+# --- query ----------------------------------------------------------------------
+
+
+def sql(conn, args):
+    if getattr(args, "schema", False):
+        tables = dict(conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall())
+        if getattr(args, "json", False):
+            _print_json(tables)
+            return 0
+        print("Model Schema:")
+        for name, ddl in tables.items():
+            print(f"\n-- {name} --\n{ddl}")
+        return 0
+
+    query_str = (getattr(args, "sql", None) or "").strip()
+    if not query_str:
+        print("cbi query: provide a SQL statement (e.g. `cbi query \"SELECT ...\"`) or use `--schema`.", file=sys.stderr)
+        return 2
+
+    first_token = query_str.split()[0].upper() if query_str.split() else ""
+    if first_token not in ("SELECT", "WITH", "EXPLAIN", "PRAGMA"):
+        print(f"cbi query: only read-only queries are permitted (got {first_token}).", file=sys.stderr)
+        return 1
+
+    limit = getattr(args, "limit", 50)
+    if limit is not None and limit <= 0:
+        limit = 50
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(query_str)
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
+
+        if getattr(args, "json", False):
+            results = [dict(zip(columns, row)) for row in rows]
+            _print_json({
+                "query": query_str,
+                "columns": columns,
+                "row_count": len(results),
+                "rows": results,
+            })
+            return 0
+
+        if not columns:
+            print("Query executed (0 columns returned).")
+            return 0
+
+        col_widths = [len(c) for c in columns]
+        str_rows = []
+        for row in rows:
+            str_row = [str(val) if val is not None else "NULL" for val in row]
+            for i, val in enumerate(str_row):
+                col_widths[i] = max(col_widths[i], len(val))
+            str_rows.append(str_row)
+
+        header = " | ".join(columns[i].ljust(col_widths[i]) for i in range(len(columns)))
+        divider = "-+-".join("-" * col_widths[i] for i in range(len(columns)))
+        print(header)
+        print(divider)
+        for r in str_rows:
+            print(" | ".join(r[i].ljust(col_widths[i]) for i in range(len(columns))))
+        print(f"({len(rows)} row{'s' if len(rows) != 1 else ''})")
+        return 0
+    except Exception as err:
+        print(f"cbi query: {err}", file=sys.stderr)
+        return 1

@@ -67,6 +67,7 @@ From any repository root:
 cbi prime              # Orientation guide for your agent
 cbi scan               # Map repository into .cbi/model.db
 cbi mcp                # Run stdio Model Context Protocol server for coding agents
+cbi query "<sql>"      # Safe read-only SQL queries and schema introspection
 cbi search <symbol>    # Fast full-text search across all AST nodes
 cbi show <node-id>     # Detailed symbol info, callers, and children
 cbi tests-for <symbol> # Find all tests exercising this symbol

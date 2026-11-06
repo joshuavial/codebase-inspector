@@ -43,6 +43,7 @@ COMMANDS = {
     "review": "Write a review of a pull request, branch or commit.",
     "history": "Print the architecture changelog for the default branch.",
     "mcp": "Run the stdio MCP server for coding agents.",
+    "query": "Execute a read-only SQL query against the codebase model.",
 }
 
 
@@ -70,7 +71,7 @@ def build_parser():
         if name in ("init", "scan", "check", *READERS):
             cmd.add_argument("--out", metavar="DIR", type=Path,
                              help="model directory to use instead of .cbi/ in the repo root")
-        if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps"):
+        if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps", "query"):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds = sub.choices
     cmds["bug"].add_argument("--print", dest="print_url", action="store_true", help="print the URL without opening it")
@@ -210,11 +211,14 @@ def build_parser():
                                help="URL scheme the static viewer uses: vscode (default), cursor, or none")
     cmds["mcp"].add_argument("--config", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
                              help="print MCP client configuration snippet (claude, cursor, gemini, windsurf, vscode, or all)")
+    cmds["query"].add_argument("sql", nargs="?", help="SQL query to execute against model.db (SELECT, WITH, EXPLAIN)")
+    cmds["query"].add_argument("--schema", action="store_true", help="print table definitions (nodes, edges, diagnostics, coverage)")
+    cmds["query"].add_argument("--limit", type=int, default=50, help="maximum rows to return (default: 50)")
     return parser
 
 
 READERS = ("search", "show", "context", "tests-for", "tasks", "task", "submit", "build",
-           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp")
+           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp", "query")
 
 TEAM_INIT_HELP = """\
 Opt in to team mode. Writes team.toml, rewrites .gitignore so only derived
@@ -450,6 +454,7 @@ template is empty or has an unclosed quote.""",
 Run the stdio Model Context Protocol (MCP) server for coding agents.
 Allows AI tools (Claude Code, Cursor, Codex, Antigravity) to query
 CBI's local codebase model directly via stdio JSON-RPC 2.0.""",
+    "query": query.HELP["query"],
 }
 
 
@@ -1321,11 +1326,16 @@ def cmd_mcp(args):
     return mcp.run_server(root=root, out=out)
 
 
+def cmd_query(args):
+    return _query(args, query.sql)
+
+
 HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
             "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,
-            "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp}
+            "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp,
+            "query": cmd_query}
 HANDLERS["ingest"] = cmd_ingest
 
 
