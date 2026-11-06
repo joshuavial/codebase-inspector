@@ -74,6 +74,8 @@ cbi show <node-id>     # Detailed symbol info, callers, and children
 cbi tests-for <symbol> # Find all tests exercising this symbol
 cbi cycles             # Detect circular import dependencies
 cbi hotspots           # Rank files and folders by coupling (fan-in/fan-out)
+cbi endpoints          # List HTTP routes with handlers, callers, and database tables
+cbi tables             # List database tables, columns, foreign keys, and code references
 cbi review BASE..HEAD  # Generate architectural PR review & Mermaid graph
 cbi build              # Export interactive static HTML viewer
 cbi check              # CI gate: fail if committed map drifts from source
@@ -108,6 +110,24 @@ Exposed MCP tools:
 * `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
 * `cbi_query`: Execute read-only SQL queries against the local codebase model database.
 * `cbi_concepts`: Query concept taxonomy, hierarchy, role descriptions, and file ownership.
+* `cbi_endpoints`: List HTTP route endpoints detected in the codebase model with their handlers, caller references, downstream code calls, and database tables (optional filters: path, method, handler, table).
+* `cbi_tables`: List database tables, columns, foreign keys, and code references detected in the codebase model (optional filter: table).
+
+### System Views
+
+Inspect HTTP API surface and database schemas from the command line:
+
+```bash
+# List all detected HTTP endpoints or filter by method, path, handler, or table
+cbi endpoints
+cbi endpoints --method GET --path /api
+cbi endpoints --table accounts --json
+
+# List database tables, columns, and foreign keys or filter by table name
+cbi tables
+cbi tables --table accounts
+cbi tables --json
+```
 
 ---
 

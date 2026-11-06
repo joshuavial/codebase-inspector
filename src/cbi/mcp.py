@@ -13,7 +13,7 @@ import sys
 import threading
 from pathlib import Path
 
-from cbi import concepts, context, diff, files, graph, query, store, tasks
+from cbi import concepts, context, diff, files, graph, query, store, system_views, tasks
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "cbi"
@@ -270,6 +270,56 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "cbi_endpoints",
+        "description": "List HTTP route endpoints detected in the codebase model with their handlers, caller references, downstream code calls, and database tables.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Optional filter: match endpoint path substring.",
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Optional filter: HTTP method (e.g. GET, POST).",
+                },
+                "handler": {
+                    "type": "string",
+                    "description": "Optional filter: handler function, class, or file name.",
+                },
+                "table": {
+                    "type": "string",
+                    "description": "Optional filter: database table name read or written by the endpoint.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'json' (default) or 'text'.",
+                    "enum": ["json", "text"],
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cbi_tables",
+        "description": "List database tables, columns, primary and foreign keys, and code references detected in the codebase model.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "table": {
+                    "type": "string",
+                    "description": "Optional filter: table name or id substring.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'json' (default) or 'text'.",
+                    "enum": ["json", "text"],
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 
@@ -380,6 +430,8 @@ class MCPServer:
             "cbi_cycles": self.handle_cycles,
             "cbi_orphans": self.handle_orphans,
             "cbi_deps": self.handle_deps,
+            "cbi_endpoints": self.handle_endpoints,
+            "cbi_tables": self.handle_tables,
         }
         self._stdout_lock = threading.Lock()
 
@@ -868,6 +920,40 @@ class MCPServer:
             if code != 0 and err and not out:
                 raise ValueError(err.strip())
             return (out or err).rstrip()
+        finally:
+            conn.close()
+
+    def handle_endpoints(self, args: dict) -> str:
+        conn = self._get_connection()
+        try:
+            view = system_views.endpoint_view(conn)
+            endpoints = system_views.filter_endpoints(
+                view["endpoints"],
+                path=args.get("path"),
+                method=args.get("method"),
+                handler=args.get("handler"),
+                table=args.get("table"),
+            )
+            fmt = args.get("format", "json")
+            if fmt == "text":
+                return system_views.format_endpoints_text(endpoints).rstrip()
+            return json.dumps({"endpoints": endpoints}, indent=2)
+        finally:
+            conn.close()
+
+    def handle_tables(self, args: dict) -> str:
+        conn = self._get_connection()
+        try:
+            view = system_views.database_view(conn)
+            tables, rels = system_views.filter_tables(
+                view["tables"],
+                view["relationships"],
+                table=args.get("table"),
+            )
+            fmt = args.get("format", "json")
+            if fmt == "text":
+                return system_views.format_tables_text(tables, rels, all_tables=view["tables"]).rstrip()
+            return json.dumps({"tables": tables, "relationships": rels}, indent=2)
         finally:
             conn.close()
 
