@@ -1743,7 +1743,7 @@ class MCPServer:
         if fmt not in ("text", "json"):
             fmt = "text"
 
-        with self._scan_lock:
+        with self._scan_lock, self._stdout_lock:
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
                 cli.init_repo(self.root, self.out, team_mode=team)
@@ -1874,11 +1874,15 @@ def print_config(client: str = "all") -> int:
 
 
 class InstallResult(list):
-    """List of updated config Paths that also compares equal to 0 for exit codes."""
+    """List of updated config Paths that compares equal to 0 on full success."""
+
+    def __init__(self, items=None, success=True):
+        super().__init__(items or [])
+        self.success = success
 
     def __eq__(self, other):
         if other == 0:
-            return True
+            return self.success
         return super().__eq__(other)
 
 
@@ -1901,9 +1905,15 @@ def install_client_config(client_name: str = "all", root=None):
     root = Path(root).resolve()
 
     home = Path.home()
-    server_entry = {
+    default_server_entry = {
         "command": "cbi",
         "args": ["mcp"],
+    }
+    # Desktop apps (like Claude Desktop) need explicit cwd pointing to the repository
+    desktop_server_entry = {
+        "command": "cbi",
+        "args": ["mcp"],
+        "cwd": str(root),
     }
 
     claude_code_path = home / ".claude.json"
@@ -1916,25 +1926,26 @@ def install_client_config(client_name: str = "all", root=None):
 
     targets = []
     if client in ("claude", "all"):
-        targets.append(claude_code_path)
+        targets.append((claude_code_path, default_server_entry))
         if claude_desktop_path.parent.exists() or claude_desktop_path.is_file():
-            targets.append(claude_desktop_path)
+            targets.append((claude_desktop_path, desktop_server_entry))
 
     if client in ("cursor", "all"):
-        targets.append(home / ".cursor" / "mcp.json")
+        targets.append((home / ".cursor" / "mcp.json", default_server_entry))
 
     if client in ("gemini", "antigravity", "all"):
-        targets.append(home / ".gemini" / "settings.json")
-        targets.append(home / ".gemini" / "antigravity-cli" / "mcp_config.json")
+        targets.append((home / ".gemini" / "settings.json", default_server_entry))
+        targets.append((home / ".gemini" / "antigravity-cli" / "mcp_config.json", default_server_entry))
 
     if client in ("windsurf", "all"):
-        targets.append(home / ".codeium" / "windsurf" / "mcp_config.json")
+        targets.append((home / ".codeium" / "windsurf" / "mcp_config.json", default_server_entry))
 
     if client in ("vscode", "all"):
-        targets.append(root / ".vscode" / "mcp.json")
+        targets.append((root / ".vscode" / "mcp.json", default_server_entry))
 
-    updated = InstallResult()
-    for target in targets:
+    updated_paths = []
+    has_errors = False
+    for target, server_entry in targets:
         data = {}
         if target.is_file():
             try:
@@ -1943,10 +1954,12 @@ def install_client_config(client_name: str = "all", root=None):
                     data = json.loads(content)
             except Exception as err:
                 print(f"Skipping {target}: existing file could not be parsed as JSON ({err})", file=sys.stderr)
+                has_errors = True
                 continue
 
         if not isinstance(data, dict):
             print(f"Skipping {target}: expected JSON object at top level", file=sys.stderr)
+            has_errors = True
             continue
 
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1962,10 +1975,10 @@ def install_client_config(client_name: str = "all", root=None):
         data["mcpServers"]["codebase-inspector"] = server_entry
 
         target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        updated.append(target)
+        updated_paths.append(target)
         print(f"Installed codebase-inspector MCP server configuration in {target}")
 
-    return updated
+    return InstallResult(updated_paths, success=not has_errors and len(updated_paths) > 0)
 
 
 def run_server(root=None, out=None, stdin=None, stdout=None):

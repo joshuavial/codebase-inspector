@@ -1728,24 +1728,33 @@ def test_install_client_config(tmp_path, monkeypatch):
     assert "codebase-inspector" in v_data["mcpServers"]
     assert "codebase-inspector" in v_data["servers"]
 
-    # 6. Install claude (Claude Code)
+    # 6. Install claude (Claude Code and Desktop when directory exists)
+    desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
+    desktop_dir.mkdir(parents=True, exist_ok=True)
     res_claude = install_client_config("claude", root=root)
     assert res_claude == 0
     claude_json = fake_home / ".claude.json"
     assert claude_json.is_file()
     cl_data = json.loads(claude_json.read_text())
     assert "codebase-inspector" in cl_data["mcpServers"]
+    desktop_json = desktop_dir / "claude_desktop_config.json"
+    assert desktop_json.is_file()
+    d_data = json.loads(desktop_json.read_text())
+    assert d_data["mcpServers"]["codebase-inspector"]["cwd"] == str(root)
 
     # 7. Install all
     res_all = install_client_config("all", root=root)
     assert res_all == 0
     assert len(res_all) >= 5
 
-    # 8. Unparseable/corrupted config is preserved, not overwritten
+    # 8. Unparseable/corrupted config is preserved, not overwritten, and returns failure
     corrupt_file = fake_home / ".cursor" / "mcp.json"
     corrupt_file.write_text("{bad json syntax")
-    install_client_config("cursor", root=root)
+    res_corrupt = install_client_config("cursor", root=root)
+    assert res_corrupt != 0
     assert corrupt_file.read_text() == "{bad json syntax"
+    # Restore valid config
+    corrupt_file.write_text(json.dumps({"mcpServers": {}}))
 
     # 9. Test CLI integration
     monkeypatch.chdir(root)
