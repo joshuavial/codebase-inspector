@@ -1641,6 +1641,10 @@ end_of_record
     assert res_err4["isError"]
     assert "not loaded" in res_err4["content"][0]["text"]
 
+    # 7. Ingest with cwd argument
+    res_cwd = server.execute_tool("cbi_ingest", {"files": ["coverage.lcov"], "cwd": str(repo)})
+    assert not res_cwd["isError"]
+
 
 def test_tool_init(make_repo, tmp_path):
     files_map = {"main.py": "print('hello')\n"}

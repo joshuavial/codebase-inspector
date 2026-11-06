@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -564,6 +565,10 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Array of file paths to coverage or test result files (lcov, coverage.py JSON, JUnit XML) to ingest.",
                 },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional working directory where the test runner executed (default: server launch working directory or repo root).",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' (default) or 'json'.",
@@ -673,13 +678,14 @@ def write_message(stream, message, content_length=False):
 class MCPServer:
     """Stdio JSON-RPC 2.0 MCP server for CBI."""
 
-    def __init__(self, root=None, out=None, model_path=None):
+    def __init__(self, root=None, out=None, model_path=None, cwd=None):
         if root is None:
             try:
                 root = files.repo_root(Path.cwd())
             except files.NotARepo:
                 root = Path.cwd()
         self.root = Path(root).resolve()
+        self.cwd = Path(cwd).resolve() if cwd else Path.cwd().resolve()
         if out is None:
             self.out = self.root / ".cbi"
         else:
@@ -1687,6 +1693,14 @@ class MCPServer:
         if fmt not in ("text", "json"):
             fmt = "text"
 
+        cwd_arg = args.get("cwd")
+        if cwd_arg:
+            runner_cwd = Path(cwd_arg)
+            if not runner_cwd.is_absolute():
+                runner_cwd = (self.root / runner_cwd).resolve()
+        else:
+            runner_cwd = getattr(self, "cwd", self.root)
+
         with self._scan_lock:
             conn = self._get_write_connection()
             try:
@@ -1694,9 +1708,12 @@ class MCPServer:
                 for f in files_arg:
                     path = Path(f)
                     if not path.is_absolute():
-                        path = self.root / path
+                        if (runner_cwd / path).is_file():
+                            path = runner_cwd / path
+                        else:
+                            path = self.root / path
                     try:
-                        r = ingest.ingest(conn, self.root, self.root, path)
+                        r = ingest.ingest(conn, self.root, runner_cwd, path)
                         records.append((f, r))
                     except (ingest.UnknownFormat, OSError, ValueError, SyntaxError) as err:
                         raise ValueError(f"{f}: not loaded: {err}") from err
@@ -1906,13 +1923,14 @@ def install_client_config(client_name: str = "all", root=None):
     root = Path(root).resolve()
 
     home = Path.home()
+    cbi_cmd = shutil.which("cbi") or "cbi"
     default_server_entry = {
         "command": "cbi",
         "args": ["mcp"],
     }
-    # Desktop apps (like Claude Desktop) need explicit repository path via --repo
+    # Desktop apps (like Claude Desktop) need explicit repository path via --repo and resolved executable
     desktop_server_entry = {
-        "command": "cbi",
+        "command": cbi_cmd,
         "args": ["mcp", "--repo", str(root)],
     }
 
