@@ -214,6 +214,8 @@ def build_parser():
                                    help="command template with {project}, {file} and {line}; overrides --editor")
     cmds["build"].add_argument("--editor", choices=editor.EDITORS, default="vscode",
                                help="URL scheme the static viewer uses: vscode (default), cursor, or none")
+    cmds["mcp"].add_argument("--repo", metavar="DIR", type=Path,
+                             help="repository root directory for the MCP server")
     cmds["mcp"].add_argument("--config", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
                              help="print MCP client configuration snippet (claude, cursor, gemini, windsurf, vscode, or all)")
     cmds["mcp"].add_argument("--install", choices=("claude", "cursor", "gemini", "windsurf", "vscode", "all"), nargs="?", const="all",
@@ -474,8 +476,10 @@ CBI's local codebase model directly via stdio JSON-RPC 2.0.""",
 
 
 def _paths(args):
-    root = files.repo_root(Path.cwd())
-    out = args.out.resolve() if args.out else root / ".cbi"
+    repo_arg = getattr(args, "repo", None)
+    cwd = repo_arg.resolve() if repo_arg else Path.cwd()
+    root = files.repo_root(cwd)
+    out = args.out.resolve() if getattr(args, "out", None) else root / ".cbi"
     return root, out
 
 
@@ -1350,12 +1354,14 @@ def cmd_mcp(args):
     if getattr(args, "config", None):
         return mcp.print_config(args.config)
     if getattr(args, "install", None):
+        repo_arg = getattr(args, "repo", None)
+        cwd = repo_arg.resolve() if repo_arg else Path.cwd()
         try:
-            root = files.repo_root(Path.cwd())
+            root = files.repo_root(cwd)
         except files.NotARepo:
-            root = Path.cwd()
+            root = cwd
         res = mcp.install_client_config(args.install, root=root)
-        return 0 if (res == 0 or isinstance(res, list)) else 1
+        return 0 if (res == 0 or getattr(res, "success", False)) else 1
     root, out = _paths(args)
     return mcp.run_server(root=root, out=out)
 

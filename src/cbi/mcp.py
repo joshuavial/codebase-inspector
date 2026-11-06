@@ -1909,11 +1909,10 @@ def install_client_config(client_name: str = "all", root=None):
         "command": "cbi",
         "args": ["mcp"],
     }
-    # Desktop apps (like Claude Desktop) need explicit cwd pointing to the repository
+    # Desktop apps (like Claude Desktop) need explicit repository path via --repo
     desktop_server_entry = {
         "command": "cbi",
-        "args": ["mcp"],
-        "cwd": str(root),
+        "args": ["mcp", "--repo", str(root)],
     }
 
     claude_code_path = home / ".claude.json"

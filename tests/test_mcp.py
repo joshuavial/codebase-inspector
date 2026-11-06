@@ -1740,7 +1740,7 @@ def test_install_client_config(tmp_path, monkeypatch):
     desktop_json = desktop_dir / "claude_desktop_config.json"
     assert desktop_json.is_file()
     d_data = json.loads(desktop_json.read_text())
-    assert d_data["mcpServers"]["codebase-inspector"]["cwd"] == str(root)
+    assert d_data["mcpServers"]["codebase-inspector"]["args"] == ["mcp", "--repo", str(root)]
 
     # 7. Install all
     res_all = install_client_config("all", root=root)
@@ -1753,11 +1753,12 @@ def test_install_client_config(tmp_path, monkeypatch):
     res_corrupt = install_client_config("cursor", root=root)
     assert res_corrupt != 0
     assert corrupt_file.read_text() == "{bad json syntax"
-    # Restore valid config
-    corrupt_file.write_text(json.dumps({"mcpServers": {}}))
 
     # 9. Test CLI integration
     monkeypatch.chdir(root)
+    assert main(["mcp", "--install", "cursor"]) == 1
+    # Restore valid config
+    corrupt_file.write_text(json.dumps({"mcpServers": {}}))
     assert main(["mcp", "--install", "cursor"]) == 0
     assert main(["mcp", "--install"]) == 0
 
