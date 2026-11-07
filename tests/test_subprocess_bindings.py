@@ -125,3 +125,43 @@ def test_driver_option():
         assert not any('test_views.py' in d for (d,) in diags)
         unmatched = conn.execute("SELECT node_id FROM diagnostics WHERE kind='unmatched_test'").fetchall()
         assert unmatched == []
+
+
+def test_variable_command_list_binds_module_and_program(make_repo, monkeypatch):
+    root = make_repo({
+        'pkg/entry.py': 'def main(): pass\n',
+        'worker.py': 'def run(): pass\n',
+        'tests/test_cmd.py': '''import subprocess
+import sys
+
+def test_var_module_run():
+    cmd = [sys.executable, "-m", "pkg.entry", "--flag"]
+    subprocess.run(cmd)
+
+def test_var_module_popen():
+    cmd = ["python", "-m", "pkg.entry"]
+    subprocess.Popen(cmd)
+
+def test_var_script_run():
+    cmd = [sys.executable, "worker.py"]
+    subprocess.run(cmd)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(['init']) == 0 and main(['scan']) == 0
+    with sqlite3.connect(root / '.cbi/model.db') as conn:
+        edges = conn.execute("SELECT s.name, d.path, e.attrs FROM edges e JOIN nodes s ON s.id=e.src "
+                             "JOIN nodes d ON d.id=e.dst WHERE e.kind='tests'").fetchall()
+        links = {(src, dst) for src, dst, _ in edges}
+        assert ('test_var_module_run', 'pkg/entry.py') in links
+        assert ('test_var_module_popen', 'pkg/entry.py') in links
+        assert ('test_var_script_run', 'worker.py') in links
+        for src, dst, attrs in edges:
+            if (src, dst) in {('test_var_module_run', 'pkg/entry.py'),
+                              ('test_var_module_popen', 'pkg/entry.py'),
+                              ('test_var_script_run', 'worker.py')}:
+                assert '"via": "subprocess"' in attrs
+
+        diags = conn.execute("SELECT detail FROM diagnostics WHERE kind='unsupported_test_mechanism'").fetchall()
+        assert not any('test_cmd.py' in d for (d,) in diags)
+

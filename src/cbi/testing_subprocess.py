@@ -10,6 +10,8 @@ INTERPRETERS = {'python', 'python3', 'node', 'bash', 'sh'}
 
 
 def _name(node):
+    if isinstance(node, str):
+        return node
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
@@ -18,8 +20,33 @@ def _name(node):
     return None
 
 
-def _literal(node):
-    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+def _literal(node, values=None):
+    if isinstance(node, str):
+        return node
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if values and isinstance(node, ast.Name):
+        val = values.get(node.id)
+        if isinstance(val, str):
+            return val
+    return None
+
+
+def _resolve_argv(args, call_nodes, call_values):
+    if isinstance(args, (ast.List, ast.Tuple)):
+        return list(args.elts)
+    if isinstance(args, ast.BinOp) and isinstance(args.op, ast.Add) and isinstance(args.left, (ast.List, ast.Tuple)):
+        return list(args.left.elts)
+    if isinstance(args, ast.Name):
+        node = call_nodes.get(args.id)
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return list(node.elts)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and isinstance(node.left, (ast.List, ast.Tuple)):
+            return list(node.left.elts)
+        val = call_values.get(args.id)
+        if isinstance(val, (list, tuple)):
+            return list(val)
+    return []
 
 
 def _scope_imports(node, line=None):
@@ -80,7 +107,12 @@ def _target_file(model, fid, value):
 def _file_bindings(tree, own):
     values = {}
     aliases = {}
-    for stmt in tree.body:
+    nodes = {}
+    pending = list(tree.body)
+    while pending:
+        stmt = pending.pop(0)
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
         if isinstance(stmt, ast.Import):
             for item in stmt.names:
                 aliases[item.asname or item.name.split('.')[0]] = item.name if item.asname else item.name.split('.')[0]
@@ -93,15 +125,23 @@ def _file_bindings(tree, own):
             for target in targets:
                 if isinstance(target, ast.Name):
                     values[target.id] = val
-    return values, aliases
+                    nodes[target.id] = stmt.value
+        else:
+            pending[0:0] = list(ast.iter_child_nodes(stmt))
+    return values, aliases, nodes
 
 
-def _scope_bindings(scope, line, values, aliases, own):
+def _scope_bindings(scope, line, values, aliases, nodes, own):
     local_values = dict(values)
     local_aliases = dict(aliases)
-    for stmt in scope.body:
+    local_nodes = dict(nodes)
+    pending = list(scope.body)
+    while pending:
+        stmt = pending.pop(0)
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
         if getattr(stmt, 'lineno', 0) >= line:
-            break
+            continue
         if isinstance(stmt, ast.Import):
             for item in stmt.names:
                 local_aliases[item.asname or item.name.split('.')[0]] = item.name if item.asname else item.name.split('.')[0]
@@ -114,7 +154,10 @@ def _scope_bindings(scope, line, values, aliases, own):
             for target in targets:
                 if isinstance(target, ast.Name):
                     local_values[target.id] = val
-    return local_values, local_aliases
+                    local_nodes[target.id] = stmt.value
+        else:
+            pending[0:0] = list(ast.iter_child_nodes(stmt))
+    return local_values, local_aliases, local_nodes
 
 
 def link(model, edges, add):
@@ -123,7 +166,7 @@ def link(model, edges, add):
         if model.files[fid][2] != 'test':
             continue
         own = model.files[fid][1]
-        module_values, module_aliases = _file_bindings(tree, own)
+        module_values, module_aliases, module_nodes = _file_bindings(tree, own)
         aliases = _scope_imports(tree)
         parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
         for call in ast.walk(tree):
@@ -163,12 +206,13 @@ def link(model, edges, add):
                 continue
             call_values = dict(module_values)
             call_path_aliases = dict(module_aliases)
+            call_nodes = dict(module_nodes)
             for scope in reversed(scopes):
-                call_values, call_path_aliases = _scope_bindings(scope, call.lineno, call_values, call_path_aliases, own)
+                call_values, call_path_aliases, call_nodes = _scope_bindings(scope, call.lineno, call_values, call_path_aliases, call_nodes, own)
             args = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == 'args'), None)
             src = model.test_owner(owner(model, fid, call))
             targets = set()
-            argv = list(args.elts) if isinstance(args, (ast.List, ast.Tuple)) else []
+            argv = _resolve_argv(args, call_nodes, call_values)
             shell = any(k.arg == 'shell' and not (isinstance(k.value, ast.Constant) and k.value.value is False)
                         for k in call.keywords)
             supported = False
@@ -176,18 +220,18 @@ def link(model, edges, add):
                 head = _name(argv[0]) or ''
                 first, dot, rest = head.partition('.')
                 head = local_aliases.get(first, first) + (dot + rest if dot else '')
-                executable = _literal(argv[0])
-                python = head == 'sys.executable' or (executable and posixpath.basename(executable) in {'python', 'python3'})
-                offset = 1 if head == 'sys.executable' or (executable and posixpath.basename(executable) in INTERPRETERS) else 0
-                program = _literal(argv[offset]) if len(argv) > offset else None
+                executable = _literal(argv[0], call_values)
+                python = head == 'sys.executable' or executable == 'sys.executable' or (executable and posixpath.basename(executable) in {'python', 'python3'})
+                offset = 1 if head == 'sys.executable' or executable == 'sys.executable' or (executable and posixpath.basename(executable) in INTERPRETERS) else 0
+                program = _literal(argv[offset], call_values) if len(argv) > offset else None
                 if python and program == '-m' and len(argv) > offset + 1:
-                    module = _literal(argv[offset + 1])
+                    module = _literal(argv[offset + 1], call_values)
                     dst = model.spec(fid, module) if module else None
                     if dst:
                         targets.add(dst)
                     supported = bool(dst)
                 elif python and program == '-c' and len(argv) > offset + 1:
-                    source = _literal(argv[offset + 1])
+                    source = _literal(argv[offset + 1], call_values)
                     try:
                         child = ast.parse(source) if source is not None else None
                     except SyntaxError:
@@ -204,8 +248,8 @@ def link(model, edges, add):
                     supported = False
                 else:
                     for elt in argv[offset:]:
-                        lit = _literal(elt)
-                        val = lit if lit is not None else evaluate(elt, call_values, call_path_aliases, own)
+                        lit = _literal(elt, call_values)
+                        val = lit if lit is not None else evaluate(elt, call_values, call_path_aliases, own) if isinstance(elt, ast.AST) else elt
                         if isinstance(val, (str, PathValue)):
                             path_str = val.path if isinstance(val, PathValue) else val
                             if path_str.startswith('-'):

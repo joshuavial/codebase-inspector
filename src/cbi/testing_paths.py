@@ -64,6 +64,8 @@ def evaluate(node, values, aliases, own):
             return values[node.id]
         if node.id in TEMPORARY_FIXTURES:
             return PathValue(f"<{node.id}>", False, scratch=True)
+        if dotted(node, aliases) == "sys.executable":
+            return "sys.executable"
         return None
     if isinstance(node, (ast.Tuple, ast.List)):
         return tuple(evaluate(item, values, aliases, own) for item in node.elts)
@@ -83,10 +85,13 @@ def evaluate(node, values, aliases, own):
                 return PathValue(posixpath.normpath(posixpath.join(left.path, right)), left.anchored, left.scratch)
             elif left.scratch:
                 return PathValue(posixpath.normpath(posixpath.join(left.path, "<dynamic>")), False, True)
-    if isinstance(node, ast.Attribute) and node.attr == "parent":
-        base = evaluate(node.value, values, aliases, own)
-        if isinstance(base, PathValue):
-            return PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
+    if isinstance(node, ast.Attribute):
+        if dotted(node, aliases) == "sys.executable":
+            return "sys.executable"
+        if node.attr == "parent":
+            base = evaluate(node.value, values, aliases, own)
+            if isinstance(base, PathValue):
+                return PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         base = evaluate(node.value.value, values, aliases, own)
         index = evaluate(node.slice, values, aliases, own)
