@@ -178,8 +178,7 @@ def run_cbi_commands(repo_dir: Path):
     scene4_lines.append("")
     scene4_lines.append(excerpt_data["mermaid_diagram"])
     scene4_lines.append("")
-    for sym in excerpt_data["changed_symbols"][:2]:
-        scene4_lines.append(f"- symbol-changed: {sym}")
+    scene4_lines.extend(excerpt_data["formatted_symbols"])
 
     scene4_output = "\n".join(scene4_lines)
 
@@ -192,7 +191,7 @@ def run_cbi_commands(repo_dir: Path):
     }
 
 
-def extract_review_excerpt(content: str) -> dict:
+def extract_review_excerpt(content: str, max_symbols: int = 5) -> dict:
     """Parse generated review.md to extract authentic change overview, compact diagram, and changed symbols."""
     lines = content.splitlines()
 
@@ -259,11 +258,25 @@ def extract_review_excerpt(content: str) -> dict:
             if syms and syms[0] not in changed_symbols:
                 changed_symbols.append(syms[0])
 
+    symbol_lines = format_changed_symbols(changed_symbols, max_symbols=max_symbols)
+
     return {
         "change_summary": change_summary_line,
         "mermaid_diagram": "\n".join(compact_diagram),
         "changed_symbols": changed_symbols,
+        "formatted_symbols": symbol_lines,
     }
+
+
+def format_changed_symbols(symbols: list, max_symbols: int = 5) -> list:
+    """Format changed symbols list, explicitly annotating if any are omitted."""
+    lines = []
+    for sym in symbols[:max_symbols]:
+        lines.append(f"- symbol-changed: {sym}")
+    if len(symbols) > max_symbols:
+        omitted = len(symbols) - max_symbols
+        lines.append(f"- ... [{omitted} symbol{'s' if omitted > 1 else ''} omitted for demo] ...")
+    return lines
 
 
 def render_html_frame(scene_num: int, scene_title: str, prompt_cmd: str, output_text: str = "", is_executing: bool = False) -> str:

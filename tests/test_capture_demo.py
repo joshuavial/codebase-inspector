@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from capture_demo import extract_review_excerpt
+from capture_demo import extract_review_excerpt, format_changed_symbols
 
 
 SAMPLE_REVIEW_MD = """\
@@ -106,11 +106,47 @@ def test_extract_review_excerpt_derives_truthful_summary_from_review_md():
     assert "... [3 classDef styling lines omitted for demo] ..." in mermaid
     assert 'local_synthetic_cli_repo_pkg_["pkg"]:::changed' in mermaid
 
-    # 4. Verify changed symbols extracted
+    # 4. Verify changed symbols extracted and formatted
     symbols = data["changed_symbols"]
     assert "pkg/client.py#Client" in symbols
     assert "pkg/client.py#Client.request" in symbols
     assert "pkg/client.py#Client.__init__" in symbols
+
+    # All 3 fixture symbols must be present in formatted_symbols with no omission note
+    formatted = data["formatted_symbols"]
+    assert len(formatted) == 3
+    assert "- symbol-changed: pkg/client.py#Client" in formatted
+    assert "- symbol-changed: pkg/client.py#Client.request" in formatted
+    assert "- symbol-changed: pkg/client.py#Client.__init__" in formatted
+    assert not any("omitted" in line for line in formatted)
+
+
+def test_format_changed_symbols_explicit_omission_when_capped():
+    """Verify that when changed symbols exceed max_symbols, explicit omission marker is added."""
+    syms = [
+        "pkg/client.py#Client",
+        "pkg/client.py#Client.request",
+        "pkg/client.py#Client.__init__",
+    ]
+
+    # When cap == 3, all 3 are rendered, no omission line
+    res3 = format_changed_symbols(syms, max_symbols=3)
+    assert len(res3) == 3
+    assert "- symbol-changed: pkg/client.py#Client.__init__" in res3
+    assert not any("omitted" in line for line in res3)
+
+    # When cap == 2, exactly 2 symbols rendered + 1 explicit omission line
+    res2 = format_changed_symbols(syms, max_symbols=2)
+    assert len(res2) == 3
+    assert res2[0] == "- symbol-changed: pkg/client.py#Client"
+    assert res2[1] == "- symbol-changed: pkg/client.py#Client.request"
+    assert res2[2] == "- ... [1 symbol omitted for demo] ..."
+
+    # When cap == 1 with 3 symbols: 1 rendered + [2 symbols omitted for demo]
+    res1 = format_changed_symbols(syms, max_symbols=1)
+    assert len(res1) == 2
+    assert res1[0] == "- symbol-changed: pkg/client.py#Client"
+    assert res1[1] == "- ... [2 symbols omitted for demo] ..."
 
 
 def test_extract_review_excerpt_raises_on_missing_overview():
