@@ -222,6 +222,15 @@ def evaluate(node, values, aliases, own):
                 "file": PathValue("<scratch_file>", False, scratch=True),
                 "project": PathValue("<scratch_project>", False, scratch=True),
             }
+    if name in {"_git_shim", "tests.test_refs._git_shim", "test_refs._git_shim"}:
+        dir_val = None
+        if args:
+            dir_val = args[0]
+        for kw in node.keywords:
+            if kw.arg == "directory":
+                dir_val = evaluate(kw.value, values, aliases, own)
+        if isinstance(dir_val, PathValue) and dir_val.scratch:
+            return PathValue(posixpath.normpath(posixpath.join(dir_val.path, "git.log")), False, scratch=True)
     return None
 
 
@@ -355,6 +364,13 @@ def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
             if target_arg is None and len(expr.args) >= 3:
                 target_arg = expr.args[2]
             if target_arg and _is_scratch_expr(target_arg, local_scratch, fn_returns, scratch_callables):
+                return True
+        if cname in {"_git_shim", "tests.test_refs._git_shim", "test_refs._git_shim"} or base_name == "_git_shim":
+            dir_arg = expr.args[0] if expr.args else None
+            for kw in expr.keywords:
+                if kw.arg == "directory":
+                    dir_arg = kw.value
+            if dir_arg and _is_scratch_expr(dir_arg, local_scratch, fn_returns, scratch_callables):
                 return True
     return False
 
@@ -724,6 +740,7 @@ def _extract_mode_from_call(call, values, aliases, own, is_method=False):
 
 def _track_write(call, values, aliases, own, written):
     target = None
+    is_git_shim = False
     if isinstance(call.func, ast.Attribute) and call.func.attr in {"write_text", "write_bytes"}:
         target = call.func.value
     elif isinstance(call.func, ast.Attribute) and call.func.attr == "open":
@@ -742,6 +759,13 @@ def _track_write(call, values, aliases, own, written):
             for kw in call.keywords:
                 if kw.arg == "png":
                     target = kw.value
+        elif name in {"_git_shim", "tests.test_refs._git_shim", "test_refs._git_shim"}:
+            is_git_shim = True
+            if call.args:
+                target = call.args[0]
+            for kw in call.keywords:
+                if kw.arg == "directory":
+                    target = kw.value
     if target is not None:
         try:
             written.add(ast.unparse(target))
@@ -750,6 +774,8 @@ def _track_write(call, values, aliases, own, written):
         val = evaluate(target, values, aliases, own)
         if isinstance(val, PathValue):
             written.add(val.path)
+            if is_git_shim:
+                written.add(posixpath.normpath(posixpath.join(val.path, "git.log")))
         elif isinstance(val, str):
             written.add(val)
         if isinstance(target, ast.Name):

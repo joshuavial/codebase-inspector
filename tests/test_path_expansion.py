@@ -613,6 +613,37 @@ def test_resolve_target_external_read_retains_diagnostic():
     assert any("test_resolve_target.py:13:" in d and "file_read" in d for d in diags)
 
 
+def test_git_shim_scratch_and_external_boundaries(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_git_shim.py": '''from pathlib import Path
+
+def _git_shim(directory):
+    return directory / "git.log"
+
+def test_git_shim_scratch_read_suppressed(tmp_path):
+    shim = tmp_path / "bin"
+    log = _git_shim(shim)
+    data = log.read_text()
+
+def test_git_shim_external_read_retains_diagnostic():
+    log = _git_shim(Path("/external/bin"))
+    data = log.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch git shim log read: NO diagnostic
+    assert not any("test_git_shim.py:9:" in d for d in diags)
+
+    # External git shim log read: MUST retain file_read diagnostic
+    assert any("test_git_shim.py:13:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 
