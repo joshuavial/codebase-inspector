@@ -116,20 +116,27 @@ def evaluate(node, values, aliases, own):
             if isinstance(base, PathValue):
                 new_path = posixpath.dirname(base.path)
                 return PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
-        base = evaluate(node.value.value, values, aliases, own)
+    if isinstance(node, ast.Subscript):
+        if isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
+            base = evaluate(node.value.value, values, aliases, own)
+            index = evaluate(node.slice, values, aliases, own)
+            if isinstance(base, PathValue) and isinstance(index, int) and 0 <= index <= 100:
+                for _ in range(index + 1):
+                    new_path = posixpath.dirname(base.path)
+                    base = PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
+                return base
+        base = evaluate(node.value, values, aliases, own)
         index = evaluate(node.slice, values, aliases, own)
-        if isinstance(base, PathValue) and isinstance(index, int) and 0 <= index <= 100:
-            for _ in range(index + 1):
-                new_path = posixpath.dirname(base.path)
-                base = PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
-            return base
+        if isinstance(base, (tuple, list)) and isinstance(index, int) and 0 <= index < len(base):
+            return base[index]
     if not isinstance(node, ast.Call):
         return None
     name = dotted(node.func, aliases)
     args = [evaluate(arg, values, aliases, own) for arg in node.args]
     if name in TEMPORARY_CALLS or (name in values and getattr(values[name], "scratch", False)):
         return PathValue(f"<{name}>", False, scratch=True)
+    if name in values and isinstance(values[name], (tuple, PathValue)):
+        return values[name]
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
         return PathValue(f"<{node.func.attr}>", False, scratch=True)
     if name in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and args:
@@ -239,6 +246,99 @@ def _assigned(node):
     return found
 
 
+def _find_returns(block):
+    stack = list(block)
+    returns = []
+    while stack:
+        curr = stack.pop()
+        if isinstance(curr, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(curr, (ast.Return, ast.Yield, ast.YieldFrom)) and curr.value:
+            returns.append(curr.value)
+        stack.extend(ast.iter_child_nodes(curr))
+    return returns
+
+
+def _analyze_module_fixtures_and_helpers(module):
+    """Detect module-level fixtures and helpers that construct scratch repositories."""
+    scratch_callables = set(TEMPORARY_FIXTURES) | set(TEMPORARY_CALLS)
+    fn_returns = {}
+
+    for _pass in range(3):
+        for stmt in module.body:
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            fn_name = stmt.name
+            args = [a.arg for a in stmt.args.args + stmt.args.posonlyargs + stmt.args.kwonlyargs]
+            local_scratch = {arg for arg in args if arg in scratch_callables}
+
+            for _sub in range(2):
+                for node in ast.walk(stmt):
+                    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                        val = node.value
+                        if val is None:
+                            continue
+                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                        if isinstance(val, ast.Call):
+                            cname = dotted(val.func, {})
+                            if cname in scratch_callables or cname in fn_returns or any(isinstance(a, ast.Name) and a.id in local_scratch for a in ast.walk(val)):
+                                ret_val = fn_returns.get(cname)
+                                if isinstance(ret_val, tuple):
+                                    for target in targets:
+                                        if isinstance(target, (ast.Tuple, ast.List)):
+                                            for sub_t, sub_v in zip(target.elts, ret_val):
+                                                if getattr(sub_v, "scratch", False):
+                                                    for part in ast.walk(sub_t):
+                                                        if isinstance(part, ast.Name):
+                                                            local_scratch.add(part.id)
+                                else:
+                                    for target in targets:
+                                        for part in ast.walk(target):
+                                            if isinstance(part, ast.Name):
+                                                local_scratch.add(part.id)
+                        elif isinstance(val, ast.BinOp) and isinstance(val.op, ast.Div):
+                            if isinstance(val.left, ast.Name) and val.left.id in local_scratch:
+                                for target in targets:
+                                    for part in ast.walk(target):
+                                        if isinstance(part, ast.Name):
+                                            local_scratch.add(part.id)
+                    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not stmt:
+                        for sub_val in _find_returns(node.body):
+                            if isinstance(sub_val, ast.Name) and sub_val.id in local_scratch:
+                                local_scratch.add(node.name)
+
+            for val in _find_returns(stmt.body):
+                if isinstance(val, (ast.Tuple, ast.List)):
+                    elts = []
+                    has_scratch = False
+                    for i, elt in enumerate(val.elts):
+                        if isinstance(elt, ast.Name) and elt.id in local_scratch:
+                            has_scratch = True
+                            elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
+                        elif isinstance(elt, ast.Call) and (dotted(elt.func, {}) in scratch_callables or dotted(elt.func, {}) in fn_returns):
+                            has_scratch = True
+                            elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
+                        elif isinstance(elt, ast.BinOp) and isinstance(elt.op, ast.Div) and isinstance(elt.left, ast.Name) and elt.left.id in local_scratch:
+                            has_scratch = True
+                            elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
+                        else:
+                            elts.append(None)
+                    if has_scratch:
+                        fn_returns[fn_name] = tuple(elts)
+                        scratch_callables.add(fn_name)
+                elif isinstance(val, ast.Name) and val.id in local_scratch:
+                    fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
+                    scratch_callables.add(fn_name)
+                elif isinstance(val, ast.Call) and (dotted(val.func, {}) in scratch_callables or dotted(val.func, {}) in fn_returns):
+                    fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
+                    scratch_callables.add(fn_name)
+                elif isinstance(val, ast.BinOp) and isinstance(val.op, ast.Div) and isinstance(val.left, ast.Name) and val.left.id in local_scratch:
+                    fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
+                    scratch_callables.add(fn_name)
+
+    return fn_returns
+
+
 def contexts(model, file_ids=None):
     """Call contexts in Python tests and optional registered helpers, with lexical bindings."""
     additional = set(file_ids or ())
@@ -257,6 +357,7 @@ def contexts(model, file_ids=None):
             continue
         own = model.files[fid][1]
         file_written = model._test_written_paths.setdefault(fid, set())
+        module_scratch = _analyze_module_fixtures_and_helpers(module)
 
         def boundary(node, mechanism):
             model._test_path_limits.add((fid, node, mechanism))
@@ -272,6 +373,8 @@ def contexts(model, file_ids=None):
                 for arg in arguments:
                     if arg.arg in TEMPORARY_FIXTURES:
                         values[arg.arg] = PathValue(f"<{arg.arg}>", anchored=False, scratch=True)
+                    elif arg.arg in module_scratch:
+                        values[arg.arg] = module_scratch[arg.arg]
                 body = [node.body] if isinstance(node, ast.Lambda) else node.body
                 for child in body:
                     yield from walk(child, values, aliases)
@@ -296,9 +399,16 @@ def contexts(model, file_ids=None):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
 
                 def _bind_target(tgt, val):
-                    if isinstance(tgt, (ast.Tuple, ast.List)) and isinstance(val, (tuple, list)) and len(tgt.elts) == len(val):
-                        for sub_tgt, sub_val in zip(tgt.elts, val):
-                            _bind_target(sub_tgt, sub_val)
+                    if isinstance(tgt, (ast.Tuple, ast.List)):
+                        if isinstance(val, (tuple, list)) and len(tgt.elts) == len(val):
+                            for sub_tgt, sub_val in zip(tgt.elts, val):
+                                _bind_target(sub_tgt, sub_val)
+                            return
+                        if getattr(val, "scratch", False):
+                            for i, sub_tgt in enumerate(tgt.elts):
+                                sub_val = PathValue(f"<{val.path}[{i}]>", False, scratch=True) if (i == 0 or (isinstance(sub_tgt, ast.Name) and any(k in sub_tgt.id for k in ("path", "root", "file", "dir")))) else None
+                                _bind_target(sub_tgt, sub_val)
+                            return
                     elif isinstance(tgt, ast.Name):
                         values[tgt.id] = val if not isinstance(node, ast.AugAssign) else None
                         aliases[tgt.id] = None
@@ -473,7 +583,7 @@ def contexts(model, file_ids=None):
             for child in ast.iter_child_nodes(node):
                 yield from walk(child, values, aliases)
 
-        cache[fid] = tuple(walk(module, {}, {}))
+        cache[fid] = tuple(walk(module, dict(module_scratch), {}))
         yield from cache[fid]
 
 

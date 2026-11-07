@@ -398,5 +398,54 @@ def test_genuine_missing_production_file():
     assert any("test_comprehensions.py:21:" in d and "file_read" in d for d in diags)
 
 
+def test_custom_fixtures_and_helper_returns_bind_scratch_paths(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_custom_helpers.py": '''import pytest
+from pathlib import Path
+
+@pytest.fixture
+def custom_repo(make_repo):
+    root = make_repo({"sample.txt": "sample\\n"}, name="custom")
+    return root
+
+def helper_repo(make_repo):
+    root = make_repo({"sample.txt": "sample\\n"}, name="helper")
+    return root, 123
+
+def test_via_fixture(custom_repo):
+    (custom_repo / "generated.txt").read_text()
+
+def test_via_helper(make_repo):
+    root, extra = helper_repo(make_repo)
+    (root / "generated.txt").read_text()
+
+def test_dynamic_loop_unresolved(items):
+    for item in items:
+        Path(item).read_text()
+
+def test_genuine_missing_production_file():
+    missing = Path(__file__).resolve().parents[1] / "pkg" / "missing.py"
+    missing.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Custom fixture and helper scratch reads must NOT emit diagnostics
+    assert not any("test_custom_helpers.py:14:" in d for d in diags)
+    assert not any("test_custom_helpers.py:18:" in d for d in diags)
+
+    # Dynamic loop unresolved reads MUST emit dynamic_loop and file_read diagnostics
+    assert any("test_custom_helpers.py:21:" in d and "dynamic_loop" in d for d in diags)
+    assert any("test_custom_helpers.py:22:" in d and "file_read" in d for d in diags)
+
+    # Genuine missing production code read MUST emit file_read diagnostic
+    assert any("test_custom_helpers.py:26:" in d and "file_read" in d for d in diags)
+
+
+
 
 
