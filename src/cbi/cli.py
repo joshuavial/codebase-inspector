@@ -101,6 +101,7 @@ def build_parser():
     cmds["search"].add_argument("--kind", metavar="K", help="only nodes of this display kind (class, test case, folder) or kind")
     cmds["status"].add_argument("--out", metavar="DIR", type=Path, help="model directory to use instead of .cbi/ in the repo root")
     cmds["status"].add_argument("--json", action="store_true", help="print JSON instead of text")
+    cmds["status"].add_argument("--kind", metavar="K", help="filter diagnostics or open tasks by kind")
     cmds["show"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
     cmds["context"].add_argument("node", nargs="?", default=None,
                                  help="a node ID, a repo-relative path, path#qualified.name, or a symbol name (omit for system overview)")
@@ -207,6 +208,8 @@ def build_parser():
                            help="model directory to use instead of .cbi/ in the repo root")
     cmds["check"].add_argument("--base", metavar="REF",
                                help="compare against the merge base with this ref instead of the default branch")
+    cmds["check"].add_argument("--kind", metavar="K",
+                               help="filter check findings by kind (e.g. summary, owner, json, secret)")
     cmds["check"].add_argument("--format", choices=("text", "github"), default="text",
                                help="text (default) or github annotations")
     cmds["worktrees"].add_argument("--json", action="store_true", help="print JSON")
@@ -1111,7 +1114,7 @@ def cmd_ingest(args):
 
 def cmd_check(args):
     root, out = _paths(args)
-    return check.run(root, out, args.base, args.format, scan)
+    return check.run(root, out, args.base, args.format, scan, kind=getattr(args, "kind", None))
 
 
 def cmd_team(args):

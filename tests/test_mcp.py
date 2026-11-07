@@ -141,6 +141,10 @@ def test_tools_list():
         assert "inputSchema" in tool
         assert tool["inputSchema"]["type"] == "object"
 
+    tools_by_name = {t["name"]: t for t in tools}
+    assert "kind" in tools_by_name["cbi_status"]["inputSchema"]["properties"]
+    assert "kind" in tools_by_name["cbi_check"]["inputSchema"]["properties"]
+
 
 def test_resources_list():
     server = MCPServer()
@@ -155,6 +159,7 @@ def test_resources_list():
         "cbi://model/status",
         "cbi://model/schema",
         "cbi://concepts",
+        "cbi://tasks",
     }
     assert uris == expected_uris
     for r in resources:
@@ -171,7 +176,12 @@ def test_resources_templates_list():
     assert resp["id"] == 11
     templates = resp["result"]["resourceTemplates"]
     template_uris = {t["uriTemplate"] for t in templates}
-    assert template_uris == {"cbi://node/{id}", "cbi://context/{node}"}
+    assert template_uris == {
+        "cbi://node/{id}",
+        "cbi://context/{node}",
+        "cbi://tasks/{id}",
+        "cbi://diagnostics/{kind}",
+    }
     for t in templates:
         assert "name" in t
         assert "description" in t
@@ -230,6 +240,31 @@ def test_resources_read_static(repo):
     concepts_data = json.loads(contents[0]["text"])
     assert isinstance(concepts_data, list)
 
+    # 5. cbi://tasks
+    req = {"jsonrpc": "2.0", "id": 24, "method": "resources/read", "params": {"uri": "cbi://tasks"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 24
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://tasks"
+    assert contents[0]["mimeType"] == "application/json"
+    tasks_data = json.loads(contents[0]["text"])
+    assert isinstance(tasks_data, list)
+
+    # 6. Aliases: cbi://overview, cbi://stats, cbi://schema, cbi://hotspots
+    for alias, expected_mime in [
+        ("cbi://overview", "text/markdown"),
+        ("cbi://stats", "application/json"),
+        ("cbi://schema", "text/plain"),
+        ("cbi://hotspots", "application/json"),
+    ]:
+        req = {"jsonrpc": "2.0", "id": 25, "method": "resources/read", "params": {"uri": alias}}
+        resp = server.handle_request(req)
+        assert resp["id"] == 25
+        assert "error" not in resp
+        assert resp["result"]["contents"][0]["mimeType"] == expected_mime
+
 
 def test_resources_read_templates(repo):
     server = MCPServer(root=repo)
@@ -267,6 +302,68 @@ def test_resources_read_templates(repo):
     assert contents[0]["mimeType"] == "text/markdown"
     assert "Circle" in contents[0]["text"] or "circle.ts" in contents[0]["text"]
 
+    # 4. cbi://tasks/{id}
+    tasks_req = {"jsonrpc": "2.0", "id": 33, "method": "resources/read", "params": {"uri": "cbi://tasks"}}
+    tasks_resp = server.handle_request(tasks_req)
+    open_tasks = json.loads(tasks_resp["result"]["contents"][0]["text"])
+    assert len(open_tasks) > 0
+    task_id = open_tasks[0]["id"]
+
+    req = {"jsonrpc": "2.0", "id": 34, "method": "resources/read", "params": {"uri": f"cbi://tasks/{task_id}"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 34
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == f"cbi://tasks/{task_id}"
+    assert contents[0]["mimeType"] == "application/json"
+    task_detail = json.loads(contents[0]["text"])
+    assert task_detail["id"] == task_id
+    assert "instructions" in task_detail
+
+    # 5. cbi://diagnostics/{kind}
+    conn = sqlite3.connect(repo / ".cbi" / "model.db")
+    with conn:
+        conn.execute(
+            "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, 'unmatched_test', 'test does not match')",
+            (f"{WS}:src/shapes/circle.ts",),
+        )
+        conn.execute(
+            "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, 'unsupported_test_mechanism', 'framework not supported')",
+            (f"{WS}:src/shapes/circle.ts",),
+        )
+    conn.close()
+
+    req = {"jsonrpc": "2.0", "id": 35, "method": "resources/read", "params": {"uri": "cbi://diagnostics/unmatched_test"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 35
+    assert "error" not in resp
+    contents = resp["result"]["contents"]
+    assert len(contents) == 1
+    assert contents[0]["uri"] == "cbi://diagnostics/unmatched_test"
+    assert contents[0]["mimeType"] == "application/json"
+    diag_data = json.loads(contents[0]["text"])
+    assert diag_data["kind"] == "unmatched_test"
+    assert diag_data["count"] >= 1
+    assert any(d["node_id"] == f"{WS}:src/shapes/circle.ts" for d in diag_data["diagnostics"])
+
+    req = {"jsonrpc": "2.0", "id": 36, "method": "resources/read", "params": {"uri": "cbi://diagnostics/unsupported_test_mechanism"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 36
+    assert "error" not in resp
+    diag_data = json.loads(resp["result"]["contents"][0]["text"])
+    assert diag_data["kind"] == "unsupported_test_mechanism"
+    assert diag_data["count"] >= 1
+
+    # Nonexistent kind returns count=0
+    req = {"jsonrpc": "2.0", "id": 37, "method": "resources/read", "params": {"uri": "cbi://diagnostics/nonexistent_kind"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 37
+    assert "error" not in resp
+    diag_data = json.loads(resp["result"]["contents"][0]["text"])
+    assert diag_data["kind"] == "nonexistent_kind"
+    assert diag_data["count"] == 0
+
 
 def test_resources_read_errors(repo):
     server = MCPServer(root=repo)
@@ -290,6 +387,28 @@ def test_resources_read_errors(repo):
     req = {"jsonrpc": "2.0", "id": 42, "method": "resources/read", "params": {"uri": "cbi://node/nonexistent.py"}}
     resp = server.handle_request(req)
     assert resp["id"] == 42
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+
+    # 4. Nonexistent task
+    req = {"jsonrpc": "2.0", "id": 43, "method": "resources/read", "params": {"uri": "cbi://tasks/nonexistent-task-id"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 43
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+    assert "Unknown task" in resp["error"]["message"]
+
+    # 5. Empty task id
+    req = {"jsonrpc": "2.0", "id": 44, "method": "resources/read", "params": {"uri": "cbi://tasks/"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 44
+    assert "error" in resp
+    assert resp["error"]["code"] == -32602
+
+    # 6. Empty diagnostic kind
+    req = {"jsonrpc": "2.0", "id": 45, "method": "resources/read", "params": {"uri": "cbi://diagnostics/"}}
+    resp = server.handle_request(req)
+    assert resp["id"] == 45
     assert "error" in resp
     assert resp["error"]["code"] == -32602
 
@@ -533,6 +652,34 @@ def test_tools_call_status(repo):
     data = json.loads(resp_json["result"]["content"][0]["text"])
     assert "nodes" in data
     assert "scanned_at" in data
+
+
+def test_tools_call_status_kind(repo):
+    server = MCPServer(root=repo)
+    conn = sqlite3.connect(repo / ".cbi" / "model.db")
+    with conn:
+        conn.execute(
+            "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, 'unmatched_test', 'test does not match')",
+            (f"{WS}:src/shapes/circle.ts",),
+        )
+        conn.execute(
+            "INSERT INTO diagnostics (node_id, kind, detail) VALUES (?, 'unsupported_test_mechanism', 'framework not supported')",
+            (f"{WS}:src/shapes/circle.ts",),
+        )
+    conn.close()
+
+    # Filter by diagnostic kind in JSON
+    resp_filtered = server.execute_tool("cbi_status", {"kind": "unmatched_test", "format": "json"})
+    assert not resp_filtered["isError"]
+    data = json.loads(resp_filtered["content"][0]["text"])
+    assert "unmatched_test" in data["diagnostics"]
+    assert "unsupported_test_mechanism" not in data["diagnostics"]
+
+    # Filter by diagnostic kind in text
+    resp_text = server.execute_tool("cbi_status", {"kind": "unmatched_test", "format": "text"})
+    assert not resp_text["isError"]
+    assert "unmatched_test" in resp_text["content"][0]["text"]
+    assert "unsupported_test_mechanism" not in resp_text["content"][0]["text"]
 
 
 def test_tools_call_context(repo):
@@ -1831,6 +1978,26 @@ def test_tool_check(repo):
     assert not res_prob_text["isError"]
     assert "problem" in res_prob_text["content"][0]["text"]
     assert "src/shapes/circle.ts" in res_prob_text["content"][0]["text"]
+
+    # 6. Kind filtering in cbi_check
+    # Filter by matching kind ("summary"): problem reported
+    res_kind_match = server.execute_tool("cbi_check", {"kind": "summary", "format": "json"})
+    assert not res_kind_match["isError"]
+    data_match = json.loads(res_kind_match["content"][0]["text"])
+    assert data_match["passed"] is False
+    assert len(data_match["problems"]) > 0
+
+    # Filter by non-matching kind ("secret"): passed is True, no problems
+    res_kind_nonmatch = server.execute_tool("cbi_check", {"kind": "secret", "format": "json"})
+    assert not res_kind_nonmatch["isError"]
+    data_nonmatch = json.loads(res_kind_nonmatch["content"][0]["text"])
+    assert data_nonmatch["passed"] is True
+    assert data_nonmatch["problems"] == []
+
+    # Non-matching kind in text format: passed
+    res_kind_text = server.execute_tool("cbi_check", {"kind": "secret", "format": "text"})
+    assert not res_kind_text["isError"]
+    assert "cbi check: passed" in res_kind_text["content"][0]["text"]
 
 
 def test_tool_worktrees(repo, tmp_path):

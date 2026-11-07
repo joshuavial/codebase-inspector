@@ -71,11 +71,15 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "kind": {
+                    "type": "string",
+                    "description": "Optional filter for diagnostics or tasks by kind (e.g. 'cycle', 'unmatched_test', 'unsupported_test_mechanism').",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' or 'json' (default: text)",
                     "enum": ["text", "json"],
-                }
+                },
             },
             "required": [],
         },
@@ -485,6 +489,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Base ref or commit SHA (e.g. 'main', 'master', commit hash; default: merge-base with default branch).",
                 },
+                "kind": {
+                    "type": "string",
+                    "description": "Optional filter for check findings by kind (e.g. 'summary', 'owner', 'json', 'secret').",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' (default) or 'json'.",
@@ -625,6 +633,12 @@ RESOURCES = [
         "description": "List of architectural concepts and mapped nodes",
         "mimeType": "application/json",
     },
+    {
+        "uri": "cbi://tasks",
+        "name": "Judgement Tasks",
+        "description": "List of open and pending architectural judgement tasks",
+        "mimeType": "application/json",
+    },
 ]
 
 RESOURCE_TEMPLATES = [
@@ -639,6 +653,18 @@ RESOURCE_TEMPLATES = [
         "name": "Node Context Brief",
         "description": "Context brief for an agent working on a file, symbol, or concept",
         "mimeType": "text/markdown",
+    },
+    {
+        "uriTemplate": "cbi://tasks/{id}",
+        "name": "Judgement Task Detail",
+        "description": "Inspect a specific architectural judgement task brief and answer schema by task ID",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "cbi://diagnostics/{kind}",
+        "name": "Codebase Diagnostics",
+        "description": "Triage codebase diagnostics filtered by diagnostic kind (e.g. unmatched_test, unsupported_test_mechanism, cycle)",
+        "mimeType": "application/json",
     },
 ]
 
@@ -1159,15 +1185,15 @@ class MCPServer:
             scheme_display = parsed.scheme or "none"
             raise ValueError(f"Unsupported URI scheme: '{scheme_display}'. Only 'cbi://' URIs are supported.")
 
-        if uri == "cbi://system/overview":
+        if uri in ("cbi://system/overview", "cbi://overview"):
             text = self.handle_context({"node": "system"})
             return [{"uri": uri, "mimeType": "text/markdown", "text": text}]
 
-        if uri == "cbi://model/status":
+        if uri in ("cbi://model/status", "cbi://stats", "cbi://status"):
             text = self.handle_status({"format": "json"})
             return [{"uri": uri, "mimeType": "application/json", "text": text}]
 
-        if uri == "cbi://model/schema":
+        if uri in ("cbi://model/schema", "cbi://schema"):
             conn = self._get_connection()
             try:
                 rows = conn.execute(
@@ -1196,9 +1222,84 @@ class MCPServer:
             finally:
                 conn.close()
 
+        if uri in ("cbi://hotspots", "cbi://model/hotspots"):
+            text = self.handle_hotspots({"format": "json"})
+            return [{"uri": uri, "mimeType": "application/json", "text": text}]
+
         if uri == "cbi://concepts":
             text = self.handle_concepts({"format": "json"})
             return [{"uri": uri, "mimeType": "application/json", "text": text}]
+
+        if uri == "cbi://tasks":
+            conn = self._get_connection()
+            try:
+                found = tasks.open_tasks(conn)
+                return [{"uri": uri, "mimeType": "application/json", "text": json.dumps(found, indent=2)}]
+            finally:
+                conn.close()
+
+        if uri.startswith("cbi://tasks/"):
+            task_id = urllib.parse.unquote(uri[len("cbi://tasks/"):])
+            if not task_id.strip():
+                raise ValueError(f"Unknown resource URI: {uri}")
+            conn = self._get_connection()
+            try:
+                try:
+                    b = tasks.brief(conn, task_id, self.root)
+                except tasks.UnknownTask as err:
+                    raise ValueError(f"Unknown task: {task_id}") from err
+                return [{"uri": uri, "mimeType": "application/json", "text": json.dumps(b, indent=2)}]
+            finally:
+                conn.close()
+
+        if uri == "cbi://diagnostics":
+            text = self.handle_status({"format": "json"})
+            status_data = json.loads(text)
+            diagnostics_payload = status_data.get("diagnostics", {})
+            return [{"uri": uri, "mimeType": "application/json", "text": json.dumps(diagnostics_payload, indent=2)}]
+
+        if uri.startswith("cbi://diagnostics/"):
+            kind = urllib.parse.unquote(uri[len("cbi://diagnostics/"):])
+            if not kind.strip():
+                raise ValueError(f"Unknown resource URI: {uri}")
+            kind = kind.strip()
+            conn = self._get_connection()
+            try:
+                rows = conn.execute(
+                    "SELECT d.node_id, n.path, n.name, n.display_kind, d.detail "
+                    "FROM diagnostics d LEFT JOIN nodes n ON n.id = d.node_id "
+                    "WHERE d.kind = ? ORDER BY n.path, d.node_id",
+                    (kind,),
+                ).fetchall()
+                items = [
+                    {
+                        "node_id": r[0],
+                        "path": r[1],
+                        "name": r[2],
+                        "display_kind": r[3],
+                        "detail": r[4],
+                    }
+                    for r in rows
+                ]
+                payload = {
+                    "kind": kind,
+                    "count": len(items),
+                    "diagnostics": items,
+                    "items": items,
+                }
+                if kind == "cycle":
+                    from cbi.graph import cycle_summary
+                    payload.update(count_unit="memberships", levels=cycle_summary(conn))
+                elif kind == "unmatched_http_call":
+                    boundaries = {}
+                    for item in items:
+                        detail = item["detail"] or ""
+                        boundary = detail.rsplit("[resolution=", 1)[-1].rstrip("]") if "[resolution=" in detail else "static_unresolved"
+                        boundaries[boundary] = boundaries.get(boundary, 0) + 1
+                    payload["resolution_boundaries"] = dict(sorted(boundaries.items()))
+                return [{"uri": uri, "mimeType": "application/json", "text": json.dumps(payload, indent=2)}]
+            finally:
+                conn.close()
 
         if uri.startswith("cbi://node/"):
             node_id = urllib.parse.unquote(uri[len("cbi://node/"):])
@@ -1401,10 +1502,11 @@ class MCPServer:
         try:
             fmt = args.get("format", "text")
             as_json = fmt == "json"
+            kind = args.get("kind")
             buf = io.StringIO()
             with self._stdout_lock:
                 with contextlib.redirect_stdout(buf):
-                    query.status(conn, argparse.Namespace(json=as_json))
+                    query.status(conn, argparse.Namespace(json=as_json, kind=kind))
             return buf.getvalue().rstrip()
         finally:
             conn.close()
@@ -2045,13 +2147,14 @@ class MCPServer:
 
     def handle_check(self, args: dict) -> str:
         base = args.get("base")
+        kind = args.get("kind")
         fmt = args.get("format", "text")
         if fmt not in ("text", "json"):
             fmt = "text"
 
         with self._scan_lock:
             try:
-                res = check.verify(self.root, self.out, base_ref=base)
+                res = check.verify(self.root, self.out, base_ref=base, kind=kind)
             except (files.BadRef, FileNotFoundError) as err:
                 raise ValueError(str(err)) from err
 

@@ -739,8 +739,11 @@ def show(conn, args):
 
 
 def status(conn, args):
+    target_kind = getattr(args, "kind", None)
     diagnostics = {}
     for kind, count in conn.execute("SELECT kind, count(*) FROM diagnostics GROUP BY kind ORDER BY kind"):
+        if target_kind and kind != target_kind:
+            continue
         examples = [{"node_id": r[0], "path": r[1], "detail": r[2]} for r in conn.execute(
             "SELECT d.node_id, n.path, d.detail FROM diagnostics d LEFT JOIN nodes n ON n.id = d.node_id "
             "WHERE d.kind = ? ORDER BY n.path, d.node_id LIMIT ?", (kind, DIAGNOSTIC_EXAMPLES))]
@@ -754,11 +757,20 @@ def status(conn, args):
                 boundary = detail.rsplit("[resolution=", 1)[-1].rstrip("]") if "[resolution=" in detail else "static_unresolved"
                 boundaries[boundary] = boundaries.get(boundary, 0) + 1
             diagnostics[kind]["resolution_boundaries"] = dict(sorted(boundaries.items()))
+    all_open_tasks = dict(conn.execute(
+        "SELECT kind, count(*) FROM tasks WHERE state = 'open' GROUP BY kind ORDER BY kind"))
+    if target_kind:
+        if target_kind in all_open_tasks:
+            open_tasks = {k: v for k, v in all_open_tasks.items() if k == target_kind}
+        else:
+            open_tasks = {}
+    else:
+        open_tasks = all_open_tasks
+
     result = {
         "scanned_at": store.get_meta(conn, "scanned_at"),
         "nodes": store.counts_by_display_kind(conn),
-        "open_tasks": dict(conn.execute(
-            "SELECT kind, count(*) FROM tasks WHERE state = 'open' GROUP BY kind ORDER BY kind")),
+        "open_tasks": open_tasks,
         "diagnostics": diagnostics,
     }
     if args.json:

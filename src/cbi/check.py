@@ -51,7 +51,7 @@ _PREFIXES = (
 _TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{24,}")
 
 
-def run(root, out, base_ref, fmt, scan):
+def run(root, out, base_ref, fmt, scan, kind=None):
     """Scan, report, and restore judgement files. `scan` is `cbi.scan.scan`."""
     root, out = Path(root), Path(out)
     if not (out / "ignore").exists():
@@ -62,14 +62,14 @@ def run(root, out, base_ref, fmt, scan):
     try:
         scan(root, out)
         restore(out, saved)
-        result = _report(root, out, base, fmt)
+        result = _report(root, out, base, fmt, kind=kind)
         files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
         return result
     finally:
         restore(out, saved)
 
 
-def verify(root, out, base_ref=None, scan=None):
+def verify(root, out, base_ref=None, scan=None, kind=None):
     """Scan, verify the model against base_ref, and restore judgement files.
 
     Returns dict with keys:
@@ -95,6 +95,8 @@ def verify(root, out, base_ref=None, scan=None):
         try:
             tasks.attach_cache(conn)
             findings = _findings(conn, root, out, changed_paths(root, base))
+            if kind:
+                findings = [f for f in findings if f.get("kind") == kind]
         finally:
             conn.close()
         mode = _mode(out)
@@ -224,11 +226,13 @@ def _git_text(root, *args):
     return text if result.returncode == 0 and text else None
 
 
-def _report(root, out, base, fmt):
+def _report(root, out, base, fmt, kind=None):
     conn = store.open_db(out / "model.db")
     try:
         tasks.attach_cache(conn)
         findings = _findings(conn, root, out, changed_paths(root, base))
+        if kind:
+            findings = [f for f in findings if f.get("kind") == kind]
     finally:
         conn.close()
     mode = _mode(out)
