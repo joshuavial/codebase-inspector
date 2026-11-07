@@ -169,3 +169,87 @@ def test_else():
         details = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind='unsupported_test_mechanism'")]
     assert links == {('test_else', 'pkg/other.py')}
     assert not details
+
+
+def test_temporary_fixtures_and_locally_written_files_do_not_emit_unsupported_test_mechanism(make_repo, monkeypatch):
+    root = make_repo({
+        "assets/view.html": "<p>production</p>\n",
+        "tests/test_temp_reads.py": '''from pathlib import Path
+import importlib
+
+def test_tmp_fixture(tmp_path):
+    scratch = tmp_path / "scratch.txt"
+    scratch.write_text("hello")
+    assert scratch.read_text() == "hello"
+
+def test_written_artifact(tmp_path):
+    out = tmp_path / "artifact.json"
+    with open(out, "w") as f:
+        f.write("{}")
+    assert out.read_text() == "{}"
+
+def test_loop_with_temp_read(tmp_path):
+    for i in range(2):
+        p = tmp_path / f"item_{i}.txt"
+        p.write_text("ok")
+        assert p.read_text() == "ok"
+
+def test_genuine_production_read():
+    base = Path(__file__).resolve().parents[1]
+    page = base / "assets" / "view.html"
+    assert "production" in page.read_text()
+
+def test_genuine_missing_tracked_read():
+    base = Path(__file__).resolve().parents[1]
+    page = base / "assets" / "missing.html"
+    page.read_text()
+
+def test_genuine_dynamic_loop(runtime_items):
+    for item in runtime_items:
+        importlib.import_module(item)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        edges = {(src.rsplit("#", 1)[-1], dst.rsplit(":", 1)[-1])
+                 for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'tests'")}
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Legitimate production file read must be linked
+    assert ("test_genuine_production_read", "assets/view.html") in edges
+
+    # Genuine missing tracked file read on line 29 must emit unsupported_test_mechanism
+    assert any("test_temp_reads.py:29:" in d and "file_read" in d for d in diags)
+
+    # Genuine dynamic loop over dynamic import must emit dynamic_loop
+    assert any("dynamic_loop" in d and "test_temp_reads.py:32:" in d for d in diags)
+    assert any("dynamic_import" in d and "test_temp_reads.py:33:" in d for d in diags)
+
+    # False-positive temporary fixture reads and loops must NOT emit diagnostics
+    assert not any("test_temp_reads.py:7:" in d for d in diags)   # scratch.read_text()
+    assert not any("test_temp_reads.py:11:" in d for d in diags)  # open(out, "w")
+    assert not any("test_temp_reads.py:13:" in d for d in diags)  # out.read_text()
+    assert not any("test_temp_reads.py:16:" in d for d in diags)  # loop over temp reads
+    assert not any("test_temp_reads.py:19:" in d for d in diags)  # p.read_text()
+
+
+def test_anchored_binding_named_repo_links_to_production(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 42\n",
+        "tests/test_repo_binding.py": '''from pathlib import Path
+
+def test_repo_anchored():
+    repo = Path(__file__).resolve().parents[1]
+    prod = repo / "pkg" / "prod.py"
+    assert "run" in prod.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        edges = {(src.rsplit("#", 1)[-1], dst.rsplit(":", 1)[-1])
+                 for src, dst in conn.execute("SELECT src, dst FROM edges WHERE kind = 'tests'")}
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+    assert ("test_repo_anchored", "pkg/prod.py") in edges
+    assert not diags

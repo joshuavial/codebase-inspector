@@ -13,10 +13,32 @@ MAX_CONTEXT_EXPANSIONS = 64
 class PathValue:
     path: str
     anchored: bool = False
+    scratch: bool = False
+
+
+TEMPORARY_FIXTURES = {
+    "tmp_path",
+    "tmpdir",
+    "make_repo",
+    "repo",
+    "tmp_path_factory",
+}
+
+TEMPORARY_CALLS = {
+    "mkdtemp",
+    "tempfile.mkdtemp",
+    "TemporaryDirectory",
+    "tempfile.TemporaryDirectory",
+    "NamedTemporaryFile",
+    "tempfile.NamedTemporaryFile",
+    "mkstemp",
+    "tempfile.mkstemp",
+}
 
 
 @dataclass(frozen=True)
 class GlobValue:
+
     base: PathValue
     pattern: str
     recursive: bool = False
@@ -36,7 +58,13 @@ def evaluate(node, values, aliases, own):
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes, int)):
         return node.value
     if isinstance(node, ast.Name):
-        return PathValue(own, True) if node.id == "__file__" else values.get(node.id)
+        if node.id == "__file__":
+            return PathValue(own, True)
+        if node.id in values:
+            return values[node.id]
+        if node.id in TEMPORARY_FIXTURES:
+            return PathValue(f"<{node.id}>", False, scratch=True)
+        return None
     if isinstance(node, (ast.Tuple, ast.List)):
         return tuple(evaluate(item, values, aliases, own) for item in node.elts)
     if isinstance(node, ast.Dict) and not node.keys:
@@ -50,49 +78,62 @@ def evaluate(node, values, aliases, own):
         right = evaluate(node.right, values, aliases, own)
         if isinstance(node.op, ast.Add) and isinstance(left, str) and isinstance(right, str):
             return left + right
-        if isinstance(node.op, ast.Div) and isinstance(left, PathValue) and isinstance(right, str):
-            return PathValue(posixpath.normpath(posixpath.join(left.path, right)), left.anchored)
+        if isinstance(node.op, ast.Div) and isinstance(left, PathValue):
+            if isinstance(right, str):
+                return PathValue(posixpath.normpath(posixpath.join(left.path, right)), left.anchored, left.scratch)
+            elif left.scratch:
+                return PathValue(posixpath.normpath(posixpath.join(left.path, "<dynamic>")), False, True)
     if isinstance(node, ast.Attribute) and node.attr == "parent":
         base = evaluate(node.value, values, aliases, own)
         if isinstance(base, PathValue):
-            return PathValue(posixpath.dirname(base.path), base.anchored)
+            return PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         base = evaluate(node.value.value, values, aliases, own)
         index = evaluate(node.slice, values, aliases, own)
         if isinstance(base, PathValue) and isinstance(index, int) and 0 <= index <= 100:
             for _ in range(index + 1):
-                base = PathValue(posixpath.dirname(base.path), base.anchored)
+                base = PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
             return base
     if not isinstance(node, ast.Call):
         return None
     name = dotted(node.func, aliases)
     args = [evaluate(arg, values, aliases, own) for arg in node.args]
+    if name in TEMPORARY_CALLS or (name in values and getattr(values[name], "scratch", False)):
+        return PathValue(f"<{name}>", False, scratch=True)
+    if isinstance(node.func, ast.Attribute) and node.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
+        return PathValue(f"<{node.func.attr}>", False, scratch=True)
     if name in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and args:
         base = args[0] if isinstance(args[0], PathValue) else PathValue(args[0]) if isinstance(args[0], str) else None
         if base and all(isinstance(arg, str) for arg in args[1:]):
-            return PathValue(posixpath.normpath(posixpath.join(base.path, *args[1:])), base.anchored)
+            return PathValue(posixpath.normpath(posixpath.join(base.path, *args[1:])), base.anchored, base.scratch)
+        elif base and base.scratch:
+            return PathValue(posixpath.normpath(posixpath.join(base.path, "<dynamic>")), False, True)
     if name in {"str", "os.fspath"} and len(args) == 1:
         return args[0]
     if name in {"os.path.join", "posixpath.join"} and args:
         if all(isinstance(arg, (str, PathValue)) for arg in args):
+            scratch = any(getattr(arg, "scratch", False) for arg in args)
             return PathValue(posixpath.normpath(posixpath.join(*[arg.path if isinstance(arg, PathValue) else arg for arg in args])),
-                             isinstance(args[0], PathValue) and args[0].anchored)
+                             isinstance(args[0], PathValue) and args[0].anchored,
+                             scratch=scratch)
     if name in {"os.path.dirname", "posixpath.dirname"} and len(args) == 1:
         arg = args[0]
         if isinstance(arg, (str, PathValue)):
+            scratch = getattr(arg, "scratch", False) if isinstance(arg, PathValue) else False
             return PathValue(posixpath.dirname(arg.path if isinstance(arg, PathValue) else arg),
-                             isinstance(arg, PathValue) and arg.anchored)
+                             isinstance(arg, PathValue) and arg.anchored,
+                             scratch=scratch)
     if isinstance(node.func, ast.Attribute):
         base = evaluate(node.func.value, values, aliases, own)
         if isinstance(base, PathValue):
             if node.func.attr in {"resolve", "absolute"} and not args:
                 return base
             if node.func.attr == "with_name" and len(args) == 1 and isinstance(args[0], str):
-                return PathValue(posixpath.normpath(posixpath.join(posixpath.dirname(base.path), args[0])), base.anchored)
+                return PathValue(posixpath.normpath(posixpath.join(posixpath.dirname(base.path), args[0])), base.anchored, base.scratch)
             if node.func.attr == "with_suffix" and len(args) == 1 and isinstance(args[0], str):
-                return PathValue(posixpath.splitext(base.path)[0] + args[0], base.anchored)
+                return PathValue(posixpath.splitext(base.path)[0] + args[0], base.anchored, base.scratch)
             if node.func.attr == "joinpath" and args and all(isinstance(arg, str) for arg in args):
-                return PathValue(posixpath.normpath(posixpath.join(base.path, *args)), base.anchored)
+                return PathValue(posixpath.normpath(posixpath.join(base.path, *args)), base.anchored, base.scratch)
             if node.func.attr in {"glob", "rglob"} and len(args) == 1 and isinstance(args[0], str):
                 return GlobValue(base, args[0], node.func.attr == "rglob")
     return None
@@ -156,6 +197,8 @@ def contexts(model, file_ids=None):
         model._test_path_contexts = {}
         model._test_path_budget = MAX_CONTEXT_EXPANSIONS
         model._test_path_limits = set()
+    if not hasattr(model, "_test_written_paths"):
+        model._test_written_paths = {}
     cache = model._test_path_contexts
     for fid, module in sorted(python_modules(model).items()):
         if model.files[fid][2] != "test" and fid not in additional:
@@ -164,6 +207,7 @@ def contexts(model, file_ids=None):
             yield from cache[fid]
             continue
         own = model.files[fid][1]
+        file_written = model._test_written_paths.setdefault(fid, set())
 
         def boundary(node, mechanism):
             model._test_path_limits.add((fid, node, mechanism))
@@ -176,6 +220,9 @@ def contexts(model, file_ids=None):
                 for name in _assigned(node) | {arg.arg for arg in arguments}:
                     values.pop(name, None)
                     aliases[name] = None
+                for arg in arguments:
+                    if arg.arg in TEMPORARY_FIXTURES:
+                        values[arg.arg] = PathValue(f"<{arg.arg}>", anchored=False, scratch=True)
                 body = [node.body] if isinstance(node, ast.Lambda) else node.body
                 for child in body:
                     yield from walk(child, values, aliases)
@@ -274,19 +321,19 @@ def contexts(model, file_ids=None):
                 inner, names = dict(values), dict(aliases)
                 for child in node.body:
                     yield from walk(child, inner, names)
-                written = _assigned(node)
+                try_written = _assigned(node)
                 regions = [(handler.type, handler.body) for handler in node.handlers]
                 regions += [(None, node.orelse), (None, node.finalbody)]
                 for exception_type, body in regions:
                     inner, names = dict(values), dict(aliases)
-                    for name in written:
+                    for name in try_written:
                         inner.pop(name, None)
                         names[name] = None
                     if exception_type:
                         yield from walk(exception_type, inner, names)
                     for child in body:
                         yield from walk(child, inner, names)
-                for name in written:
+                for name in try_written:
                     values.pop(name, None)
                     aliases[name] = None
                 return
@@ -331,6 +378,7 @@ def contexts(model, file_ids=None):
                     aliases[name] = None
                 return
             if isinstance(node, ast.Call):
+                _track_write(node, values, aliases, own, file_written)
                 yield Context(model, fid, node, dict(values), dict(aliases))
             for child in ast.iter_child_nodes(node):
                 yield from walk(child, values, aliases)
@@ -339,18 +387,159 @@ def contexts(model, file_ids=None):
         yield from cache[fid]
 
 
+def _is_write_mode(mode):
+    if isinstance(mode, (str, bytes)):
+        text = mode.decode() if isinstance(mode, bytes) else mode
+        return any(c in text for c in ("w", "a", "x"))
+    return False
+
+
+def _extract_mode_from_call(call, values, aliases, own, is_method=False):
+    for kw in call.keywords:
+        if kw.arg == "mode":
+            return evaluate(kw.value, values, aliases, own)
+    args = call.args if is_method else call.args[1:]
+    if args:
+        return evaluate(args[0], values, aliases, own)
+    return "r"
+
+
+def _track_write(call, values, aliases, own, written):
+    target = None
+    if isinstance(call.func, ast.Attribute) and call.func.attr in {"write_text", "write_bytes"}:
+        target = call.func.value
+    elif isinstance(call.func, ast.Attribute) and call.func.attr == "open":
+        mode = _extract_mode_from_call(call, values, aliases, own, is_method=True)
+        if _is_write_mode(mode):
+            target = call.func.value
+    else:
+        name = dotted(call.func, aliases)
+        if name in {"open", "io.open"} and call.args:
+            mode = _extract_mode_from_call(call, values, aliases, own, is_method=False)
+            if _is_write_mode(mode):
+                target = call.args[0]
+    if target is not None:
+        try:
+            written.add(ast.unparse(target))
+        except Exception:
+            pass
+        val = evaluate(target, values, aliases, own)
+        if isinstance(val, PathValue):
+            written.add(val.path)
+        elif isinstance(val, str):
+            written.add(val)
+        if isinstance(target, ast.Name):
+            written.add(target.id)
+            values[target.id] = PathValue(target.id, anchored=False, scratch=True)
+
+
+def _open_mode(call, context, is_method=False):
+    for kw in call.keywords:
+        if kw.arg == "mode":
+            return context.value(kw.value)
+    args = call.args if is_method else call.args[1:]
+    if args:
+        return context.value(args[0])
+    return "r"
+
+
+def _is_scratch_read(context, target_node):
+    written = getattr(context.model, "_test_written_paths", {}).get(context.fid, set())
+    try:
+        if ast.unparse(target_node) in written:
+            return True
+    except Exception:
+        pass
+    if isinstance(target_node, ast.Name):
+        if target_node.id in written:
+            return True
+        val = context.values.get(target_node.id)
+        if val is not None:
+            return getattr(val, "scratch", False)
+        if target_node.id in TEMPORARY_FIXTURES:
+            return True
+    curr = target_node
+    while isinstance(curr, ast.BinOp) and isinstance(curr.op, ast.Div):
+        curr = curr.left
+    if isinstance(curr, ast.Name):
+        if curr.id in written:
+            return True
+        val = context.values.get(curr.id)
+        if val is not None:
+            return getattr(val, "scratch", False)
+        if curr.id in TEMPORARY_FIXTURES:
+            return True
+    if isinstance(curr, ast.Call):
+        name = dotted(curr.func, context.aliases)
+        if name in TEMPORARY_CALLS or (name in context.values and getattr(context.values[name], "scratch", False)):
+            return True
+        if isinstance(curr.func, ast.Attribute) and curr.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
+            return True
+    val = context.value(target_node)
+    if isinstance(val, PathValue):
+        if val.scratch or val.path in written:
+            return True
+    elif isinstance(val, str) and val in written:
+        return True
+    return False
+
+
 def read_value(context):
     call, name = context.call, context.name()
     if name in {"open", "io.open"} and call.args:
-        return context.value(call.args[0]), "file_read"
+        mode = _open_mode(call, context, is_method=False)
+        if _is_write_mode(mode):
+            return None, None
+        target_node = call.args[0]
+        if _is_scratch_read(context, target_node):
+            return None, None
+        val = context.value(target_node)
+        if isinstance(val, (PathValue, str)):
+            dst = context.target(val)
+            if dst:
+                return val, "file_read"
+            if isinstance(val, PathValue) and val.anchored and not val.scratch:
+                return val, "file_read"
+        return None, None
+
     if name == "importlib.util.spec_from_file_location" and len(call.args) >= 2:
         return context.value(call.args[1]), "dynamic_import_path"
     if name == "runpy.run_path" and call.args:
         return context.value(call.args[0]), "dynamic_import_path"
-    if isinstance(call.func, ast.Attribute) and call.func.attr in {"read_text", "read_bytes", "open"}:
-        base = context.value(call.func.value)
-        if isinstance(base, (PathValue, GlobValue)) or call.func.attr in {"read_text", "read_bytes"}:
+
+    if isinstance(call.func, ast.Attribute) and call.func.attr == "open":
+        mode = _open_mode(call, context, is_method=True)
+        if _is_write_mode(mode):
+            return None, None
+        target_node = call.func.value
+        if _is_scratch_read(context, target_node):
+            return None, None
+        base = context.value(target_node)
+        if isinstance(base, PathValue):
+            dst = context.target(base)
+            if dst:
+                return base, "file_read"
+            if base.anchored and not base.scratch:
+                return base, "file_read"
+        return None, None
+
+    if isinstance(call.func, ast.Attribute) and call.func.attr in {"read_text", "read_bytes"}:
+        target_node = call.func.value
+        if _is_scratch_read(context, target_node):
+            return None, None
+        base = context.value(target_node)
+        if isinstance(base, GlobValue):
             return base, "file_read"
+        if isinstance(base, PathValue):
+            if base.scratch:
+                return None, None
+            dst = context.target(base)
+            if dst:
+                return base, "file_read"
+            if base.anchored:
+                return base, "file_read"
+        return None, None
+
     return None, None
 
 
@@ -388,6 +577,9 @@ def link(model, edges, add):
             if not existing or existing[0] < 1.0:
                 add(src, dst, "tests", "treesitter", 1.0, {"via": mechanism})
         elif mechanism and not isinstance(value, GlobValue):
+            if mechanism == "file_read":
+                if not (isinstance(value, PathValue) and value.anchored and not getattr(value, "scratch", False)):
+                    continue
             path = model.files[context.fid][1]
             detail = f"{path}:{call.lineno}:{call.col_offset + 1}: {mechanism}: target is dynamic, external or absent from tracked files"
             diagnostics.add((context.fid, "unsupported_test_mechanism", detail))
