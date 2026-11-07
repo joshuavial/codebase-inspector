@@ -325,3 +325,31 @@ def test_genuine_missing_production_file():
     assert any("test_fixtures.py:15:" in d and "file_read" in d for d in diags)
 
 
+def test_tuple_unpacking_assignments_bind_paths(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_unpacking.py": '''from pathlib import Path
+
+def test_unpacking_scratch(tmp_path):
+    png, svg = tmp_path / "a.png", tmp_path / "b.svg"
+    png.read_bytes()
+    svg.read_text()
+
+def test_genuine_missing_production_file():
+    missing = Path(__file__).resolve().parents[1] / "pkg" / "missing.py"
+    missing.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Tuple unpacking of scratch paths must NOT emit diagnostics
+    assert not any("a.png" in d or "b.svg" in d or "test_unpacking.py:5:" in d or "test_unpacking.py:6:" in d for d in diags)
+
+    # Genuine missing production code read MUST emit file_read diagnostic
+    assert any("test_unpacking.py:10:" in d and "file_read" in d for d in diags)
+
+
+

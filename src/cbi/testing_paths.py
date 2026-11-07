@@ -294,11 +294,22 @@ def contexts(model, file_ids=None):
                     yield from walk(value_node, values, aliases)
                 value = evaluate(value_node, values, aliases, own)
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+
+                def _bind_target(tgt, val):
+                    if isinstance(tgt, (ast.Tuple, ast.List)) and isinstance(val, (tuple, list)) and len(tgt.elts) == len(val):
+                        for sub_tgt, sub_val in zip(tgt.elts, val):
+                            _bind_target(sub_tgt, sub_val)
+                    elif isinstance(tgt, ast.Name):
+                        values[tgt.id] = val if not isinstance(node, ast.AugAssign) else None
+                        aliases[tgt.id] = None
+                    else:
+                        for part in ast.walk(tgt):
+                            if isinstance(part, ast.Name):
+                                values.pop(part.id, None)
+                                aliases[part.id] = None
+
                 for target in targets:
-                    for part in ast.walk(target):
-                        if isinstance(part, ast.Name):
-                            values[part.id] = value if not isinstance(node, ast.AugAssign) else None
-                            aliases[part.id] = None
+                    _bind_target(target, value)
                 return
             if isinstance(node, ast.NamedExpr):
                 # Guard assignments execute before the selected body, but a
