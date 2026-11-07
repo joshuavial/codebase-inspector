@@ -320,6 +320,28 @@ def contexts(model, file_ids=None):
                         values.pop(target.id, None)
                         aliases[target.id] = None
                 return
+            if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                inner, names = dict(values), dict(aliases)
+                for gen in node.generators:
+                    yield from walk(gen.iter, inner, names)
+                    iter_val = evaluate(gen.iter, inner, names, own)
+                    item_val = None
+                    if isinstance(iter_val, GlobValue):
+                        base = iter_val.base
+                        item_val = PathValue(posixpath.normpath(posixpath.join(base.path, "<item>")),
+                                             anchored=base.anchored, scratch=base.scratch, fixture=base.fixture)
+                    for part in ast.walk(gen.target):
+                        if isinstance(part, ast.Name):
+                            inner[part.id] = item_val
+                            names[part.id] = None
+                    for if_clause in gen.ifs:
+                        yield from walk(if_clause, inner, names)
+                if isinstance(node, ast.DictComp):
+                    yield from walk(node.key, inner, names)
+                    yield from walk(node.value, inner, names)
+                else:
+                    yield from walk(node.elt, inner, names)
+                return
             if isinstance(node, (ast.For, ast.AsyncFor)):
                 yield from walk(node.iter, values, aliases)
                 value = evaluate(node.iter, values, aliases, own)

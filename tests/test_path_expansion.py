@@ -352,4 +352,51 @@ def test_genuine_missing_production_file():
     assert any("test_unpacking.py:10:" in d and "file_read" in d for d in diags)
 
 
+def test_comprehension_over_fixture_and_scratch_globs_binds_paths(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/fixtures/sample.txt": "sample data\n",
+        "tests/test_comprehensions.py": '''from pathlib import Path
+
+FIXTURE = Path(__file__).parent / "fixtures"
+
+def test_fixture_dict_comp():
+    files = {path.relative_to(FIXTURE).as_posix(): path.read_text()
+             for path in FIXTURE.rglob("*") if path.is_file()}
+    assert files
+
+def test_scratch_list_comp(tmp_path):
+    (tmp_path / "scratch.txt").write_text("hello")
+    data = [p.read_bytes() for p in tmp_path.iterdir()]
+    assert data
+
+def test_dynamic_loop_unresolved(items):
+    for item in items:
+        Path(item).read_text()
+
+def test_genuine_missing_production_file():
+    missing = Path(__file__).resolve().parents[1] / "pkg" / "missing.py"
+    missing.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Fixture dict comprehension read_text must NOT emit diagnostics
+    assert not any("test_comprehensions.py:6:" in d for d in diags)
+
+    # Scratch list comprehension read_bytes must NOT emit diagnostics
+    assert not any("test_comprehensions.py:12:" in d for d in diags)
+
+    # Dynamic loop unresolved reads MUST emit dynamic_loop and file_read diagnostics
+    assert any("test_comprehensions.py:16:" in d and "dynamic_loop" in d for d in diags)
+    assert any("test_comprehensions.py:17:" in d and "file_read" in d for d in diags)
+
+    # Genuine missing production code read MUST emit file_read diagnostic
+    assert any("test_comprehensions.py:21:" in d and "file_read" in d for d in diags)
+
+
+
 
