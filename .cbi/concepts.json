@@ -140,6 +140,7 @@
             "scripts/generate_gallery.py",
             "scripts/post-merge.sh",
             "scripts/profile-scan.py",
+            "scripts/smoke_all.py",
             "src/cbi/__init__.py",
             "src/cbi/bug_report.py",
             "src/cbi/check.py",
@@ -154,7 +155,8 @@
             "tests/test_editor.py",
             "tests/test_gallery.py",
             "tests/test_mcp.py",
-            "tests/test_mcp_subprocess.py"
+            "tests/test_mcp_subprocess.py",
+            "tests/test_smoke_harness.py"
           ]
         },
         {
