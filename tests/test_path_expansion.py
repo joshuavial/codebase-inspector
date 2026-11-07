@@ -802,6 +802,121 @@ def test_read_external_from_callback(tmp_path, monkeypatch):
     assert any("test_callback_external.py:11:" in d and "file_read" in d for d in diags)
 
 
+def test_helper_callee_defaults_do_not_inherit_caller_locals(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_helper_defaults.py": '''from pathlib import Path
+
+def reader(force, log=Path("/external/value")):
+    return log.read_text()
+
+def test_caller(tmp_path):
+    log = tmp_path / "safe"
+    reader(True)
+
+def test_caller_explicit_scratch(tmp_path):
+    log = tmp_path / "safe"
+    reader(True, log)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Because reader(True) does not pass log, callee must evaluate its default log=Path("/external/value")
+    # and NOT inherit caller's local variable `log` (tmp_path / "safe").
+    # Therefore, line 4 in reader MUST emit a file_read diagnostic!
+    assert any("test_helper_defaults.py:4:" in d and "file_read" in d for d in diags)
+
+
+def test_fstring_with_external_prefix_retains_diagnostic(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_fstring_external.py": '''from pathlib import Path
+
+def test_external_prefix_read(tmp_path):
+    Path(f"/external/{tmp_path}/real.py").read_text()
+
+def test_scratch_root_read(tmp_path):
+    Path(f"{tmp_path}/real.py").read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Even though {tmp_path} is scratch, the whole path has an external absolute prefix /external/
+    # and is not a scratch path. Therefore, line 4 MUST emit a file_read diagnostic!
+    assert any("test_fstring_external.py:4:" in d and "file_read" in d for d in diags)
+    # Scratch root f-string has NO diagnostic on line 7
+    assert not any("test_fstring_external.py:7:" in d for d in diags)
+
+
+def test_helper_callee_defaults_shadow_module_globals(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_module_shadow.py": '''import tempfile
+from pathlib import Path
+
+log = Path(tempfile.mkdtemp())
+
+def reader(force, log=Path("/external/value")):
+    return log.read_text()
+
+def test_omitted_argument_uses_default():
+    reader(True)
+
+def test_explicit_argument_uses_scratch():
+    reader(True, log)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Because test_omitted_argument_uses_default calls reader(True) without log,
+    # the parameter log must bind its declared default Path("/external/value")
+    # shadowing the module-level scratch variable log.
+    # Therefore, line 7 in reader MUST emit a file_read diagnostic!
+    assert any("test_module_shadow.py:7:" in d and "file_read" in d for d in diags)
+
+
+def test_helper_callee_defaults_evaluate_in_definition_scope(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_definition_defaults.py": '''from pathlib import Path
+
+log = Path("/external/value")
+
+def reader(log, target=log):
+    return target.read_text()
+
+def test_caller_argument_does_not_mutate_default(tmp_path):
+    safe = tmp_path / "safe"
+    reader(safe)
+
+def test_caller_explicit_scratch_passed(tmp_path):
+    safe = tmp_path / "safe"
+    reader(safe, safe)
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Default expression target=log must evaluate in definition module scope (log = Path("/external/value")),
+    # and NOT be altered by caller's actual argument log = safe.
+    # Therefore, line 6 in reader MUST emit a file_read diagnostic!
+    assert any("test_definition_defaults.py:6:" in d and "file_read" in d for d in diags)
+
+
+
+
+
 
 
 

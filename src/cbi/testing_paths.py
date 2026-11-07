@@ -118,9 +118,11 @@ def evaluate(node, values, aliases, own):
         parts = [evaluate(item.value if isinstance(item, ast.FormattedValue) else item,
                           values, aliases, own) for item in node.values]
         if all(isinstance(part, (str, PathValue)) for part in parts):
-            scratch = any(getattr(part, "scratch", False) for part in parts)
-            fixture = any(getattr(part, "fixture", False) for part in parts)
-            anchored = any(getattr(part, "anchored", False) for part in parts)
+            non_empty = [part for part in parts if (part.path if isinstance(part, PathValue) else part)]
+            root = non_empty[0] if non_empty else None
+            scratch = getattr(root, "scratch", False) if root else False
+            fixture = getattr(root, "fixture", False) if root else False
+            anchored = getattr(root, "anchored", False) if root else False
             joined = "".join(part.path if isinstance(part, PathValue) else part for part in parts)
             if scratch or fixture or anchored:
                 return PathValue(joined, anchored, scratch=scratch, fixture=fixture)
@@ -368,8 +370,10 @@ def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
         if _is_scratch_expr(expr.value, local_scratch, fn_returns, scratch_callables):
             return True
     if isinstance(expr, ast.JoinedStr):
-        fv = [item.value for item in expr.values if isinstance(item, ast.FormattedValue)]
-        return bool(fv) and all(_is_scratch_expr(v, local_scratch, fn_returns, scratch_callables) for v in fv)
+        non_empty = [item for item in expr.values if not (isinstance(item, ast.Constant) and not item.value)]
+        if non_empty and isinstance(non_empty[0], ast.FormattedValue):
+            return _is_scratch_expr(non_empty[0].value, local_scratch, fn_returns, scratch_callables)
+        return False
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
         return _is_scratch_expr(expr.left, local_scratch, fn_returns, scratch_callables)
     if isinstance(expr, ast.Call):
@@ -521,6 +525,23 @@ def contexts(model, file_ids=None):
                     test_fixtures = TEMPORARY_FIXTURES | {"monkeypatch", "capsys", "capsysbinary", "capfd"}
                     if any(a not in test_fixtures for a in req_args):
                         module_helpers[item.name] = item
+        module_aliases = {}
+        module_values = dict(module_scratch)
+        for item in module.body:
+            if isinstance(item, ast.Import):
+                for name_item in item.names:
+                    module_aliases[name_item.asname or name_item.name.split(".")[0]] = (
+                        name_item.name if name_item.asname else name_item.name.split(".")[0]
+                    )
+            elif isinstance(item, ast.ImportFrom):
+                for name_item in item.names:
+                    module_aliases[name_item.asname or name_item.name] = f"{item.module}.{name_item.name}"
+            elif isinstance(item, (ast.Assign, ast.AnnAssign)):
+                val = evaluate(item.value, module_values, module_aliases, own)
+                targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        module_values[target.id] = val
         expanding = set()
 
         def boundary(node, mechanism):
@@ -788,23 +809,38 @@ def contexts(model, file_ids=None):
                     helper_fn = module_helpers[hname]
                     expanding.add(hname)
                     try:
-                        h_values = dict(values)
-                        h_aliases = dict(aliases)
+                        h_values = dict(module_values)
+                        h_aliases = dict(module_aliases)
+                        passed_params = set()
                         params = [a.arg for a in helper_fn.args.posonlyargs + helper_fn.args.args]
                         for idx, arg_expr in enumerate(node.args):
                             if idx < len(params):
-                                h_values[params[idx]] = evaluate(arg_expr, values, aliases, own)
+                                param_name = params[idx]
+                                h_values[param_name] = evaluate(arg_expr, values, aliases, own)
+                                passed_params.add(param_name)
                         for kw in node.keywords:
                             if kw.arg:
                                 h_values[kw.arg] = evaluate(kw.value, values, aliases, own)
+                                passed_params.add(kw.arg)
                         pos_count = len(helper_fn.args.posonlyargs) + len(helper_fn.args.args)
                         defaults = helper_fn.args.defaults
                         if defaults:
                             default_offset = pos_count - len(defaults)
                             for d_idx, def_node in enumerate(defaults):
                                 param_idx = default_offset + d_idx
-                                if param_idx < len(params) and params[param_idx] not in h_values:
-                                    h_values[params[param_idx]] = evaluate(def_node, dict(module_scratch), {}, own)
+                                if param_idx < len(params):
+                                    param_name = params[param_idx]
+                                    if param_name not in passed_params:
+                                        h_values[param_name] = evaluate(def_node, module_values, module_aliases, own)
+                        for karg, kdef in zip(helper_fn.args.kwonlyargs, helper_fn.args.kw_defaults):
+                            if karg.arg not in passed_params and kdef is not None:
+                                h_values[karg.arg] = evaluate(kdef, module_values, module_aliases, own)
+                        for a in helper_fn.args.posonlyargs + helper_fn.args.args + helper_fn.args.kwonlyargs:
+                            if a.arg not in passed_params and a.arg not in h_values:
+                                if a.arg in TEMPORARY_FIXTURES:
+                                    h_values[a.arg] = PathValue(f"<{a.arg}>", anchored=False, scratch=True)
+                                elif a.arg in module_scratch:
+                                    h_values[a.arg] = module_scratch[a.arg]
                         for child in helper_fn.body:
                             yield from walk(child, h_values, h_aliases)
                     finally:
@@ -812,7 +848,7 @@ def contexts(model, file_ids=None):
             for child in ast.iter_child_nodes(node):
                 yield from walk(child, values, aliases)
 
-        cache[fid] = tuple(walk(module, dict(module_scratch), {}))
+        cache[fid] = tuple(walk(module, dict(module_values), dict(module_aliases)))
         yield from cache[fid]
 
 
