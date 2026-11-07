@@ -410,6 +410,31 @@ def _script(path, body):
     return path
 
 
+def _query_process_group(pgid, runner=subprocess.run):
+    res = runner(["ps", "-o", "pid=", "-g", str(pgid)], capture_output=True, text=True)
+    if res.returncode not in (0, 1) or (res.stderr and res.stderr.strip()):
+        raise RuntimeError(f"ps query failed (rc={res.returncode}, stderr={res.stderr!r})")
+    if res.returncode == 1 and not res.stdout.strip():
+        return ""
+    return res.stdout.strip()
+
+
+def _poll_process_group(
+    pgid,
+    timeout=2.0,
+    interval=0.05,
+    runner=subprocess.run,
+    clock=time.monotonic,
+    sleep=time.sleep,
+):
+    deadline = clock() + timeout
+    left = _query_process_group(pgid, runner=runner)
+    while left != "" and clock() < deadline:
+        sleep(interval)
+        left = _query_process_group(pgid, runner=runner)
+    return left
+
+
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="Windows has no process session; kill is covered by test_chrome_process_flags_on_windows",
@@ -420,12 +445,98 @@ def test_kill_group_reaps_the_leader_and_its_child(tmp_path):
     time.sleep(0.2)
     render._kill_group(proc)
     assert proc.wait(timeout=2) is not None
-    deadline = time.monotonic() + 2.0
-    left = subprocess.run(["ps", "-o", "pid=", "-g", str(proc.pid)], capture_output=True, text=True)
-    while left.stdout.strip() != "" and time.monotonic() < deadline:
-        time.sleep(0.05)
-        left = subprocess.run(["ps", "-o", "pid=", "-g", str(proc.pid)], capture_output=True, text=True)
-    assert left.stdout.strip() == ""
+    left = _poll_process_group(proc.pid)
+    assert left == ""
+
+
+def test_poll_process_group_succeeds_when_member_clears_before_deadline():
+    clock_time = 100.0
+
+    def fake_clock():
+        return clock_time
+
+    def fake_sleep(secs):
+        nonlocal clock_time
+        clock_time += secs
+
+    responses = [
+        subprocess.CompletedProcess(args=["ps"], returncode=0, stdout="4845\n", stderr=""),
+        subprocess.CompletedProcess(args=["ps"], returncode=1, stdout="", stderr=""),
+    ]
+
+    def fake_runner(*args, **kwargs):
+        return responses.pop(0)
+
+    left = _poll_process_group(
+        12345,
+        timeout=2.0,
+        interval=0.05,
+        runner=fake_runner,
+        clock=fake_clock,
+        sleep=fake_sleep,
+    )
+    assert left == ""
+    assert clock_time == 100.05
+
+
+def test_poll_process_group_exhausts_deadline_on_persistent_member():
+    clock_time = 100.0
+
+    def fake_clock():
+        return clock_time
+
+    def fake_sleep(secs):
+        nonlocal clock_time
+        clock_time += secs
+
+    def fake_runner(*args, **kwargs):
+        return subprocess.CompletedProcess(args=["ps"], returncode=0, stdout="4845\n", stderr="")
+
+    left = _poll_process_group(
+        12345,
+        timeout=2.0,
+        interval=0.05,
+        runner=fake_runner,
+        clock=fake_clock,
+        sleep=fake_sleep,
+    )
+    assert clock_time >= 102.0
+    assert left == "4845"
+    with pytest.raises(AssertionError):
+        assert left == ""
+
+
+def test_poll_process_group_never_masquerades_query_error_as_empty_success():
+    clock_time = 100.0
+
+    def fake_clock():
+        return clock_time
+
+    def fake_sleep(secs):
+        nonlocal clock_time
+        clock_time += secs
+
+    def error_runner_stderr(*args, **kwargs):
+        return subprocess.CompletedProcess(args=["ps"], returncode=1, stdout="", stderr="ps: syntax error\n")
+
+    with pytest.raises(RuntimeError, match="ps query failed"):
+        _poll_process_group(
+            12345,
+            runner=error_runner_stderr,
+            clock=fake_clock,
+            sleep=fake_sleep,
+        )
+
+    def error_runner_rc(*args, **kwargs):
+        return subprocess.CompletedProcess(args=["ps"], returncode=127, stdout="", stderr="")
+
+    with pytest.raises(RuntimeError, match="ps query failed"):
+        _poll_process_group(
+            12345,
+            runner=error_runner_rc,
+            clock=fake_clock,
+            sleep=fake_sleep,
+        )
 
 
 def _pid_dead(pid):
