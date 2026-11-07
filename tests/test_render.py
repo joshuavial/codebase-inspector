@@ -420,7 +420,11 @@ def test_kill_group_reaps_the_leader_and_its_child(tmp_path):
     time.sleep(0.2)
     render._kill_group(proc)
     assert proc.wait(timeout=2) is not None
+    deadline = time.monotonic() + 2.0
     left = subprocess.run(["ps", "-o", "pid=", "-g", str(proc.pid)], capture_output=True, text=True)
+    while left.stdout.strip() != "" and time.monotonic() < deadline:
+        time.sleep(0.05)
+        left = subprocess.run(["ps", "-o", "pid=", "-g", str(proc.pid)], capture_output=True, text=True)
     assert left.stdout.strip() == ""
 
 
