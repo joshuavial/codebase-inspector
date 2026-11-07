@@ -290,3 +290,38 @@ def test_dynamic_loop_unresolved(items):
     assert any("test_unresolved_reads.py:13:" in d and "dynamic_loop" in d for d in diags)
     assert any("test_unresolved_reads.py:14:" in d and "file_read" in d for d in diags)
 
+
+def test_committed_fixture_reads_do_not_emit_diagnostics(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/fixtures/data.json": '{"fixture": true}\n',
+        "tests/test_fixtures.py": '''from pathlib import Path
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+def test_read_fixture_path():
+    data = (FIXTURE_DIR / "data.json").read_text()
+    assert "fixture" in data
+
+def test_read_fixture_open():
+    with open(FIXTURE_DIR / "data.json") as f:
+        assert "fixture" in f.read()
+
+def test_genuine_missing_production_file():
+    missing = Path(__file__).resolve().parents[1] / "pkg" / "missing.py"
+    missing.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Reading committed test fixtures must NOT emit diagnostics
+    assert not any("test_fixtures.py:6:" in d for d in diags)
+    assert not any("test_fixtures.py:10:" in d for d in diags)
+
+    # Genuine missing production code read MUST emit file_read diagnostic
+    assert any("test_fixtures.py:15:" in d and "file_read" in d for d in diags)
+
+

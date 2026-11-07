@@ -14,6 +14,25 @@ class PathValue:
     path: str
     anchored: bool = False
     scratch: bool = False
+    fixture: bool = False
+
+
+FIXTURE_DIRS = {"fixtures", "test-data", "test_data", "golden"}
+
+
+def _is_fixture_path(val):
+    path = val.path if isinstance(val, PathValue) else val if isinstance(val, str) else None
+    if path is None:
+        return False
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    has_fixture_dir = any(p in FIXTURE_DIRS for p in parts)
+    if not has_fixture_dir:
+        return False
+    if isinstance(val, PathValue) and val.anchored:
+        return True
+    return parts[0] in {"tests", "test"}
 
 
 TEMPORARY_FIXTURES = {
@@ -59,7 +78,7 @@ def evaluate(node, values, aliases, own):
         return node.value
     if isinstance(node, ast.Name):
         if node.id == "__file__":
-            return PathValue(own, True)
+            return PathValue(own, True, fixture=_is_fixture_path(own))
         if node.id in values:
             return values[node.id]
         if node.id in TEMPORARY_FIXTURES:
@@ -82,22 +101,28 @@ def evaluate(node, values, aliases, own):
             return left + right
         if isinstance(node.op, ast.Div) and isinstance(left, PathValue):
             if isinstance(right, str):
-                return PathValue(posixpath.normpath(posixpath.join(left.path, right)), left.anchored, left.scratch)
+                new_path = posixpath.normpath(posixpath.join(left.path, right))
+                fixture = left.fixture or _is_fixture_path(new_path)
+                return PathValue(new_path, left.anchored, left.scratch, fixture=fixture)
             elif left.scratch:
-                return PathValue(posixpath.normpath(posixpath.join(left.path, "<dynamic>")), False, True)
+                return PathValue(posixpath.normpath(posixpath.join(left.path, "<dynamic>")), False, True, False)
+            elif left.fixture:
+                return PathValue(posixpath.normpath(posixpath.join(left.path, "<dynamic>")), False, False, True)
     if isinstance(node, ast.Attribute):
         if dotted(node, aliases) == "sys.executable":
             return "sys.executable"
         if node.attr == "parent":
             base = evaluate(node.value, values, aliases, own)
             if isinstance(base, PathValue):
-                return PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
+                new_path = posixpath.dirname(base.path)
+                return PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
         base = evaluate(node.value.value, values, aliases, own)
         index = evaluate(node.slice, values, aliases, own)
         if isinstance(base, PathValue) and isinstance(index, int) and 0 <= index <= 100:
             for _ in range(index + 1):
-                base = PathValue(posixpath.dirname(base.path), base.anchored, base.scratch)
+                new_path = posixpath.dirname(base.path)
+                base = PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
             return base
     if not isinstance(node, ast.Call):
         return None
@@ -108,42 +133,58 @@ def evaluate(node, values, aliases, own):
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
         return PathValue(f"<{node.func.attr}>", False, scratch=True)
     if name in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and args:
-        base = args[0] if isinstance(args[0], PathValue) else PathValue(args[0]) if isinstance(args[0], str) else None
+        base = args[0] if isinstance(args[0], PathValue) else PathValue(args[0], fixture=_is_fixture_path(args[0])) if isinstance(args[0], str) else None
         if base and all(isinstance(arg, str) for arg in args[1:]):
-            return PathValue(posixpath.normpath(posixpath.join(base.path, *args[1:])), base.anchored, base.scratch)
+            new_path = posixpath.normpath(posixpath.join(base.path, *args[1:]))
+            fixture = base.fixture or _is_fixture_path(new_path)
+            return PathValue(new_path, base.anchored, base.scratch, fixture=fixture)
         elif base and base.scratch:
-            return PathValue(posixpath.normpath(posixpath.join(base.path, "<dynamic>")), False, True)
+            return PathValue(posixpath.normpath(posixpath.join(base.path, "<dynamic>")), False, True, False)
+        elif base and base.fixture:
+            return PathValue(posixpath.normpath(posixpath.join(base.path, "<dynamic>")), False, False, True)
     if name in {"str", "os.fspath"} and len(args) == 1:
         return args[0]
     if name in {"os.path.join", "posixpath.join"} and args:
         if all(isinstance(arg, (str, PathValue)) for arg in args):
             scratch = any(getattr(arg, "scratch", False) for arg in args)
+            fixture = any(getattr(arg, "fixture", False) or _is_fixture_path(arg.path if isinstance(arg, PathValue) else arg) for arg in args)
             return PathValue(posixpath.normpath(posixpath.join(*[arg.path if isinstance(arg, PathValue) else arg for arg in args])),
                              isinstance(args[0], PathValue) and args[0].anchored,
-                             scratch=scratch)
+                             scratch=scratch,
+                             fixture=fixture)
     if name in {"os.path.dirname", "posixpath.dirname"} and len(args) == 1:
         arg = args[0]
         if isinstance(arg, (str, PathValue)):
             scratch = getattr(arg, "scratch", False) if isinstance(arg, PathValue) else False
-            return PathValue(posixpath.dirname(arg.path if isinstance(arg, PathValue) else arg),
+            fixture = getattr(arg, "fixture", False) if isinstance(arg, PathValue) else False
+            new_path = posixpath.dirname(arg.path if isinstance(arg, PathValue) else arg)
+            return PathValue(new_path,
                              isinstance(arg, PathValue) and arg.anchored,
-                             scratch=scratch)
+                             scratch=scratch,
+                             fixture=fixture or _is_fixture_path(new_path))
     if isinstance(node.func, ast.Attribute):
         base = evaluate(node.func.value, values, aliases, own)
         if isinstance(base, PathValue):
             if node.func.attr in {"resolve", "absolute"} and not args:
                 return base
             if node.func.attr == "with_name" and len(args) == 1 and isinstance(args[0], str):
-                return PathValue(posixpath.normpath(posixpath.join(posixpath.dirname(base.path), args[0])), base.anchored, base.scratch)
+                new_path = posixpath.normpath(posixpath.join(posixpath.dirname(base.path), args[0]))
+                return PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
             if node.func.attr == "with_suffix" and len(args) == 1 and isinstance(args[0], str):
-                return PathValue(posixpath.splitext(base.path)[0] + args[0], base.anchored, base.scratch)
+                new_path = posixpath.splitext(base.path)[0] + args[0]
+                return PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
             if node.func.attr == "joinpath" and args and all(isinstance(arg, str) for arg in args):
-                return PathValue(posixpath.normpath(posixpath.join(base.path, *args)), base.anchored, base.scratch)
+                new_path = posixpath.normpath(posixpath.join(base.path, *args))
+                return PathValue(new_path, base.anchored, base.scratch, fixture=base.fixture or _is_fixture_path(new_path))
             if node.func.attr in {"glob", "rglob"} and len(args) == 1 and isinstance(args[0], str):
                 return GlobValue(base, args[0], node.func.attr == "rglob")
+            if node.func.attr == "iterdir" and not args:
+                return GlobValue(base, "*", False)
     kws = [evaluate(kw.value, values, aliases, own) for kw in node.keywords]
     if any(getattr(a, "scratch", False) for a in args + kws):
         return PathValue(f"<{name}>", False, scratch=True)
+    if any(getattr(a, "fixture", False) for a in args + kws):
+        return PathValue(f"<{name}>", False, fixture=True)
     return None
 
 
@@ -471,7 +512,7 @@ def _is_scratch_read(context, target_node):
             return True
         val = context.values.get(target_node.id)
         if val is not None:
-            return getattr(val, "scratch", False)
+            return getattr(val, "scratch", False) or getattr(val, "fixture", False) or _is_fixture_path(val)
         if target_node.id in TEMPORARY_FIXTURES:
             return True
     curr = target_node
@@ -482,7 +523,7 @@ def _is_scratch_read(context, target_node):
             return True
         val = context.values.get(curr.id)
         if val is not None:
-            return getattr(val, "scratch", False)
+            return getattr(val, "scratch", False) or getattr(val, "fixture", False) or _is_fixture_path(val)
         if curr.id in TEMPORARY_FIXTURES:
             return True
     if isinstance(curr, ast.Call):
@@ -495,9 +536,9 @@ def _is_scratch_read(context, target_node):
             return True
     val = context.value(target_node)
     if isinstance(val, PathValue):
-        if val.scratch or val.path in written:
+        if val.scratch or val.fixture or _is_fixture_path(val) or val.path in written:
             return True
-    elif isinstance(val, str) and val in written:
+    elif isinstance(val, str) and (val in written or _is_fixture_path(val)):
         return True
     return False
 
@@ -512,7 +553,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         val = context.value(target_node)
-        if getattr(val, "scratch", False):
+        if getattr(val, "scratch", False) or getattr(val, "fixture", False) or _is_fixture_path(val):
             return None, None
         return val, "file_read"
 
@@ -529,7 +570,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if getattr(base, "scratch", False):
+        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base):
             return None, None
         return base, "file_read"
 
@@ -538,7 +579,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if getattr(base, "scratch", False):
+        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base):
             return None, None
         return base, "file_read"
 
@@ -579,7 +620,7 @@ def link(model, edges, add):
             if not existing or existing[0] < 1.0:
                 add(src, dst, "tests", "treesitter", 1.0, {"via": mechanism})
         elif mechanism and not isinstance(value, GlobValue):
-            if mechanism == "file_read" and getattr(value, "scratch", False):
+            if mechanism == "file_read" and (getattr(value, "scratch", False) or getattr(value, "fixture", False) or _is_fixture_path(value)):
                 continue
             path = model.files[context.fid][1]
             detail = f"{path}:{call.lineno}:{call.col_offset + 1}: {mechanism}: target is dynamic, external or absent from tracked files"
