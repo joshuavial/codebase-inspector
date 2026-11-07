@@ -20,6 +20,26 @@ class PathValue:
 FIXTURE_DIRS = {"fixtures", "test-data", "test_data", "golden"}
 
 
+def _is_cbi_scratch_path(val):
+    if isinstance(val, PathValue):
+        if val.anchored:
+            return False
+        path = val.path
+    elif isinstance(val, str):
+        path = val
+    else:
+        return False
+    if not path:
+        return False
+    if path.startswith(("/", "\\")) or posixpath.isabs(path):
+        return False
+    norm = posixpath.normpath(path.replace("\\", "/"))
+    if norm.startswith(("/", "\\")) or posixpath.isabs(norm):
+        return False
+    parts = [p for p in norm.split("/") if p and p != "."]
+    return bool(parts and parts[0] == ".cbi")
+
+
 def _is_fixture_path(val):
     path = val.path if isinstance(val, PathValue) else val if isinstance(val, str) else None
     if path is None:
@@ -90,10 +110,22 @@ def evaluate(node, values, aliases, own):
         return tuple(evaluate(item, values, aliases, own) for item in node.elts)
     if isinstance(node, ast.Dict) and not node.keys:
         return ()
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        val = evaluate(node.operand, values, aliases, own)
+        if isinstance(val, (int, float)):
+            return -val
     if isinstance(node, ast.JoinedStr):
         parts = [evaluate(item.value if isinstance(item, ast.FormattedValue) else item,
                           values, aliases, own) for item in node.values]
-        return "".join(parts) if all(isinstance(part, str) for part in parts) else None
+        if all(isinstance(part, (str, PathValue)) for part in parts):
+            scratch = any(getattr(part, "scratch", False) for part in parts)
+            fixture = any(getattr(part, "fixture", False) for part in parts)
+            anchored = any(getattr(part, "anchored", False) for part in parts)
+            joined = "".join(part.path if isinstance(part, PathValue) else part for part in parts)
+            if scratch or fixture or anchored:
+                return PathValue(joined, anchored, scratch=scratch, fixture=fixture)
+            return joined
+        return None
     if isinstance(node, ast.BinOp):
         left = evaluate(node.left, values, aliases, own)
         right = evaluate(node.right, values, aliases, own)
@@ -127,10 +159,12 @@ def evaluate(node, values, aliases, own):
                 return base
         base = evaluate(node.value, values, aliases, own)
         index = evaluate(node.slice, values, aliases, own)
-        if isinstance(base, (tuple, list)) and isinstance(index, int) and 0 <= index < len(base):
+        if isinstance(base, (tuple, list)) and isinstance(index, int) and -len(base) <= index < len(base):
             return base[index]
         if isinstance(base, dict) and index in base:
             return base[index]
+        if isinstance(base, PathValue) and base.scratch:
+            return PathValue(f"{base.path}[{index}]", False, scratch=True)
     if not isinstance(node, ast.Call):
         return None
     name = dotted(node.func, aliases)
@@ -189,6 +223,18 @@ def evaluate(node, values, aliases, own):
                 return GlobValue(base, args[0], node.func.attr == "rglob")
             if node.func.attr == "iterdir" and not args:
                 return GlobValue(base, "*", False)
+            if node.func.attr in {"rsplit", "split"} and base.scratch:
+                if args and isinstance(args[0], str) and args[0] in base.path:
+                    maxsplit = args[1] if len(args) > 1 and isinstance(args[1], int) else -1
+                    parts = base.path.rsplit(args[0], maxsplit) if node.func.attr == "rsplit" else base.path.split(args[0], maxsplit)
+                    return tuple(PathValue(p, False, scratch=True) for p in parts)
+                return (PathValue(f"{base.path}:{node.func.attr}[0]", False, scratch=True),
+                        PathValue(f"{base.path}:{node.func.attr}[1]", False, scratch=True))
+        elif isinstance(base, str):
+            if node.func.attr in {"rsplit", "split"} and args and isinstance(args[0], str):
+                maxsplit = args[1] if len(args) > 1 and isinstance(args[1], int) else -1
+                parts = base.rsplit(args[0], maxsplit) if node.func.attr == "rsplit" else base.split(args[0], maxsplit)
+                return tuple(parts)
     if name in {"team._store", "_store", "cbi.team._store"} and args and getattr(args[0], "scratch", False):
         return (PathValue(posixpath.normpath(posixpath.join(args[0].path, "answers.jsonl")), False, scratch=True), 1, True)
     if name in {"build.build", "cbi.build.build"}:
@@ -313,15 +359,24 @@ SCRATCH_CONSTRUCTORS = {
 def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
     if isinstance(expr, ast.Name):
         return expr.id in local_scratch
+    if isinstance(expr, (ast.Tuple, ast.List)):
+        return bool(expr.elts) and all(_is_scratch_expr(elt, local_scratch, fn_returns, scratch_callables) for elt in expr.elts)
     if isinstance(expr, ast.Subscript):
         slice_val = expr.slice.value if isinstance(expr.slice, ast.Constant) else None
         if slice_val in {"file", "project"} and _is_scratch_expr(expr.value, local_scratch, fn_returns, scratch_callables):
             return True
+        if _is_scratch_expr(expr.value, local_scratch, fn_returns, scratch_callables):
+            return True
+    if isinstance(expr, ast.JoinedStr):
+        fv = [item.value for item in expr.values if isinstance(item, ast.FormattedValue)]
+        return bool(fv) and all(_is_scratch_expr(v, local_scratch, fn_returns, scratch_callables) for v in fv)
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
         return _is_scratch_expr(expr.left, local_scratch, fn_returns, scratch_callables)
     if isinstance(expr, ast.Call):
         cname = dotted(expr.func, {})
         base_name = cname.split(".")[-1] if cname else ""
+        if cname in {"str", "os.fspath"} and expr.args:
+            return _is_scratch_expr(expr.args[0], local_scratch, fn_returns, scratch_callables)
         if cname in scratch_callables or base_name in scratch_callables:
             return True
         if cname in fn_returns or base_name in fn_returns:
@@ -456,12 +511,25 @@ def contexts(model, file_ids=None):
         own = model.files[fid][1]
         file_written = model._test_written_paths.setdefault(fid, set())
         module_scratch = _analyze_module_fixtures_and_helpers(module)
+        module_helpers = {}
+        for item in module.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not item.name.startswith("test") and not item.name.startswith("Test"):
+                    all_pos = [a.arg for a in item.args.posonlyargs + item.args.args]
+                    defaults = item.args.defaults or []
+                    req_args = all_pos[:len(all_pos) - len(defaults)]
+                    test_fixtures = TEMPORARY_FIXTURES | {"monkeypatch", "capsys", "capsysbinary", "capfd"}
+                    if any(a not in test_fixtures for a in req_args):
+                        module_helpers[item.name] = item
+        expanding = set()
 
         def boundary(node, mechanism):
             model._test_path_limits.add((fid, node, mechanism))
 
         def walk(node, values, aliases):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                if node in module_helpers.values():
+                    return
                 values, aliases = dict(values), dict(aliases)
                 arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
                 arguments += [arg for arg in (node.args.vararg, node.args.kwarg) if arg]
@@ -714,6 +782,33 @@ def contexts(model, file_ids=None):
             if isinstance(node, ast.Call):
                 _track_write(node, values, aliases, own, file_written)
                 yield Context(model, fid, node, dict(values), dict(aliases))
+                cname = dotted(node.func, aliases)
+                hname = cname if cname in module_helpers else (node.func.attr if isinstance(node.func, ast.Attribute) and node.func.attr in module_helpers else None)
+                if hname and hname not in expanding:
+                    helper_fn = module_helpers[hname]
+                    expanding.add(hname)
+                    try:
+                        h_values = dict(values)
+                        h_aliases = dict(aliases)
+                        params = [a.arg for a in helper_fn.args.posonlyargs + helper_fn.args.args]
+                        for idx, arg_expr in enumerate(node.args):
+                            if idx < len(params):
+                                h_values[params[idx]] = evaluate(arg_expr, values, aliases, own)
+                        for kw in node.keywords:
+                            if kw.arg:
+                                h_values[kw.arg] = evaluate(kw.value, values, aliases, own)
+                        pos_count = len(helper_fn.args.posonlyargs) + len(helper_fn.args.args)
+                        defaults = helper_fn.args.defaults
+                        if defaults:
+                            default_offset = pos_count - len(defaults)
+                            for d_idx, def_node in enumerate(defaults):
+                                param_idx = default_offset + d_idx
+                                if param_idx < len(params) and params[param_idx] not in h_values:
+                                    h_values[params[param_idx]] = evaluate(def_node, dict(module_scratch), {}, own)
+                        for child in helper_fn.body:
+                            yield from walk(child, h_values, h_aliases)
+                    finally:
+                        expanding.remove(hname)
             for child in ast.iter_child_nodes(node):
                 yield from walk(child, values, aliases)
 
@@ -829,9 +924,9 @@ def _is_scratch_read(context, target_node):
             return True
     val = context.value(target_node)
     if isinstance(val, PathValue):
-        if val.scratch or val.fixture or _is_fixture_path(val) or val.path in written:
+        if val.scratch or val.fixture or _is_fixture_path(val) or val.path in written or _is_cbi_scratch_path(val):
             return True
-    elif isinstance(val, str) and (val in written or _is_fixture_path(val)):
+    elif isinstance(val, str) and (val in written or _is_fixture_path(val) or _is_cbi_scratch_path(val)):
         return True
     return False
 
@@ -846,7 +941,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         val = context.value(target_node)
-        if getattr(val, "scratch", False) or getattr(val, "fixture", False) or _is_fixture_path(val):
+        if getattr(val, "scratch", False) or getattr(val, "fixture", False) or _is_fixture_path(val) or _is_cbi_scratch_path(val):
             return None, None
         return val, "file_read"
 
@@ -863,7 +958,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base):
+        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base) or _is_cbi_scratch_path(base):
             return None, None
         return base, "file_read"
 
@@ -872,7 +967,7 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base):
+        if getattr(base, "scratch", False) or getattr(base, "fixture", False) or _is_fixture_path(base) or _is_cbi_scratch_path(base):
             return None, None
         return base, "file_read"
 
@@ -913,7 +1008,7 @@ def link(model, edges, add):
             if not existing or existing[0] < 1.0:
                 add(src, dst, "tests", "treesitter", 1.0, {"via": mechanism})
         elif mechanism and not isinstance(value, GlobValue):
-            if mechanism == "file_read" and (getattr(value, "scratch", False) or getattr(value, "fixture", False) or _is_fixture_path(value)):
+            if mechanism == "file_read" and (getattr(value, "scratch", False) or getattr(value, "fixture", False) or _is_fixture_path(value) or _is_cbi_scratch_path(value)):
                 continue
             path = model.files[context.fid][1]
             detail = f"{path}:{call.lineno}:{call.col_offset + 1}: {mechanism}: target is dynamic, external or absent from tracked files"

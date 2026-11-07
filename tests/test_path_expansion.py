@@ -643,9 +643,163 @@ def test_git_shim_external_read_retains_diagnostic():
     assert any("test_git_shim.py:13:" in d and "file_read" in d for d in diags)
 
 
+def test_helper_scratch_parameter_and_external_boundaries(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_helper_reads.py": '''from pathlib import Path
+
+def fake_gh(tmp_path):
+    return tmp_path / "gh.log"
+
+def gh_calls(log):
+    return log.read_text()
+
+def test_helper_scratch_read_suppressed(tmp_path):
+    log = fake_gh(tmp_path)
+    calls = gh_calls(log)
+
+def test_helper_external_read_retains_diagnostic():
+    calls = gh_calls(Path("/external/gh.log"))
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch read via helper: line 7 inside gh_calls is NOT flagged when called with scratch
+    # External read via helper: line 7 inside gh_calls MUST retain file_read diagnostic when called with external path
+    assert any("test_helper_reads.py:7:" in d and "file_read" in d for d in diags)
 
 
+def test_editor_launch_scratch_split_and_external_boundaries(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_mock_editor.py": '''from pathlib import Path
 
+def _fake_code(tmp_path):
+    code = tmp_path / "bin" / "code"
+    snap = tmp_path / "snapshots" / "side" / "src" / "app.py"
+    snap.parent.mkdir(parents=True, exist_ok=True)
+    snap.write_text("content\\n")
+    launched = [[str(code), f"{snap}:10"]]
+    return code, launched
+
+def test_scratch_editor_goto_split_suppressed(tmp_path):
+    code, launched = _fake_code(tmp_path)
+    goto = launched[0][-1]
+    snap = Path(goto.rsplit(":", 1)[0])
+    text = snap.read_text()
+
+def test_external_editor_goto_split_retains_diagnostic(tmp_path):
+    code = tmp_path / "bin" / "code"
+    launched = [[str(code), "/external/file.py:10"]]
+    goto = launched[0][-1]
+    target = Path(goto.rsplit(":", 1)[0])
+    text = target.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch editor launch split read: NO diagnostic
+    assert not any("test_mock_editor.py:15:" in d for d in diags)
+
+    # External editor read: MUST retain file_read diagnostic
+    assert any("test_mock_editor.py:22:" in d and "file_read" in d for d in diags)
+
+
+def test_cbi_scratch_metadata_read_and_external_boundaries(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_cbi_metadata.py": '''def test_scratch_cbi_metadata_suppressed():
+    doc = open(".cbi/structure.json").read()
+
+def test_external_cbi_metadata_retains_diagnostic():
+    doc = open("/external/.cbi/structure.json").read()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch relative .cbi/ metadata read: NO diagnostic
+    assert not any("test_cbi_metadata.py:2:" in d for d in diags)
+
+    # External .cbi/ metadata read: MUST retain file_read diagnostic
+    assert any("test_cbi_metadata.py:5:" in d and "file_read" in d for d in diags)
+
+
+def test_fake_code_with_external_returns_retains_diagnostic(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_fake_code_external.py": '''from pathlib import Path
+
+def _fake_code(tmp_path, monkeypatch):
+    return Path("/external/real-code"), Path("/external/real-log")
+
+def test_caller_read_external_from_fake_code(tmp_path, monkeypatch):
+    code, launched = _fake_code(tmp_path, monkeypatch)
+    data = code.read_text()
+    log_data = launched.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    assert any("test_fake_code_external.py:8:" in d and "file_read" in d for d in diags)
+    assert any("test_fake_code_external.py:9:" in d and "file_read" in d for d in diags)
+
+
+def test_absolute_and_anchored_cbi_paths_retain_diagnostics(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_cbi_abs_anchored.py": '''from pathlib import Path
+
+def test_absolute_cbi_path_retains_diagnostic():
+    open("/.cbi/real-code.py").read()
+
+def test_anchored_cbi_tracked_read_retains_diagnostic():
+    p = Path(__file__).parent.parent / ".cbi" / "production.py"
+    p.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    assert any("test_cbi_abs_anchored.py:4:" in d and "file_read" in d for d in diags)
+    assert any("test_cbi_abs_anchored.py:8:" in d and "file_read" in d for d in diags)
+
+
+def test_launch_callback_appending_external_retains_diagnostic(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_callback_external.py": '''from pathlib import Path
+from cbi import editor
+
+def observed(tmp_path, monkeypatch):
+    paths = []
+    monkeypatch.setattr(editor, "launch", lambda value: paths.append("/external/real.py"))
+    return paths
+
+def test_read_external_from_callback(tmp_path, monkeypatch):
+    paths = observed(tmp_path, monkeypatch)
+    data = Path(paths[0]).read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    assert any("test_callback_external.py:11:" in d and "file_read" in d for d in diags)
 
 
 
