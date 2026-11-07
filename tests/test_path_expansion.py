@@ -555,6 +555,34 @@ def test_viewer_external_read_retains_diagnostic():
     assert any("test_build_viewer.py:12:" in d and "file_read" in d for d in diags)
 
 
+def test_render_viewer_png_output_in_scratch_file(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_render_png.py": '''from pathlib import Path
+from cbi import render
+
+def test_viewer_png_scratch_reads_suppressed(tmp_path):
+    png = render.viewer_png("index.html", "tab=database", tmp_path / "render.png")
+    data = png.read_bytes()
+
+def test_viewer_png_external_read_retains_diagnostic():
+    png = render.viewer_png("index.html", "tab=database", Path("/external/render.png"))
+    data = png.read_bytes()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch png reads: NO diagnostics
+    assert not any("test_render_png.py:6:" in d for d in diags)
+
+    # External png read: MUST retain file_read diagnostic
+    assert any("test_render_png.py:10:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 

@@ -198,6 +198,15 @@ def evaluate(node, values, aliases, own):
                 out_val = evaluate(kw.value, values, aliases, own)
         if isinstance(out_val, PathValue) and out_val.scratch:
             return PathValue(posixpath.normpath(posixpath.join(out_val.path, "index.html")), False, scratch=True)
+    if name in {"render.viewer_png", "cbi.render.viewer_png"}:
+        png_val = None
+        if len(args) >= 3:
+            png_val = args[2]
+        for kw in node.keywords:
+            if kw.arg == "png":
+                png_val = evaluate(kw.value, values, aliases, own)
+        if isinstance(png_val, PathValue) and png_val.scratch:
+            return png_val
     return None
 
 
@@ -308,6 +317,13 @@ def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
                 if kw.arg == "out":
                     out_arg = kw.value
             if out_arg and _is_scratch_expr(out_arg, local_scratch, fn_returns, scratch_callables):
+                return True
+        if cname in {"render.viewer_png", "cbi.render.viewer_png"}:
+            png_arg = expr.args[2] if len(expr.args) >= 3 else None
+            for kw in expr.keywords:
+                if kw.arg == "png":
+                    png_arg = kw.value
+            if png_arg and _is_scratch_expr(png_arg, local_scratch, fn_returns, scratch_callables):
                 return True
     return False
 
@@ -689,6 +705,12 @@ def _track_write(call, values, aliases, own, written):
             mode = _extract_mode_from_call(call, values, aliases, own, is_method=False)
             if _is_write_mode(mode):
                 target = call.args[0]
+        elif name in {"render.viewer_png", "cbi.render.viewer_png"}:
+            if len(call.args) >= 3:
+                target = call.args[2]
+            for kw in call.keywords:
+                if kw.arg == "png":
+                    target = kw.value
     if target is not None:
         try:
             written.add(ast.unparse(target))
