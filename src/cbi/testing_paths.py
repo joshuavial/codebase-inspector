@@ -129,6 +129,8 @@ def evaluate(node, values, aliases, own):
         index = evaluate(node.slice, values, aliases, own)
         if isinstance(base, (tuple, list)) and isinstance(index, int) and 0 <= index < len(base):
             return base[index]
+        if isinstance(base, dict) and index in base:
+            return base[index]
     if not isinstance(node, ast.Call):
         return None
     name = dotted(node.func, aliases)
@@ -207,6 +209,19 @@ def evaluate(node, values, aliases, own):
                 png_val = evaluate(kw.value, values, aliases, own)
         if isinstance(png_val, PathValue) and png_val.scratch:
             return png_val
+    if name in {
+        "editor.resolve_target", "cbi.editor.resolve_target",
+        "editor.resolve_ref_target", "cbi.editor.resolve_ref_target",
+    }:
+        kws = {kw.arg: evaluate(kw.value, values, aliases, own) for kw in node.keywords}
+        repo_or_proj = kws.get("repo") or kws.get("project") or kws.get("worktree")
+        if repo_or_proj is None and len(args) >= 3:
+            repo_or_proj = args[2]
+        if isinstance(repo_or_proj, PathValue) and repo_or_proj.scratch:
+            return {
+                "file": PathValue("<scratch_file>", False, scratch=True),
+                "project": PathValue("<scratch_project>", False, scratch=True),
+            }
     return None
 
 
@@ -289,6 +304,10 @@ SCRATCH_CONSTRUCTORS = {
 def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
     if isinstance(expr, ast.Name):
         return expr.id in local_scratch
+    if isinstance(expr, ast.Subscript):
+        slice_val = expr.slice.value if isinstance(expr.slice, ast.Constant) else None
+        if slice_val in {"file", "project"} and _is_scratch_expr(expr.value, local_scratch, fn_returns, scratch_callables):
+            return True
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
         return _is_scratch_expr(expr.left, local_scratch, fn_returns, scratch_callables)
     if isinstance(expr, ast.Call):
@@ -324,6 +343,18 @@ def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
                 if kw.arg == "png":
                     png_arg = kw.value
             if png_arg and _is_scratch_expr(png_arg, local_scratch, fn_returns, scratch_callables):
+                return True
+        if cname in {
+            "editor.resolve_target", "cbi.editor.resolve_target",
+            "editor.resolve_ref_target", "cbi.editor.resolve_ref_target",
+        }:
+            target_arg = None
+            for kw in expr.keywords:
+                if kw.arg in {"repo", "project", "worktree"}:
+                    target_arg = kw.value
+            if target_arg is None and len(expr.args) >= 3:
+                target_arg = expr.args[2]
+            if target_arg and _is_scratch_expr(target_arg, local_scratch, fn_returns, scratch_callables):
                 return True
     return False
 

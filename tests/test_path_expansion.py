@@ -582,6 +582,38 @@ def test_viewer_png_external_read_retains_diagnostic():
     assert any("test_render_png.py:10:" in d and "file_read" in d for d in diags)
 
 
+def test_resolve_target_scratch_and_external_boundaries(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_resolve_target.py": '''from pathlib import Path
+from cbi import editor
+
+def test_resolve_target_scratch_reads_suppressed(tmp_path):
+    repo = tmp_path / "repo"
+    opened = editor.resolve_ref_target("src/pay.py", 1, repo=repo, branch="main", sha="1234")
+    data = Path(opened["file"]).read_text()
+    snap = Path(opened["file"])
+    text = snap.read_text()
+
+def test_resolve_target_external_read_retains_diagnostic():
+    opened = editor.resolve_ref_target("src/pay.py", 1, repo=Path("/external/repo"), branch="main", sha="1234")
+    data = Path(opened["file"]).read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch opened file reads: NO diagnostics
+    assert not any("test_resolve_target.py:7:" in d for d in diags)
+    assert not any("test_resolve_target.py:9:" in d for d in diags)
+
+    # External repo read: MUST retain file_read diagnostic
+    assert any("test_resolve_target.py:13:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 
