@@ -189,6 +189,15 @@ def evaluate(node, values, aliases, own):
                 return GlobValue(base, "*", False)
     if name in {"team._store", "_store", "cbi.team._store"} and args and getattr(args[0], "scratch", False):
         return (PathValue(posixpath.normpath(posixpath.join(args[0].path, "answers.jsonl")), False, scratch=True), 1, True)
+    if name in {"build.build", "cbi.build.build"}:
+        out_val = None
+        if len(args) >= 2:
+            out_val = args[1]
+        for kw in node.keywords:
+            if kw.arg == "out":
+                out_val = evaluate(kw.value, values, aliases, own)
+        if isinstance(out_val, PathValue) and out_val.scratch:
+            return PathValue(posixpath.normpath(posixpath.join(out_val.path, "index.html")), False, scratch=True)
     return None
 
 
@@ -293,6 +302,13 @@ def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
             return _is_scratch_expr(expr.args[0], local_scratch, fn_returns, scratch_callables)
         if cname in {"team._store", "_store", "cbi.team._store"} and expr.args:
             return _is_scratch_expr(expr.args[0], local_scratch, fn_returns, scratch_callables)
+        if cname in {"build.build", "cbi.build.build"}:
+            out_arg = expr.args[1] if len(expr.args) >= 2 else None
+            for kw in expr.keywords:
+                if kw.arg == "out":
+                    out_arg = kw.value
+            if out_arg and _is_scratch_expr(out_arg, local_scratch, fn_returns, scratch_callables):
+                return True
     return False
 
 

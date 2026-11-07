@@ -524,6 +524,38 @@ def test_if_without_else_retains_diagnostic(tmp_path):
     assert any("test_conditional_scratch.py:27:" in d and "file_read" in d for d in diags)
 
 
+def test_build_viewer_return_paths_in_scratch_directory(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_build_viewer.py": '''from pathlib import Path
+from cbi import build
+
+def test_viewer_scratch_reads_suppressed(tmp_path):
+    viewer = build.build("conn", tmp_path / "viewer")
+    html = viewer.read_text()
+    css = (viewer.parent / "style.css").read_text()
+    data = (viewer.parent / "data" / "tree.js").read_text()
+
+def test_viewer_external_read_retains_diagnostic():
+    viewer = build.build("conn", Path("/external/viewer"))
+    viewer.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Scratch viewer reads: NO diagnostics
+    assert not any("test_build_viewer.py:6:" in d for d in diags)
+    assert not any("test_build_viewer.py:7:" in d for d in diags)
+    assert not any("test_build_viewer.py:8:" in d for d in diags)
+
+    # External viewer read: MUST retain file_read diagnostic
+    assert any("test_build_viewer.py:12:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 
