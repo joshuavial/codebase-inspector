@@ -477,6 +477,54 @@ def test_external_return_retains_diagnostic(tmp_path):
     assert any("test_unproven_helper.py:14:" in d and "file_read" in d for d in diags)
 
 
+def test_conditional_scratch_assignment_retains_provenance(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_conditional_scratch.py": '''import sys
+from pathlib import Path
+
+def test_if_elif_else_scratch(tmp_path):
+    fake_home = tmp_path / "home"
+    if sys.platform == "darwin":
+        desktop_dir = fake_home / "Library" / "Application Support" / "Claude"
+    elif sys.platform == "win32":
+        desktop_dir = fake_home / "AppData" / "Roaming" / "Claude"
+    else:
+        desktop_dir = fake_home / ".config" / "Claude"
+    desktop_json = desktop_dir / "claude_desktop_config.json"
+    desktop_json.read_text()
+
+def test_if_else_one_branch_external_retains_diagnostic(tmp_path):
+    if sys.platform == "darwin":
+        desktop_dir = tmp_path / "Claude"
+    else:
+        desktop_dir = Path("/etc/claude")
+    desktop_json = desktop_dir / "claude_desktop_config.json"
+    desktop_json.read_text()
+
+def test_if_without_else_retains_diagnostic(tmp_path):
+    if sys.platform == "darwin":
+        desktop_dir = tmp_path / "Claude"
+    desktop_json = desktop_dir / "claude_desktop_config.json"
+    desktop_json.read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # All branches scratch: NO diagnostic
+    assert not any("test_conditional_scratch.py:13:" in d for d in diags)
+
+    # One branch external: MUST retain file_read diagnostic
+    assert any("test_conditional_scratch.py:21:" in d and "file_read" in d for d in diags)
+
+    # If without else: MUST retain file_read diagnostic
+    assert any("test_conditional_scratch.py:27:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 

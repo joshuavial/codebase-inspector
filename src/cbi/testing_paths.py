@@ -577,8 +577,7 @@ def contexts(model, file_ids=None):
                     values.pop(name, None)
                     aliases[name] = None
                 return
-            if isinstance(node, (ast.If, ast.While)):
-                # Conditional writes cannot become unconditional literal facts.
+            if isinstance(node, ast.While):
                 guard_writes = _assigned(node.test)
                 for field, children in ast.iter_fields(node):
                     inner, names = dict(values), dict(aliases)
@@ -595,6 +594,43 @@ def contexts(model, file_ids=None):
                 for name in _assigned(node):
                     values.pop(name, None)
                     aliases[name] = None
+                return
+            if isinstance(node, ast.If):
+                guard_writes = _assigned(node.test)
+                test_values, test_aliases = dict(values), dict(aliases)
+                yield from walk(node.test, test_values, test_aliases)
+
+                body_values, body_aliases = dict(values), dict(aliases)
+                for name in guard_writes:
+                    body_values.pop(name, None)
+                    body_aliases[name] = None
+                for child in node.body:
+                    yield from walk(child, body_values, body_aliases)
+
+                if node.orelse:
+                    orelse_values, orelse_aliases = dict(values), dict(aliases)
+                    for name in guard_writes:
+                        orelse_values.pop(name, None)
+                        orelse_aliases[name] = None
+                    for child in node.orelse:
+                        yield from walk(child, orelse_values, orelse_aliases)
+
+                    for name in _assigned(node):
+                        b_val = body_values.get(name)
+                        o_val = orelse_values.get(name)
+                        if getattr(b_val, "scratch", False) and getattr(o_val, "scratch", False):
+                            values[name] = PathValue(f"<{name}>", False, scratch=True)
+                            aliases[name] = None
+                        elif getattr(b_val, "fixture", False) and getattr(o_val, "fixture", False):
+                            values[name] = PathValue(f"<{name}>", False, fixture=True)
+                            aliases[name] = None
+                        else:
+                            values.pop(name, None)
+                            aliases[name] = None
+                else:
+                    for name in _assigned(node):
+                        values.pop(name, None)
+                        aliases[name] = None
                 return
             if isinstance(node, ast.Call):
                 _track_write(node, values, aliases, own, file_written)
