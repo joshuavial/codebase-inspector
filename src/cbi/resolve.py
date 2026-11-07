@@ -1229,9 +1229,17 @@ def resolve(conn, root, reporter=None):
     path_boundary_diags = testing_paths.expansion_diagnostics(m)
 
     linked = {src if src in m.files else m.nodes[src][3] for src, _, kind, _ in edges if kind == "tests"}
+    for _, dst, kind, _ in edges:
+        if kind == "tests":
+            dst_fid = dst if dst in m.files else (m.nodes[dst][3] if dst in m.nodes else None)
+            if dst_fid:
+                linked.add(dst_fid)
     unmatched = []
     for fid in sorted(m.facts):
         if m.files[fid][2] == "test" and fid not in linked:
+            path = m.files[fid][1]
+            if posixpath.basename(path) == "conftest.py":
+                continue
             specs, reads = sorted(set(external[fid])), sorted(set(unread[fid]))
             detail = "no call, import, file read or file name reaches tracked code; "
             detail += f"imports only {', '.join(specs)}" if specs else "imports nothing"

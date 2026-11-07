@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from cbi.cli import main
+from cbi.parse import typescript
 
 GOLDEN = Path(__file__).parent / "golden" / "typescript.txt"
 
@@ -175,3 +176,15 @@ def test_parse_error_is_a_diagnostic(make_repo, monkeypatch, capsys):
     rows = conn.execute("SELECT node_id, kind FROM diagnostics").fetchall()
     assert rows == [("local:repo:src/broken.ts", "parse_error")]
     assert conn.execute("SELECT name FROM nodes WHERE kind = 'symbol' ORDER BY name").fetchall() == [("Half",), ("ok",)]
+
+
+def test_constant_path_joins_generate_read_facts():
+    source = b'''\
+const fs = require("fs");
+const path = require("path");
+const root = path.resolve(__dirname, "..");
+const app = fs.readFileSync(path.join(root, "src/cbi/viewer/app.js"), "utf8");
+'''
+    defs, facts, err = typescript.parse(source, "javascript", False)
+    assert not err
+    assert facts["reads"] == [[None, "../src/cbi/viewer/app.js"]]

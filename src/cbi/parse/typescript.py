@@ -8,6 +8,7 @@ env var reads, Cypress visits and route records) are what `resolve.py` binds
 across files; nothing is resolved here.
 """
 
+import posixpath
 import re
 
 from tree_sitter_language_pack import get_parser
@@ -141,6 +142,7 @@ class _Collector:
         self.imports = []  # {"spec", "names": {local: imported name, "default" or "*"}, "type_only"?, "type_names"?}
         self.exports = {}  # exported name -> local name
         self.reexports = []  # {"spec", "names": {exported: imported, or "*"}, or None for `export *`}
+        self.consts = {}  # top-level identifier -> literal path string
         self.fields = {}  # class def index -> {field: {"type", "param", "index"}}
         self.uses = []  # [def index, class index, field, declared type, method]
         self.route_calls = []  # identifier components, recorded as jsx calls from the route
@@ -183,6 +185,12 @@ class _Collector:
             if declarator.type == "variable_declarator":
                 self.locals.update(_bound_names(declarator))
                 self.require(declarator)
+                var_name = declarator.child_by_field_name("name")
+                val_node = declarator.child_by_field_name("value")
+                if var_name and var_name.type == "identifier" and val_node:
+                    val = _literal_path(val_node, self.consts)
+                    if val is not None:
+                        self.consts[_text(var_name)] = val
         body = decl.child_by_field_name("body")
         if decl.type in CLASSES and name_node:
             index = self.add(decl, _text(name_node), "class", None, _signature(self.source, decl, body), _doc(doc_anchor))
@@ -541,7 +549,7 @@ class _Collector:
             callee, via = None, None
             if n.type == "call_expression":
                 callee = n.child_by_field_name("function")
-                read = _read_path(n)
+                read = _read_path(n, self.consts)
                 if read:
                     reads.append([d, read])
                 spec = _require_spec(n)
@@ -750,7 +758,7 @@ def _callee_name(call):
     return _text(fn) if fn.type in ("identifier", "property_identifier") else None
 
 
-def _literal_path(node):
+def _literal_path(node, consts=None):
     """The path text of a literal path expression, or None.
 
     Accepts a string, `new URL("./x", import.meta.url)`, `fileURLToPath(...)` of
@@ -760,6 +768,8 @@ def _literal_path(node):
     text = _string(node)
     if text is not None:
         return text
+    if consts and node.type == "identifier" and _text(node) in consts:
+        return consts[_text(node)]
     ctor = node.child_by_field_name("constructor") if node.type == "new_expression" else None
     if ctor is not None and _text(ctor) == "URL":
         args = node.child_by_field_name("arguments")
@@ -773,15 +783,15 @@ def _literal_path(node):
     parts = list(args.named_children) if args else []
     name = _callee_name(node)
     if name == "fileURLToPath" and len(parts) == 1:
-        return _literal_path(parts[0])
+        return _literal_path(parts[0], consts)
     if name not in PATH_JOINS or not parts:
         return None
     if _text(parts[0]) in ("__dirname", "import.meta.dirname", "process.cwd()"):
         parts = parts[1:]
-    texts = [_string(p) for p in parts]
+    texts = [_literal_path(p, consts) for p in parts]
     if not texts or None in texts:
         return None
-    return "/".join(texts)
+    return posixpath.normpath("/".join(texts))
 
 
 def _anchored_path(node):
@@ -823,11 +833,11 @@ def _anchored_path(node):
     return anchor, "/".join(texts)
 
 
-def _read_path(call):
+def _read_path(call, consts=None):
     if _callee_name(call) not in READ_CALLS:
         return None
     args = call.child_by_field_name("arguments")
-    return _literal_path(args.named_children[0]) if args and args.named_children else None
+    return _literal_path(args.named_children[0], consts) if args and args.named_children else None
 
 
 def _element_name(call):

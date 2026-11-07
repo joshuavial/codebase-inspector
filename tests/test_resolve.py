@@ -320,3 +320,33 @@ def test_show_relationships_and_tests_for(repo, capsys):
 def test_jsonc():
     assert _jsonc('{"a/*": ["b/*"], // c\n "d": [1, 2,], /* e */ "f": "g//h",}') == {
         "a/*": ["b/*"], "d": [1, 2], "f": "g//h"}
+
+
+def test_conftest_and_companion_scripts_exempt_from_unmatched(make_repo, monkeypatch):
+    root = make_repo({
+        "app.py": "def run(): return 1\n",
+        "tests/conftest.py": """\
+import pytest
+
+@pytest.fixture
+def repo_dir():
+    return "/tmp"
+""",
+        "tests/check_companion.js": "// companion script\n",
+        "tests/test_suite.py": """\
+import subprocess
+
+def test_companion():
+    subprocess.run(["node", "tests/check_companion.js"])
+""",
+        "tests/test_orphan.py": "import os\n",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        unmatched = [row[0] for row in conn.execute(
+            "SELECT n.path FROM diagnostics d JOIN nodes n ON n.id = d.node_id "
+            "WHERE d.kind = 'unmatched_test' ORDER BY n.path"
+        ).fetchall()]
+        assert unmatched == ["tests/test_orphan.py"]

@@ -123,3 +123,5 @@ def test_driver_option():
         assert ('test_driver_option', 'src/viewer/editor.js') in links
         diags = conn.execute("SELECT detail FROM diagnostics WHERE kind='unsupported_test_mechanism'").fetchall()
         assert not any('test_views.py' in d for (d,) in diags)
+        unmatched = conn.execute("SELECT node_id FROM diagnostics WHERE kind='unmatched_test'").fetchall()
+        assert unmatched == []
