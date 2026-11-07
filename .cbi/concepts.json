@@ -137,6 +137,7 @@
             "scripts/acceptance.sh",
             "scripts/capture_demo.py",
             "scripts/capture_demo.sh",
+            "scripts/generate_gallery.py",
             "scripts/post-merge.sh",
             "scripts/profile-scan.py",
             "src/cbi/__init__.py",
@@ -151,6 +152,7 @@
             "tests/test_check.py",
             "tests/test_cli.py",
             "tests/test_editor.py",
+            "tests/test_gallery.py",
             "tests/test_mcp.py",
             "tests/test_mcp_subprocess.py"
           ]
