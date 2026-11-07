@@ -189,6 +189,8 @@ class _Collector:
                 val_node = declarator.child_by_field_name("value")
                 if var_name and var_name.type == "identifier" and val_node:
                     val = _literal_path(val_node, self.consts)
+                    if val is None and val_node.type == "array" and val_node.named_children:
+                        val = _literal_path(val_node.named_children[0], self.consts)
                     if val is not None:
                         self.consts[_text(var_name)] = val
         body = decl.child_by_field_name("body")
@@ -529,7 +531,7 @@ class _Collector:
         `...process.env` spread is `*` with no definition, so it stays on the file.
         """
         bindings = self.locals | {local for imp in self.imports for local in imp["names"]}
-        calls, reads, envs, paths, visits = [], [], [], [], []
+        calls, reads, envs, paths, visits, launches = [], [], [], [], [], []
         self.call_locations = []
         stack = [(root, None, None, None)]
         while stack:
@@ -552,6 +554,10 @@ class _Collector:
                 read = _read_path(n, self.consts)
                 if read:
                     reads.append([d, read])
+                if _is_electron_launch(n, self.imports, scope):
+                    launch_tgt = _electron_launch_target(n, self.consts)
+                    if launch_tgt is not None:
+                        launches.append([d, launch_tgt])
                 spec = _require_spec(n)
                 if spec is not None and not _top_level_declarator(n.parent):
                     self.imports.append({"spec": spec, "names": {}})  # import("./x"), nested require
@@ -606,7 +612,7 @@ class _Collector:
                                        for _ in range(len(calls) - before))
             for child in reversed(n.named_children):
                 stack.append((child, d, c, scope))
-        return calls, reads, envs, paths, visits
+        return calls, reads, envs, paths, visits, launches
 
 
 def _as_object(node):
@@ -758,6 +764,36 @@ def _callee_name(call):
     return _text(fn) if fn.type in ("identifier", "property_identifier") else None
 
 
+def _is_dirname_node(node):
+    """True if node represents the file's own directory."""
+    if _text(node) in ("__dirname", "import.meta.dirname"):
+        return True
+    if node.type == "call_expression":
+        name = _callee_name(node)
+        args = node.child_by_field_name("arguments")
+        parts = list(args.named_children) if args else []
+        if name == "dirname" and len(parts) == 1:
+            arg = parts[0]
+            if _text(arg) == "__filename":
+                return True
+            if arg.type == "call_expression" and _callee_name(arg) == "fileURLToPath":
+                inner_args = arg.child_by_field_name("arguments")
+                inner_parts = list(inner_args.named_children) if inner_args else []
+                if len(inner_parts) == 1 and _text(inner_parts[0]) == "import.meta.url":
+                    return True
+        elif name == "fileURLToPath" and len(parts) == 1:
+            arg = parts[0]
+            ctor = arg.child_by_field_name("constructor") if arg.type == "new_expression" else None
+            if ctor is not None and _text(ctor) == "URL":
+                inner_args = arg.child_by_field_name("arguments")
+                inner_parts = list(inner_args.named_children) if inner_args else []
+                if len(inner_parts) == 2 and _text(inner_parts[1]) == "import.meta.url":
+                    text = _string(inner_parts[0])
+                    if text in (".", "./"):
+                        return True
+    return False
+
+
 def _literal_path(node, consts=None):
     """The path text of a literal path expression, or None.
 
@@ -770,6 +806,8 @@ def _literal_path(node, consts=None):
         return text
     if consts and node.type == "identifier" and _text(node) in consts:
         return consts[_text(node)]
+    if _is_dirname_node(node):
+        return "."
     ctor = node.child_by_field_name("constructor") if node.type == "new_expression" else None
     if ctor is not None and _text(ctor) == "URL":
         args = node.child_by_field_name("arguments")
@@ -786,7 +824,9 @@ def _literal_path(node, consts=None):
         return _literal_path(parts[0], consts)
     if name not in PATH_JOINS or not parts:
         return None
-    if _text(parts[0]) in ("__dirname", "import.meta.dirname", "process.cwd()"):
+    if _is_dirname_node(parts[0]) or _text(parts[0]) == "process.cwd()":
+        if len(parts) == 1:
+            return "."
         parts = parts[1:]
     texts = [_literal_path(p, consts) for p in parts]
     if not texts or None in texts:
@@ -823,7 +863,7 @@ def _anchored_path(node):
     if obj is None or obj.type != "identifier" or _text(obj) != "path":
         return None
     anchor = "file"
-    if _text(parts[0]) in ("__dirname", "import.meta.dirname"):
+    if _is_dirname_node(parts[0]):
         anchor, parts = "dirname", parts[1:]
     elif _text(parts[0]) == "process.cwd()":
         anchor, parts = "cwd", parts[1:]
@@ -831,6 +871,64 @@ def _anchored_path(node):
     if not texts or None in texts:
         return None
     return anchor, "/".join(texts)
+
+
+def _is_electron_launch(call, imports, scope):
+    """True if call is electron.launch(...) or _electron.launch(...)."""
+    fn = call.child_by_field_name("function")
+    if not fn or fn.type != "member_expression":
+        return False
+    obj, prop = fn.child_by_field_name("object"), fn.child_by_field_name("property")
+    if not obj or not prop or _text(prop) != "launch":
+        return False
+    if obj.type == "identifier":
+        name = _text(obj)
+        if _shadowed(scope, name):
+            return False
+        if name in ("electron", "_electron"):
+            return True
+        for imp in imports:
+            if imp.get("spec") in ("playwright", "playwright-core", "@playwright/test", "electron"):
+                names = imp.get("names") or {}
+                if name in names and names[name] in ("_electron", "electron", "default"):
+                    return True
+    elif obj.type == "member_expression":
+        inner_prop = obj.child_by_field_name("property")
+        if inner_prop and _text(inner_prop) in ("electron", "_electron"):
+            return True
+    return False
+
+
+def _electron_launch_target(call, consts):
+    """The target app path from an electron.launch(...) call, or None."""
+    args = call.child_by_field_name("arguments")
+    if not args or not args.named_children:
+        return None
+    first = args.named_children[0]
+    target_node = None
+    if first.type in OBJECT_WRAPS:
+        first = _as_object(first) or first
+    if first.type == "object":
+        for child in first.named_children:
+            if child.type == "pair":
+                key = child.child_by_field_name("key")
+                val = child.child_by_field_name("value")
+                if key and _text(key).strip("\"'") == "args" and val:
+                    if val.type == "array" and val.named_children:
+                        target_node = val.named_children[0]
+                    else:
+                        target_node = val
+                    break
+            elif child.type == "shorthand_property_identifier" and _text(child) == "args":
+                target_node = child
+                break
+    elif first.type == "array" and first.named_children:
+        target_node = first.named_children[0]
+    else:
+        target_node = first
+    if target_node is None:
+        return None
+    return _literal_path(target_node, consts)
 
 
 def _read_path(call, consts=None):
@@ -1497,7 +1595,7 @@ def parse(source, lang, is_test):
         collector.tests(tree.root_node, None)
     collector.commands(tree.root_node)
     collector.routes(tree.root_node)
-    calls, reads, envs, paths, visits = collector.sites(tree.root_node)
+    calls, reads, envs, paths, visits, launches = collector.sites(tree.root_node)
     calls.extend(collector.route_calls)
     collector.call_locations.extend([[collector.defs[call[0]]["start_line"], 1]
                                      for call in collector.route_calls])
@@ -1518,6 +1616,8 @@ def parse(source, lang, is_test):
     }
     if visits:
         facts["visits"] = visits
+    if launches:
+        facts["launches"] = launches
     if collector.route_facts:
         facts["routes"] = collector.route_facts
     facts.update(endpoints.typescript_facts(tree.root_node, is_test, collector.defs))

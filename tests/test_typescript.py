@@ -188,3 +188,17 @@ const app = fs.readFileSync(path.join(root, "src/cbi/viewer/app.js"), "utf8");
     defs, facts, err = typescript.parse(source, "javascript", False)
     assert not err
     assert facts["reads"] == [[None, "../src/cbi/viewer/app.js"]]
+
+
+def test_electron_launch_facts():
+    source = b'''\
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { _electron as electron } from "playwright-core";
+
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const app = await electron.launch({ args: [appRoot] });
+'''
+    defs, facts, err = typescript.parse(source, "javascript", True)
+    assert not err
+    assert facts.get("launches") == [[None, ".."]]

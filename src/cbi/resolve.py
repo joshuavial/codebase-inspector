@@ -428,6 +428,51 @@ class _Model:
                 return None
             directory = posixpath.dirname(directory)
 
+    def resolve_electron_target(self, fid, target):
+        """The source file an Electron launch target points to."""
+        if not target:
+            return None
+        wid, own, _ = self.files[fid]
+        directory = posixpath.dirname(own)
+        app_path = posixpath.normpath(posixpath.join(directory, target))
+        if app_path.startswith("../"):
+            return None
+        if app_path in self.by_path[wid]:
+            if posixpath.basename(app_path) == "package.json":
+                app_path = posixpath.dirname(app_path)
+            else:
+                return self.by_path[wid][app_path]
+        compiled = self._compiled_source(wid, app_path)
+        if compiled:
+            return compiled
+        if wid not in self._packages:
+            self._packages[wid] = manifests.npm_packages(self.ws_dir[wid], self.by_path[wid].keys())
+        for name, (pkg_dir, entry) in self._packages[wid].items():
+            if pkg_dir == app_path and entry:
+                hit = self.by_path[wid].get(entry)
+                if hit:
+                    return hit
+        pkg_json_rel = posixpath.join(app_path, "package.json") if app_path else "package.json"
+        pkg_json_file = self.ws_dir[wid] / pkg_json_rel
+        if pkg_json_file.is_file():
+            try:
+                data = json.loads(pkg_json_file.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            main = next((data[k] for k in ("source", "main") if isinstance(data.get(k), str)), None)
+            if main:
+                main_rel = posixpath.join(app_path, main) if app_path else main
+                hit = self._compiled_source(wid, main_rel) or self._find(wid, main_rel)
+                if hit:
+                    return hit
+        for sub in ("", "src"):
+            base = posixpath.join(app_path, sub) if sub else app_path
+            for stem in ("main", "index"):
+                hit = self._find(wid, posixpath.join(base, stem))
+                if hit:
+                    return hit
+        return None
+
     def name_matches(self, fid):
         """Code files named like the test file: x.test.ts -> x.ts beside it, or one folder up from __tests__."""
         wid, path, _ = self.files[fid]
@@ -1191,6 +1236,12 @@ def resolve(conn, root, reporter=None):
             dst = _patch_file(m, fid, spec)
             if dst and dst != fid and m.files[dst][2] == "code":
                 add(m.test_owner(src or fid), dst, "tests", "treesitter", PATCH_CONFIDENCE)
+        for src, target in facts.get("launches") or []:
+            dst = m.resolve_electron_target(fid, target)
+            if dst and dst != fid:
+                add(m.test_owner(src or fid), dst, "tests", "treesitter", 1.0, {"via": "electron"})
+            elif not dst:
+                unread[fid].append(f"electron launch {target}")
 
     _link_routes(m, add)
     _injection(m, add, unresolved)

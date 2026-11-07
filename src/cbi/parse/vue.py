@@ -92,6 +92,9 @@ def _merge(facts, defs, sub_facts, sub_defs, offset):
     facts["constructs"].extend(sub_facts.get("constructs") or [])
     for src, pattern in sub_facts.get("visits") or []:
         facts.setdefault("visits", []).append([_shift(src, base), pattern])
+    for launch in sub_facts.get("launches") or []:
+        src, *rest = launch
+        facts.setdefault("launches", []).append([_shift(src, base), *rest])
     for route in sub_facts.get("routes") or []:
         item = dict(route)
         item["def"] = _shift(item.get("def"), base)

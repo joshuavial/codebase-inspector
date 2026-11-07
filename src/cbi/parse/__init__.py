@@ -125,6 +125,8 @@ def symbol_nodes(file_node_id, workspace_id, path, lang, source, is_test):
     facts["protocols"] = [at(i) for i in facts.get("protocols", [])]
     if facts.get("visits"):
         facts["visits"] = [[at(src), pattern] for src, pattern in facts["visits"]]
+    if facts.get("launches"):
+        facts["launches"] = [[at(d), path] for d, path in facts["launches"]]
     if facts.get("routes"):
         rewritten = []
         for item in facts["routes"]:

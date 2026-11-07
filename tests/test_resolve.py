@@ -350,3 +350,43 @@ def test_companion():
             "WHERE d.kind = 'unmatched_test' ORDER BY n.path"
         ).fetchall()]
         assert unmatched == ["tests/test_orphan.py"]
+
+
+def test_electron_smoke_tests_link_to_app_entrypoint(make_repo, monkeypatch):
+    root = make_repo({
+        "app/package.json": json.dumps({
+            "name": "desktop-app",
+            "main": "dist/main.js",
+            "dependencies": {"electron": "^30.0.0"},
+        }),
+        "app/src/main.ts": "export function start() {}\n",
+        "app/tsconfig.json": json.dumps({
+            "compilerOptions": {"outDir": "dist", "rootDir": "src"}
+        }),
+        "app/test/smoke.mjs": """\
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { _electron as electron } from "playwright-core";
+
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const app = await electron.launch({ args: [appRoot] });
+""",
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        edges = conn.execute(
+            "SELECT n1.path, n2.path, e.kind, e.source, e.attrs FROM edges e "
+            "JOIN nodes n1 ON n1.id = e.src JOIN nodes n2 ON n2.id = e.dst "
+            "WHERE e.kind = 'tests'"
+        ).fetchall()
+        assert any(
+            src == "app/test/smoke.mjs" and dst == "app/src/main.ts" and json.loads(attrs or "{}").get("via") == "electron"
+            for src, dst, kind, source, attrs in edges
+        )
+        unmatched = [row[0] for row in conn.execute(
+            "SELECT n.path FROM diagnostics d JOIN nodes n ON n.id = d.node_id "
+            "WHERE d.kind = 'unmatched_test'"
+        ).fetchall()]
+        assert "app/test/smoke.mjs" not in unmatched
