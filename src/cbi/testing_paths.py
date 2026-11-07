@@ -135,7 +135,7 @@ def evaluate(node, values, aliases, own):
     args = [evaluate(arg, values, aliases, own) for arg in node.args]
     if name in TEMPORARY_CALLS or (name in values and getattr(values[name], "scratch", False)):
         return PathValue(f"<{name}>", False, scratch=True)
-    if name in values and isinstance(values[name], (tuple, PathValue)):
+    if name in values and isinstance(values[name], tuple) and any(getattr(x, "scratch", False) for x in values[name]):
         return values[name]
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
         return PathValue(f"<{node.func.attr}>", False, scratch=True)
@@ -187,11 +187,8 @@ def evaluate(node, values, aliases, own):
                 return GlobValue(base, args[0], node.func.attr == "rglob")
             if node.func.attr == "iterdir" and not args:
                 return GlobValue(base, "*", False)
-    kws = [evaluate(kw.value, values, aliases, own) for kw in node.keywords]
-    if any(getattr(a, "scratch", False) for a in args + kws):
-        return PathValue(f"<{name}>", False, scratch=True)
-    if any(getattr(a, "fixture", False) for a in args + kws):
-        return PathValue(f"<{name}>", False, fixture=True)
+    if name in {"team._store", "_store", "cbi.team._store"} and args and getattr(args[0], "scratch", False):
+        return (PathValue(posixpath.normpath(posixpath.join(args[0].path, "answers.jsonl")), False, scratch=True), 1, True)
     return None
 
 
@@ -259,9 +256,49 @@ def _find_returns(block):
     return returns
 
 
+SCRATCH_CONSTRUCTORS = {
+    "make_repo",
+    "create_repo",
+    "make_test_repo",
+    "setup_repo",
+    "mkdtemp",
+    "mkstemp",
+    "TemporaryDirectory",
+    "NamedTemporaryFile",
+}
+
+
+def _is_scratch_expr(expr, local_scratch, fn_returns, scratch_callables):
+    if isinstance(expr, ast.Name):
+        return expr.id in local_scratch
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
+        return _is_scratch_expr(expr.left, local_scratch, fn_returns, scratch_callables)
+    if isinstance(expr, ast.Call):
+        cname = dotted(expr.func, {})
+        base_name = cname.split(".")[-1] if cname else ""
+        if cname in scratch_callables or base_name in scratch_callables:
+            return True
+        if cname in fn_returns or base_name in fn_returns:
+            ret = fn_returns.get(cname) or fn_returns.get(base_name)
+            if getattr(ret, "scratch", False):
+                return True
+            if isinstance(ret, tuple) and any(getattr(x, "scratch", False) for x in ret):
+                return True
+        if isinstance(expr.func, ast.Attribute):
+            if expr.func.attr in {"resolve", "absolute", "parent"} and _is_scratch_expr(expr.func.value, local_scratch, fn_returns, scratch_callables):
+                return True
+            if expr.func.attr == "mktemp" and _is_scratch_expr(expr.func.value, local_scratch, fn_returns, scratch_callables):
+                return True
+        if cname in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and expr.args:
+            return _is_scratch_expr(expr.args[0], local_scratch, fn_returns, scratch_callables)
+        if cname in {"team._store", "_store", "cbi.team._store"} and expr.args:
+            return _is_scratch_expr(expr.args[0], local_scratch, fn_returns, scratch_callables)
+    return False
+
+
 def _analyze_module_fixtures_and_helpers(module):
     """Detect module-level fixtures and helpers that construct scratch repositories."""
-    scratch_callables = set(TEMPORARY_FIXTURES) | set(TEMPORARY_CALLS)
+    scratch_callables = set(TEMPORARY_FIXTURES) | set(TEMPORARY_CALLS) | SCRATCH_CONSTRUCTORS
     fn_returns = {}
 
     for _pass in range(3):
@@ -279,32 +316,26 @@ def _analyze_module_fixtures_and_helpers(module):
                         if val is None:
                             continue
                         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                        if isinstance(val, ast.Call):
-                            cname = dotted(val.func, {})
-                            if cname in scratch_callables or cname in fn_returns or any(isinstance(a, ast.Name) and a.id in local_scratch for a in ast.walk(val)):
-                                ret_val = fn_returns.get(cname)
-                                if isinstance(ret_val, tuple):
-                                    for target in targets:
-                                        if isinstance(target, (ast.Tuple, ast.List)):
-                                            for sub_t, sub_v in zip(target.elts, ret_val):
-                                                if getattr(sub_v, "scratch", False):
-                                                    for part in ast.walk(sub_t):
-                                                        if isinstance(part, ast.Name):
-                                                            local_scratch.add(part.id)
-                                else:
-                                    for target in targets:
-                                        for part in ast.walk(target):
-                                            if isinstance(part, ast.Name):
-                                                local_scratch.add(part.id)
-                        elif isinstance(val, ast.BinOp) and isinstance(val.op, ast.Div):
-                            if isinstance(val.left, ast.Name) and val.left.id in local_scratch:
-                                for target in targets:
-                                    for part in ast.walk(target):
-                                        if isinstance(part, ast.Name):
-                                            local_scratch.add(part.id)
+                        cname = dotted(val.func, {}) if isinstance(val, ast.Call) else None
+                        ret_val = (fn_returns.get(cname) or fn_returns.get(cname.split(".")[-1])) if cname else None
+                        if cname in {"team._store", "_store", "cbi.team._store"} and val.args and _is_scratch_expr(val.args[0], local_scratch, fn_returns, scratch_callables):
+                            ret_val = (PathValue("<answers.jsonl>", False, scratch=True), None, None)
+                        if isinstance(ret_val, tuple):
+                            for target in targets:
+                                if isinstance(target, (ast.Tuple, ast.List)):
+                                    for sub_t, sub_v in zip(target.elts, ret_val):
+                                        if getattr(sub_v, "scratch", False):
+                                            for part in ast.walk(sub_t):
+                                                if isinstance(part, ast.Name):
+                                                    local_scratch.add(part.id)
+                        elif _is_scratch_expr(val, local_scratch, fn_returns, scratch_callables):
+                            for target in targets:
+                                for part in ast.walk(target):
+                                    if isinstance(part, ast.Name):
+                                        local_scratch.add(part.id)
                     elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not stmt:
                         for sub_val in _find_returns(node.body):
-                            if isinstance(sub_val, ast.Name) and sub_val.id in local_scratch:
+                            if _is_scratch_expr(sub_val, local_scratch, fn_returns, scratch_callables):
                                 local_scratch.add(node.name)
 
             for val in _find_returns(stmt.body):
@@ -312,13 +343,7 @@ def _analyze_module_fixtures_and_helpers(module):
                     elts = []
                     has_scratch = False
                     for i, elt in enumerate(val.elts):
-                        if isinstance(elt, ast.Name) and elt.id in local_scratch:
-                            has_scratch = True
-                            elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
-                        elif isinstance(elt, ast.Call) and (dotted(elt.func, {}) in scratch_callables or dotted(elt.func, {}) in fn_returns):
-                            has_scratch = True
-                            elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
-                        elif isinstance(elt, ast.BinOp) and isinstance(elt.op, ast.Div) and isinstance(elt.left, ast.Name) and elt.left.id in local_scratch:
+                        if _is_scratch_expr(elt, local_scratch, fn_returns, scratch_callables):
                             has_scratch = True
                             elts.append(PathValue(f"<{fn_name}[{i}]>", False, scratch=True))
                         else:
@@ -326,13 +351,7 @@ def _analyze_module_fixtures_and_helpers(module):
                     if has_scratch:
                         fn_returns[fn_name] = tuple(elts)
                         scratch_callables.add(fn_name)
-                elif isinstance(val, ast.Name) and val.id in local_scratch:
-                    fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
-                    scratch_callables.add(fn_name)
-                elif isinstance(val, ast.Call) and (dotted(val.func, {}) in scratch_callables or dotted(val.func, {}) in fn_returns):
-                    fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
-                    scratch_callables.add(fn_name)
-                elif isinstance(val, ast.BinOp) and isinstance(val.op, ast.Div) and isinstance(val.left, ast.Name) and val.left.id in local_scratch:
+                elif _is_scratch_expr(val, local_scratch, fn_returns, scratch_callables):
                     fn_returns[fn_name] = PathValue(f"<{fn_name}>", False, scratch=True)
                     scratch_callables.add(fn_name)
 

@@ -446,6 +446,38 @@ def test_genuine_missing_production_file():
     assert any("test_custom_helpers.py:26:" in d and "file_read" in d for d in diags)
 
 
+def test_unproven_helper_call_and_external_return_retain_diagnostics(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 1\n",
+        "tests/test_unproven_helper.py": '''from pathlib import Path
+
+def helper_unknown_call(tmp_path):
+    result = arbitrary_external_path(tmp_path)
+    return result
+
+def helper_external_path(tmp_path):
+    return Path("/external/proven-input.txt")
+
+def test_unproven_call_retains_diagnostic(tmp_path):
+    Path(helper_unknown_call(tmp_path)).read_text()
+
+def test_external_return_retains_diagnostic(tmp_path):
+    Path(helper_external_path(tmp_path)).read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Case A: Unknown call taking tmp_path must retain file_read diagnostic
+    assert any("test_unproven_helper.py:11:" in d and "file_read" in d for d in diags)
+
+    # Case B: Helper returning an external path must retain file_read diagnostic
+    assert any("test_unproven_helper.py:14:" in d and "file_read" in d for d in diags)
+
+
+
 
 
 
