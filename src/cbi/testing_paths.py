@@ -46,7 +46,7 @@ class GlobValue:
 
 def dotted(node, aliases):
     if isinstance(node, ast.Name):
-        return aliases.get(node.id, node.id)
+        return aliases.get(node.id) or node.id
     if isinstance(node, ast.Attribute):
         base = dotted(node.value, aliases)
         return f"{base}.{node.attr}" if base else None
@@ -136,6 +136,9 @@ def evaluate(node, values, aliases, own):
                 return PathValue(posixpath.normpath(posixpath.join(base.path, *args)), base.anchored, base.scratch)
             if node.func.attr in {"glob", "rglob"} and len(args) == 1 and isinstance(args[0], str):
                 return GlobValue(base, args[0], node.func.attr == "rglob")
+    kws = [evaluate(kw.value, values, aliases, own) for kw in node.keywords]
+    if any(getattr(a, "scratch", False) for a in args + kws):
+        return PathValue(f"<{name}>", False, scratch=True)
     return None
 
 
@@ -305,9 +308,10 @@ def contexts(model, file_ids=None):
                 for item in node.items:
                     yield from walk(item.context_expr, inner, names)
                     if item.optional_vars:
+                        ctx_val = evaluate(item.context_expr, inner, names, own)
                         for target in ast.walk(item.optional_vars):
                             if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
-                                inner.pop(target.id, None)
+                                inner[target.id] = ctx_val
                                 names[target.id] = None
                 for child in node.body:
                     yield from walk(child, inner, names)
@@ -316,6 +320,13 @@ def contexts(model, file_ids=None):
                     aliases[name] = None
                 return
             if isinstance(node, (ast.Try, ast.TryStar)):
+                if not node.handlers:
+                    for child in node.body:
+                        yield from walk(child, values, aliases)
+                    if node.finalbody:
+                        for child in node.finalbody:
+                            yield from walk(child, values, aliases)
+                    return
                 # Handler, else and finally regions may observe any preceding
                 # write, including one that happened before an exception.
                 inner, names = dict(values), dict(aliases)
@@ -473,6 +484,8 @@ def _is_scratch_read(context, target_node):
         name = dotted(curr.func, context.aliases)
         if name in TEMPORARY_CALLS or (name in context.values and getattr(context.values[name], "scratch", False)):
             return True
+        if name in {"Path", "pathlib.Path", "PurePath", "pathlib.PurePath", "PurePosixPath", "pathlib.PurePosixPath"} and curr.args:
+            return _is_scratch_read(context, curr.args[0])
         if isinstance(curr.func, ast.Attribute) and curr.func.attr in {"mkdtemp", "mkstemp", "TemporaryDirectory", "NamedTemporaryFile"}:
             return True
     val = context.value(target_node)
@@ -494,13 +507,9 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         val = context.value(target_node)
-        if isinstance(val, (PathValue, str)):
-            dst = context.target(val)
-            if dst:
-                return val, "file_read"
-            if isinstance(val, PathValue) and val.anchored and not val.scratch:
-                return val, "file_read"
-        return None, None
+        if getattr(val, "scratch", False):
+            return None, None
+        return val, "file_read"
 
     if name == "importlib.util.spec_from_file_location" and len(call.args) >= 2:
         return context.value(call.args[1]), "dynamic_import_path"
@@ -515,30 +524,18 @@ def read_value(context):
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if isinstance(base, PathValue):
-            dst = context.target(base)
-            if dst:
-                return base, "file_read"
-            if base.anchored and not base.scratch:
-                return base, "file_read"
-        return None, None
+        if getattr(base, "scratch", False):
+            return None, None
+        return base, "file_read"
 
     if isinstance(call.func, ast.Attribute) and call.func.attr in {"read_text", "read_bytes"}:
         target_node = call.func.value
         if _is_scratch_read(context, target_node):
             return None, None
         base = context.value(target_node)
-        if isinstance(base, GlobValue):
-            return base, "file_read"
-        if isinstance(base, PathValue):
-            if base.scratch:
-                return None, None
-            dst = context.target(base)
-            if dst:
-                return base, "file_read"
-            if base.anchored:
-                return base, "file_read"
-        return None, None
+        if getattr(base, "scratch", False):
+            return None, None
+        return base, "file_read"
 
     return None, None
 
@@ -577,9 +574,8 @@ def link(model, edges, add):
             if not existing or existing[0] < 1.0:
                 add(src, dst, "tests", "treesitter", 1.0, {"via": mechanism})
         elif mechanism and not isinstance(value, GlobValue):
-            if mechanism == "file_read":
-                if not (isinstance(value, PathValue) and value.anchored and not getattr(value, "scratch", False)):
-                    continue
+            if mechanism == "file_read" and getattr(value, "scratch", False):
+                continue
             path = model.files[context.fid][1]
             detail = f"{path}:{call.lineno}:{call.col_offset + 1}: {mechanism}: target is dynamic, external or absent from tracked files"
             diagnostics.add((context.fid, "unsupported_test_mechanism", detail))

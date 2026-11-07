@@ -253,3 +253,40 @@ def test_repo_anchored():
         diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
     assert ("test_repo_anchored", "pkg/prod.py") in edges
     assert not diags
+
+
+def test_external_and_unresolved_reads_emit_diagnostics(make_repo, monkeypatch):
+    root = make_repo({
+        "pkg/prod.py": "def run(): return 42\n",
+        "tests/test_unresolved_reads.py": '''from pathlib import Path
+
+def test_literal_external_open():
+    open("/external/proven-input.txt")
+
+def test_literal_external_path():
+    Path("/external/proven-input.txt").read_text()
+
+def test_dynamic_unresolved_path(runtime_path):
+    Path(runtime_path).read_text()
+
+def test_dynamic_loop_unresolved(items):
+    for item in items:
+        Path(item).read_text()
+''',
+    })
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    with sqlite3.connect(root / ".cbi/model.db") as conn:
+        diags = [d for d, in conn.execute("SELECT detail FROM diagnostics WHERE kind = 'unsupported_test_mechanism'")]
+
+    # Literal external open and Path.read_text must emit file_read diagnostics
+    assert any("test_unresolved_reads.py:4:" in d and "file_read" in d for d in diags)
+    assert any("test_unresolved_reads.py:7:" in d and "file_read" in d for d in diags)
+
+    # Dynamic unresolved path read must emit file_read diagnostic
+    assert any("test_unresolved_reads.py:10:" in d and "file_read" in d for d in diags)
+
+    # Dynamic loop enclosing unresolved path read must emit dynamic_loop and file_read
+    assert any("test_unresolved_reads.py:13:" in d and "dynamic_loop" in d for d in diags)
+    assert any("test_unresolved_reads.py:14:" in d and "file_read" in d for d in diags)
+
