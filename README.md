@@ -165,7 +165,16 @@ cbi tables --json
 
 ## Team mode and CI
 
-Run `cbi team init` to opt the repository into committed judgement. You can use our reusable GitHub Action to run architecture checks and generate visual PR reviews:
+Run `cbi team init` to opt the repository into committed judgement. Add the printed job steps to your CI workflow:
+
+```yaml
+  - uses: actions/checkout@v4
+  - uses: astral-sh/setup-uv@v5
+  - run: uv tool install .
+  - run: cbi check
+```
+
+Or use our reusable GitHub Action to run architecture checks and generate visual PR reviews:
 
 ```yaml
   - uses: actions/checkout@v4
