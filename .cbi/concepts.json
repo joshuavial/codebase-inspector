@@ -147,6 +147,7 @@
             "src/cbi/mcp.py",
             "src/cbi/scan.py",
             "tests/test_bug_report.py",
+            "tests/test_capture_demo.py",
             "tests/test_check.py",
             "tests/test_cli.py",
             "tests/test_editor.py",
