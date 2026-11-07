@@ -269,6 +269,25 @@ def test_review_of_a_range_writes_the_folder_and_does_not_call_gh(make_repo, mon
     assert snapshot(root) == before
 
 
+def test_review_format_markdown_and_json(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo(BASE_FILES)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    base = sha(root)
+    commit_files(root, {"app/b.ts": BASE_FILES["app/b.ts"] + "export function more() { return b(); }\n"})
+    head = sha(root)
+
+    code, out, err = run(capsys, "review", f"{base}..{head}", "--out-dir", str(tmp_path / "out_md"), "--format", "markdown")
+    assert code == 0, err
+    assert (tmp_path / "out_md" / "review.md").exists()
+
+    code, out, err = run(capsys, "review", f"{base}..{head}", "--out-dir", str(tmp_path / "out_json"), "--format", "json")
+    assert code == 0, err
+    payload = json.loads(out)
+    assert "review_file" in payload
+    assert payload["review_file"].endswith("review.md")
+
+
 def _two_commits(make_repo, monkeypatch):
     root = make_repo(BASE_FILES)
     monkeypatch.chdir(root)

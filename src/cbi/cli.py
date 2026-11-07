@@ -172,6 +172,8 @@ def build_parser():
                                 help="folder for review.md (default .cbi/reviews/<base>..<head>)")
     cmds["review"].add_argument("--post", action="store_true",
                                 help="post review.md as a pull request comment, or update the earlier one")
+    cmds["review"].add_argument("--format", choices=["markdown", "json"], default="markdown",
+                                help="format for review output (default markdown)")
     cmds["history"].add_argument("--out", metavar="DIR", type=Path,
                                   help="model directory to use instead of .cbi/")
     cmds["history"].add_argument("--format", choices=("text", "markdown", "json"), default="text")
@@ -863,7 +865,14 @@ def cmd_render(args):
 def cmd_review(args):
     root, out = _paths(args)
     try:
-        print(review.review(root, args.target, base=args.base, model=out, out_dir=args.out_dir, post=args.post))
+        report = review.review(root, args.target, base=args.base, model=out, out_dir=args.out_dir, post=args.post)
+        if getattr(args, "format", "markdown") == "json":
+            lines = report.splitlines()
+            review_file = lines[0] if lines else ""
+            payload = {"review_file": review_file, "report": report}
+            print(json.dumps(payload, indent=2))
+        else:
+            print(report)
     except review.ReviewError as err:
         print(err, file=sys.stderr)
         return err.code

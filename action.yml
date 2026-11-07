@@ -1,0 +1,143 @@
+name: "Codebase Inspector CI Check & Architecture Review"
+description: "Verify codebase architecture integrity, test linkage, and generate architectural PR diffs with zero LLM tokens."
+author: "Joshua Vial"
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+inputs:
+  base-ref:
+    description: "Target branch or base commit to compare against (e.g. main or ${{ github.base_ref }})"
+    required: false
+    default: "main"
+  fail-on-problems:
+    description: "Whether to fail CI if cbi check discovers unowned files or missing summaries"
+    required: false
+    default: "true"
+  review:
+    description: "Whether to generate cbi review markdown output for PR comments and job step summary"
+    required: false
+    default: "true"
+  python-version:
+    description: "Python version to use for uv environment"
+    required: false
+    default: "3.13"
+
+outputs:
+  check-status:
+    description: "Status of cbi check ('passed' or 'failed')"
+    value: ${{ steps.check-step.outputs.status }}
+  problems-count:
+    description: "Number of diagnostic or architecture problems discovered by cbi check"
+    value: ${{ steps.check-step.outputs.problems }}
+  review-markdown:
+    description: "Generated Markdown architectural review output from cbi review"
+    value: ${{ steps.review-step.outputs.markdown }}
+  review-file:
+    description: "File path to the generated review.md document"
+    value: ${{ steps.review-step.outputs.review_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        enable-cache: true
+
+    - name: Install Codebase Inspector
+      shell: bash
+      run: |
+        echo "Installing Codebase Inspector CLI..."
+        if [ -f "${{ github.action_path }}/pyproject.toml" ]; then
+          uv tool install "${{ github.action_path }}" --force
+        elif [ -f "./pyproject.toml" ] && grep -q 'name = "cbi"' ./pyproject.toml 2>/dev/null; then
+          uv tool install . --force
+        else
+          uv tool install git+https://github.com/joshuavial/codebase-inspector --force
+        fi
+
+    - name: Run cbi scan
+      shell: bash
+      run: |
+        if [ ! -d ".cbi" ]; then
+          echo "Initializing .cbi directory..."
+          cbi init
+        fi
+        echo "Scanning repository into .cbi/model.db..."
+        cbi scan
+
+    - name: Run cbi check
+      id: check-step
+      shell: bash
+      run: |
+        echo "Running cbi check against base ref: ${{ inputs.base-ref }}..."
+        CHECK_OUTPUT_FILE="${RUNNER_TEMP:-/tmp}/cbi-check-output.txt"
+        
+        set +e
+        cbi check --base "${{ inputs.base-ref }}" --format github > "$CHECK_OUTPUT_FILE" 2>&1
+        CHECK_EXIT=$?
+        set -e
+        
+        cat "$CHECK_OUTPUT_FILE"
+        
+        if [ "$CHECK_EXIT" -eq 0 ]; then
+          echo "cbi check: PASSED"
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+            echo "problems=0" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          echo "cbi check: FAILED (exit code $CHECK_EXIT)"
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            PROBLEMS=$(grep -c -E "^::(error|warning)" "$CHECK_OUTPUT_FILE" || echo "1")
+            if [ "$PROBLEMS" -eq 0 ]; then PROBLEMS=1; fi
+            echo "problems=$PROBLEMS" >> "$GITHUB_OUTPUT"
+          fi
+          
+          if [ "${{ inputs.fail-on-problems }}" = "true" ]; then
+            echo "::error::cbi check discovered architectural problem(s). Commit updated answers or ownership to resolve."
+            exit "$CHECK_EXIT"
+          else
+            echo "::warning::cbi check discovered problems, but fail-on-problems is false. Continuing workflow."
+          fi
+        fi
+
+    - name: Run cbi review
+      id: review-step
+      if: inputs.review == 'true'
+      shell: bash
+      run: |
+        echo "Generating architectural review against base ref: ${{ inputs.base-ref }}..."
+        REVIEW_DIR="${RUNNER_TEMP:-/tmp}/cbi-review"
+        mkdir -p "$REVIEW_DIR"
+        
+        set +e
+        cbi review "${{ inputs.base-ref }}..HEAD" --out-dir "$REVIEW_DIR" --format markdown
+        REVIEW_EXIT=$?
+        set -e
+        
+        REVIEW_FILE="$REVIEW_DIR/review.md"
+        if [ "$REVIEW_EXIT" -eq 0 ] && [ -f "$REVIEW_FILE" ]; then
+          echo "Architectural review generated successfully at $REVIEW_FILE"
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "review_file=$REVIEW_FILE" >> "$GITHUB_OUTPUT"
+            {
+              echo "markdown<<EOF"
+              cat "$REVIEW_FILE"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REVIEW_FILE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        else
+          echo "Notice: cbi review exited with $REVIEW_EXIT or review.md was not generated."
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "review_file=" >> "$GITHUB_OUTPUT"
+            echo "markdown=" >> "$GITHUB_OUTPUT"
+          fi
+        fi

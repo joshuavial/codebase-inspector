@@ -165,14 +165,18 @@ cbi tables --json
 
 ## Team mode and CI
 
-Run `cbi team init` to opt the repository into committed judgement. Add the printed job steps to your CI workflow:
+Run `cbi team init` to opt the repository into committed judgement. You can use our reusable GitHub Action to run architecture checks and generate visual PR reviews:
 
 ```yaml
   - uses: actions/checkout@v4
-  - uses: astral-sh/setup-uv@v5
-  - run: uv tool install .
-  - run: cbi check
+    with:
+      fetch-depth: 0
+  - uses: joshuavial/codebase-inspector@v0.3.0
+    with:
+      base-ref: ${{ github.base_ref || 'main' }}
 ```
+
+See [`docs/github-action.md`](docs/github-action.md) for complete action configuration, outputs, and PR commenting workflows.
 
 The gate reads the working tree and committed answers without calling a model. Commit `.cbi/answers.jsonl`, `concepts.json`, `structure.json`, `screens.json`, `ignore`, `team.toml` and the generated `.gitignore` as appropriate for the repository.
 
