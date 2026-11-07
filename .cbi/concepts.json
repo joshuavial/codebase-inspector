@@ -135,6 +135,8 @@
           "entry": true,
           "files": [
             "scripts/acceptance.sh",
+            "scripts/capture_demo.py",
+            "scripts/capture_demo.sh",
             "scripts/post-merge.sh",
             "scripts/profile-scan.py",
             "src/cbi/__init__.py",
