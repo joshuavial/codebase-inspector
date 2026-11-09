@@ -63,9 +63,9 @@ def history_points(root, since=None, until=None):
         if len(fields) != 5:
             continue
         sha, parents, date, author, subject = fields
-        if merges and sha not in before_first_merge and len(parents.split()) < 2:
-            continue
         match = PR_RE.search(subject)
+        if merges and sha not in before_first_merge and len(parents.split()) < 2 and not match:
+            continue
         points.append({
             "sha": sha, "parents": parents.split(), "date": date, "author": author,
             "subject": subject, "pr": int(match.group(1)) if match else None,
