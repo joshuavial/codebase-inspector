@@ -211,6 +211,7 @@
             "tests/test_call_diagnostics.py",
             "tests/test_csharp.py",
             "tests/test_data_schema.py",
+            "tests/test_endpoints.py",
             "tests/test_env.py",
             "tests/test_fixture_bindings.py",
             "tests/test_function_references.py",
