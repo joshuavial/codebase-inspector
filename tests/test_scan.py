@@ -145,6 +145,43 @@ def test_out_dir(app, tmp_path, capsys):
     assert (out / "model.db").exists() and not (app / ".cbi").exists()
 
 
+def test_scan_auto_inits_out_dir_when_clean_or_missing(make_repo, monkeypatch, tmp_path, capsys):
+    root = make_repo({"a.py": "x = 1\n", "fixtures/sample.json": "{}\n"})
+    monkeypatch.chdir(root)
+    out = tmp_path / "custom_model"
+    assert not out.exists()
+
+    # Running cbi scan --out without running cbi init first succeeds
+    assert main(["scan", "--out", str(out)]) == 0
+    assert out.is_dir()
+    assert (out / ".gitignore").read_text(encoding="utf-8") == "*\n"
+    assert (out / "ignore").exists()
+    assert (out / "model.db").exists()
+    assert not (root / ".cbi").exists()
+
+    # Default ignore rules should be written
+    ignore_text = (out / "ignore").read_text(encoding="utf-8")
+    assert "/fixtures/**/*.[jJ][sS][oO][nN]" in ignore_text
+
+    # Re-scanning an already-initialized --out directory reuses existing ignore rules without overwriting
+    custom_rule = "*.custom_ext\n"
+    (out / "ignore").write_text(ignore_text + custom_rule, encoding="utf-8")
+    assert main(["scan", "--out", str(out)]) == 0
+    assert (out / "ignore").read_text(encoding="utf-8") == ignore_text + custom_rule
+
+
+def test_scan_auto_inits_existing_clean_out_dir(make_repo, monkeypatch, tmp_path):
+    root = make_repo({"a.py": "x = 1\n"})
+    monkeypatch.chdir(root)
+    out = tmp_path / "clean_dir"
+    out.mkdir()
+    assert not (out / "ignore").exists()
+
+    assert main(["scan", "--out", str(out)]) == 0
+    assert (out / "ignore").exists()
+    assert (out / "model.db").exists()
+
+
 def test_golden_dump(app, capsys):
     (app / "src" / "util.py").write_text(
         "def util():\n    return 2\n", encoding="utf-8", newline="\n",

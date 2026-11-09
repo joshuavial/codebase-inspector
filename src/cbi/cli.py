@@ -561,8 +561,13 @@ def cmd_init(args):
 def cmd_scan(args):
     root, out = _paths(args)
     if not (out / "ignore").exists():
-        print(f"{out} is not initialised. Run `cbi init` first.", file=sys.stderr)
-        return 1
+        if getattr(args, "out", None):
+            ret = init_repo(root, out)
+            if ret != 0:
+                return ret
+        else:
+            print(f"{out} is not initialised. Run `cbi init` first.", file=sys.stderr)
+            return 1
     start = time.perf_counter()
     if args.ref:
         sha, reused, counts, task_counts = scan_ref(root, out, args.ref)
