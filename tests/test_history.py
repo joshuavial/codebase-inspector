@@ -174,6 +174,10 @@ def test_history_cli_writes_markdown_and_reuses_point_models(make_repo, monkeypa
     assert main(["history", "--since", "2000-01-01", "--format", "json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["entries"]
+
+    assert main(["history", "--since", "2000-01-01", "--json"]) == 0
+    payload_json = json.loads(capsys.readouterr().out)
+    assert payload_json == payload
     mtimes = {path: path.stat().st_mtime_ns for path in (root / ".cbi" / "refs").glob("*/model.db")}
 
     assert main(["history", "--since", "2000-01-01", "--write"]) == 0

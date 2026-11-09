@@ -287,6 +287,13 @@ def test_review_format_markdown_and_json(make_repo, monkeypatch, capsys, tmp_pat
     assert "review_file" in payload
     assert payload["review_file"].endswith("review.md")
 
+    code, out_alias, err = run(capsys, "review", f"{base}..{head}", "--out-dir", str(tmp_path / "out_json_alias"), "--json")
+    assert code == 0, err
+    payload_alias = json.loads(out_alias)
+    assert "review_file" in payload_alias
+    assert payload_alias["review_file"].endswith("review.md")
+    assert payload_alias["report"].replace("out_json_alias", "out_json") == payload["report"]
+
 
 def _two_commits(make_repo, monkeypatch):
     root = make_repo(BASE_FILES)

@@ -272,6 +272,7 @@ def scanned(make_repo, monkeypatch):
         return real(file, *args, **kwargs)
 
     monkeypatch.setattr("builtins.open", spy)
+    monkeypatch.setattr("io.open", spy)
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     assert main(["scan"]) == 0

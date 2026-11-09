@@ -390,3 +390,54 @@ def test_stale_concept_document_disagrees_with_committed_answer(
     assert code == 1, out + err
     assert "concepts.json does not match the committed define-concepts answer" in out
     assert check.snapshot(root / ".cbi") == before
+
+
+def test_check_json_format_and_alias(make_repo, monkeypatch, capsys, tmp_path):
+    root = make_repo({"a.ts": "export const a = 1\n", "README.md": "# Demo\n"}, name="check-json")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+
+    # 1. Clean pass in JSON format via --json and --format json
+    code, out, err = run(capsys, "check", "--json")
+    assert code == 0, err
+    data = json.loads(out)
+    assert data == {"passed": True, "problems": []}
+
+    code, out, err = run(capsys, "check", "--format", "json")
+    assert code == 0, err
+    assert json.loads(out) == {"passed": True, "problems": []}
+
+    # 2. Problem detection when code file changes
+    (root / "a.ts").write_text("export const a = 2\n")
+
+    code, out, err = run(capsys, "check", "--json")
+    assert code == 1
+    data = json.loads(out)
+    assert data["passed"] is False
+    assert len(data["problems"]) == 1
+    assert "a.ts: changed code file has no summary" in data["problems"][0]
+
+    code, out, err = run(capsys, "check", "--format", "json")
+    assert code == 1
+    assert json.loads(out) == data
+
+    # 3. Kind filtering in JSON output
+    code, out, err = run(capsys, "check", "--kind", "secret", "--json")
+    assert code == 0
+    assert json.loads(out) == {"passed": True, "problems": []}
+
+    code, out, err = run(capsys, "check", "--kind", "summary", "--json")
+    assert code == 1
+    data_summary = json.loads(out)
+    assert data_summary["passed"] is False
+    assert len(data_summary["problems"]) == 1
+
+    # 4. Warn mode in JSON output exits 0 with passed=True
+    (root / ".cbi" / "team.toml").write_text('check = "warn"\n')
+    code, out, err = run(capsys, "check", "--json")
+    assert code == 0
+    data_warn = json.loads(out)
+    assert data_warn["passed"] is True
+    assert any("a.ts: changed code file has no summary" in p for p in data_warn["problems"])
+

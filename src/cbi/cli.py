@@ -88,7 +88,11 @@ def build_parser():
         if name in ("init", "scan", "check", *READERS):
             cmd.add_argument("--out", metavar="DIR", type=Path,
                              help="model directory to use instead of .cbi/ in the repo root")
-        if name in ("search", "show", "tests-for", "tasks", "task", "hotspots", "orphans", "cycles", "deps", "query", "endpoints", "tables"):
+        if name in (
+            "search", "show", "tests-for", "tasks", "task", "hotspots",
+            "orphans", "cycles", "deps", "query", "endpoints", "tables",
+            "diff", "history", "review", "check",
+        ):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
     cmds = sub.choices
     cmds["bug"].add_argument("--print", dest="print_url", action="store_true", help="print the URL without opening it")
@@ -213,8 +217,8 @@ def build_parser():
                                help="compare against the merge base with this ref instead of the default branch")
     cmds["check"].add_argument("--kind", metavar="K",
                                help="filter check findings by kind (e.g. summary, owner, json, secret)")
-    cmds["check"].add_argument("--format", choices=("text", "github"), default="text",
-                               help="text (default) or github annotations")
+    cmds["check"].add_argument("--format", choices=("text", "github", "json"), default="text",
+                               help="text (default), github annotations or json")
     cmds["worktrees"].add_argument("--json", action="store_true", help="print JSON")
     cmds["worktrees"].add_argument("--out", metavar="DIR", type=Path,
                                    help="model directory whose refs/ holds branch models (default .cbi/)")
@@ -924,7 +928,8 @@ def cmd_review(args):
     root, out = _paths(args)
     try:
         report = review.review(root, args.target, base=args.base, model=out, out_dir=args.out_dir, post=args.post)
-        if getattr(args, "format", "markdown") == "json":
+        fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
+        if fmt == "json":
             lines = report.splitlines()
             review_file = lines[0] if lines else ""
             payload = {"review_file": review_file, "report": report}
@@ -952,7 +957,8 @@ def cmd_history(args):
             path = history.write_changelog(out, shown)
             print(path)
         else:
-            sys.stdout.write(history.render(shown, args.format))
+            fmt = "json" if getattr(args, "json", False) else args.format
+            sys.stdout.write(history.render(shown, fmt))
     except history.HistoryError as err:
         print(err, file=sys.stderr)
         return err.code
@@ -978,8 +984,9 @@ def cmd_diff(args):
     finally:
         base.close()
         head.close()
+    fmt = "json" if getattr(args, "json", False) else args.format
     sys.stdout.write(diff.render(
-        result, args.format, args.concept, args.module, args.file, args.symbol, args.detail,
+        result, fmt, args.concept, args.module, args.file, args.symbol, args.detail,
     ))
     return 0
 
@@ -1181,7 +1188,8 @@ def cmd_ingest(args):
 
 def cmd_check(args):
     root, out = _paths(args)
-    return check.run(root, out, args.base, args.format, scan, kind=getattr(args, "kind", None))
+    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "text")
+    return check.run(root, out, args.base, fmt, scan, kind=getattr(args, "kind", None))
 
 
 def cmd_team(args):

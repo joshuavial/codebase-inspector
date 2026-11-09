@@ -297,6 +297,10 @@ def test_scanned_pair_covers_every_kind(make_repo, monkeypatch, tmp_path, capsys
     code, out, err = run(capsys, "diff", "--base-model", str(base_out / "model.db"),
                          "--head-model", str(head_out), "--format", "json")
     assert code == 0
+    code_json, out_json, err_json = run(capsys, "diff", "--base-model", str(base_out / "model.db"),
+                                        "--head-model", str(head_out), "--json")
+    assert code_json == 0
+    assert json.loads(out_json) == json.loads(out)
     enriched = json.loads(out)
     assert enriched.pop("summaries")["overall"]["state"] == "pending"
     assert enriched == json.loads(rendered)

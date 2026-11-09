@@ -28,7 +28,8 @@ hold every accepted answer, and answer text must not look like a key or a
 token (a known prefix, or a high-entropy token).
 
 Prints each file and how to fix it. --format github prints GitHub Actions
-annotations. team.toml can set check = "warn": the same list is printed and
+annotations. --format json or --json prints {passed, problems} as JSON.
+team.toml can set check = "warn": the same list is printed and
 the command exits 0.
 
 The scan writes the derived model. Judgement files are restored afterwards,
@@ -63,7 +64,8 @@ def run(root, out, base_ref, fmt, scan, kind=None):
         scan(root, out)
         restore(out, saved)
         result = _report(root, out, base, fmt, kind=kind)
-        files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
+        if fmt != "json":
+            files.report_excluded_source(root, (out / "ignore").read_text(encoding="utf-8"))
         return result
     finally:
         restore(out, saved)
@@ -547,6 +549,16 @@ def _show(root, path):
 
 
 def _render(findings, mode, fmt):
+    if fmt == "json":
+        passed = (len(findings) == 0) or (mode == "warn")
+        problems = [
+            f"{item['file']}:{item['line']}: {item['message']}" if item.get("line") else f"{item['file']}: {item['message']}"
+            for item in findings
+        ]
+        return json.dumps({
+            "passed": passed,
+            "problems": problems,
+        }, indent=2)
     if not findings:
         return "cbi check: passed"
     if fmt == "github":

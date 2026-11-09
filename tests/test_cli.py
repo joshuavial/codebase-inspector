@@ -136,3 +136,23 @@ def test_missing_model_error_mentions_scan_and_preserves_out(make_repo, monkeypa
     err_out = capsys.readouterr().err
     assert f"Run `cbi scan --out {custom_out}` first." in err_out
 
+
+def test_cli_json_flags():
+    parser = cli.build_parser()
+
+    args_diff = parser.parse_args(["diff", "--json"])
+    assert args_diff.json is True
+
+    args_history = parser.parse_args(["history", "--json"])
+    assert args_history.json is True
+
+    args_review = parser.parse_args(["review", "HEAD", "--json"])
+    assert args_review.json is True
+
+    args_check = parser.parse_args(["check", "--json"])
+    assert args_check.json is True
+
+    args_check_fmt = parser.parse_args(["check", "--format", "json"])
+    assert args_check_fmt.format == "json"
+
+
