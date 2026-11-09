@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from cbi import docs
 from cbi.cli import main
 from cbi.docs import references, title
 from cbi.files import default_ignore
@@ -101,6 +102,110 @@ def test_rescan_after_edit_replaces_title_and_mentions(repo, capsys):
     assert db.execute("SELECT doc FROM nodes WHERE path = 'docs/guide.md'").fetchone() == ("New title",)
     assert [r[0] for r in db.execute("SELECT dst FROM edges WHERE src = 'local:repo:docs/guide.md'")] == [
         "local:repo:src/app.ts"]
+
+
+def _sequential(conn, root):
+    """The single-threaded doc pass `docs.index` replaced: (titles, search rows, edges) it would write."""
+    targets = docs._Targets(conn)
+    titles, search, edges = {}, {}, set()
+    for nid, wid, path, name in conn.execute(
+            "SELECT id, workspace_id, path, name FROM nodes WHERE kind = 'doc'").fetchall():
+        top = targets.top(wid, path)
+        try:
+            text = (root / top).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        heading = title(text)
+        titles[nid] = heading
+        search[nid] = (f"{name} {heading or ''}".strip(), docs.front_matter(text)[1][:docs.SEARCH_TEXT_LIMIT])
+        for dst, confidence in docs.mentions(targets, top, targets.ws_root.get(wid, ""), text).items():
+            if dst != nid:
+                edges.add((nid, dst, confidence))
+    return titles, search, edges
+
+
+def _indexed(conn, ids):
+    """(titles, search rows, edges) currently stored for the given doc ids."""
+    marks = ",".join("?" * len(ids))
+    titles = dict(conn.execute(f"SELECT id, doc FROM nodes WHERE id IN ({marks})", ids))
+    search = {nid: (name, doc) for nid, name, doc in conn.execute(
+        f"SELECT id, name, doc FROM search WHERE id IN ({marks})", ids)}
+    edges = set(conn.execute(
+        "SELECT src, dst, confidence FROM edges WHERE kind = 'mentions' AND source = 'markdown'"))
+    return titles, search, edges
+
+
+def _edge_rows(conn):
+    return conn.execute("SELECT src, dst, confidence FROM edges WHERE kind = 'mentions' "
+                        "AND source = 'markdown' ORDER BY rowid").fetchall()
+
+
+def test_parallel_index_matches_sequential_baseline(repo):
+    conn = _db(repo)
+    expected_titles, expected_search, expected_edges = _sequential(conn, repo)
+    docs.index(conn, repo)
+    titles, search, edges = _indexed(conn, list(expected_titles))
+    assert titles == expected_titles
+    assert search == expected_search
+    assert edges == expected_edges
+    assert len(expected_titles) == 112 and expected_edges  # every doc read, mentions found
+
+
+def test_index_output_is_identical_across_worker_counts(repo, monkeypatch):
+    conn = _db(repo)
+    runs = []
+    for workers in (1, 2, 16):
+        monkeypatch.setattr(docs, "_workers", lambda workers=workers: workers)
+        docs.index(conn, repo)
+        runs.append((
+            conn.execute("SELECT id, doc FROM nodes WHERE kind = 'doc' ORDER BY id").fetchall(),
+            conn.execute("SELECT id, name, doc FROM search ORDER BY rowid").fetchall(),
+            _edge_rows(conn),  # insertion order too, not just the set
+        ))
+    assert runs[0] == runs[1] == runs[2]
+    edges = runs[0][2]
+    assert edges == sorted(edges)  # grouped by doc id, then target id
+
+
+def test_index_skips_missing_files_and_keeps_the_rest(repo):
+    conn = _db(repo)
+    (repo / "docs" / "guide.md").unlink()
+    docs.index(conn, repo)
+    assert not conn.execute("SELECT 1 FROM edges WHERE src = 'local:repo:docs/guide.md'").fetchone()
+    # The unreadable doc keeps its old title; the others are still indexed.
+    assert conn.execute("SELECT doc FROM nodes WHERE path = 'docs/guide.md'").fetchone() == ("Operator guide",)
+    assert conn.execute("SELECT doc FROM nodes WHERE path = 'docs/notes/n7.md'").fetchone() == ("Note 7",)
+    assert conn.execute("SELECT 1 FROM edges WHERE src = 'local:repo:docs/notes/n0.md' "
+                        "AND dst = 'local:repo:docs/notes/tool.ts#zebrafunc'").fetchone()
+
+
+def test_index_replaces_undecodable_bytes(repo):
+    conn = _db(repo)
+    (repo / "README.md").write_bytes(b"# Caf\xe9 \xff title\nSee `src/app.ts`.\n")
+    docs.index(conn, repo)
+    heading = conn.execute("SELECT doc FROM nodes WHERE path = 'README.md'").fetchone()[0]
+    assert heading == "Caf\ufffd \ufffd title"
+    assert conn.execute("SELECT 1 FROM edges WHERE src = 'local:repo:README.md' "
+                        "AND dst = 'local:repo:src/app.ts'").fetchone()
+
+
+def test_index_handles_many_docs(make_repo, monkeypatch):
+    count = 600
+    files = {"src/core.ts": "export function corefunc() {\n  return 1;\n}\n"}
+    files.update({
+        f"docs/d{i:03}.md": f"# Doc {i}\nUses `src/core.ts` and [next](d{(i + 1) % count:03}.md).\n"
+        for i in range(count)})
+    root = make_repo(files)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+    conn = _db(root)
+    expected = _sequential(conn, root)
+    titles, search, edges = _indexed(conn, list(expected[0]))
+    assert (titles, search, edges) == expected
+    assert len(titles) == count and titles["local:repo:docs/d042.md"] == "Doc 42"
+    assert len(edges) == 2 * count
+    assert ("local:repo:docs/d599.md", "local:repo:docs/d000.md", 1.0) in edges
 
 
 def test_minified_needs_most_bytes_on_long_lines(make_repo):

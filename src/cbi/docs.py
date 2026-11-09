@@ -6,9 +6,11 @@ when the code it names appears, not only when the doc changes.
 """
 
 import json
+import os
 import posixpath
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 SEARCH_TEXT_LIMIT = 20_000  # characters of title and body indexed per doc
 PATH_CONFIDENCE = 1.0  # a path or path#name, in backticks or a link target
@@ -115,24 +117,43 @@ def mentions(targets, doc_top, ws_root, text):
     return found
 
 
+def _read_doc(targets, root, row):
+    """(title, body, mentions) for one doc row, or None when the file cannot be read.
+
+    Runs on worker threads: it only reads the file and the read-only `targets`.
+    """
+    nid, wid, path, _name = row
+    top = targets.top(wid, path)
+    try:
+        text = (root / top).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    ws_root = targets.ws_root.get(wid, "")
+    return title(text), front_matter(text)[1], mentions(targets, top, ws_root, text)
+
+
+def _workers():
+    return min(32, (os.cpu_count() or 4) * 2)
+
+
 def index(conn, root):
     """Set doc titles, put title and body into the search index, and replace `mentions` edges."""
     targets = _Targets(conn)
+    rows = conn.execute(
+        "SELECT id, workspace_id, path, name FROM nodes WHERE kind = 'doc' ORDER BY id").fetchall()
+    # Reads and regex extraction run on threads; `map` keeps row order so the writes below are
+    # the same as a sequential pass. The connection is only touched on this thread.
+    with ThreadPoolExecutor(max_workers=_workers()) as pool:
+        results = list(pool.map(lambda row: _read_doc(targets, root, row), rows))
     titles, search, edges = [], [], []
-    for nid, wid, path, name in conn.execute(
-            "SELECT id, workspace_id, path, name FROM nodes WHERE kind = 'doc'").fetchall():
-        top = targets.top(wid, path)
-        try:
-            text = (root / top).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+    for (nid, _wid, _path, name), result in zip(rows, results):
+        if result is None:
             continue
-        heading = title(text)
+        heading, body, found = result
         titles.append((heading, nid))
-        body = front_matter(text)[1]
         # ponytail: body is cut at a fixed size; index more if long docs miss hits.
         search.append((f"{name} {heading or ''}".strip(), body[:SEARCH_TEXT_LIMIT], nid))
-        ws_root = targets.ws_root.get(wid, "")
-        for dst, confidence in mentions(targets, top, ws_root, text).items():
+        for dst, confidence in sorted(found.items()):
             if dst != nid:
                 edges.append((nid, dst, confidence))
     # The title is the doc node's `doc` column; the body lives only in its search row.
