@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `cbi scan` takes the git index blob id of tracked files that `git diff-files` sees as unchanged instead of reading them from disk, cutting the hash phase on large repos several-fold. Files with filters, working-tree encodings, assume-unchanged or skip-worktree flags are still read, and line-ending conversions are checked against the blob size, so hashes stay identical to raw-bytes hashing (`cbi-4dx.1`).
+- Concurrent AST symbol parsing in `_parse_changed` using a `ThreadPoolExecutor` worker pool across CPU cores (capped or overridden by `CBI_PARSE_WORKERS`), maintaining deterministic model insertion and transaction rollback on error (`cbi-4dx.2`).
+- Concurrent Markdown document reading and mention extraction in `docs.py` using a `ThreadPoolExecutor`, speeding up doc indexing across repositories with extensive documentation while preserving doc ordering (`cbi-4dx.3`).
 
 
 ## [0.4.0] - 2026-11-09
