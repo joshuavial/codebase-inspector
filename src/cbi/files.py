@@ -222,6 +222,10 @@ def enumerate_repo(root, ignore=None):
     Returns (workspaces, files). A workspace is a dict; `root` is its path from the
     top repo ("" for the top repo) and `mount` its path inside its parent workspace.
     Each file is (top-relative path, workspace, workspace-relative path).
+    A workspace's `index_shas` maps each regular file's workspace-relative path to
+    its blob id in the git index, for `hash_files`. Entries marked assume-unchanged
+    or skip-worktree, and unmerged entries, are left out: git does not compare them
+    with the working tree.
     """
     ignore = ignore or Ignore("")
     workspaces, files = [], []
@@ -249,7 +253,9 @@ def enumerate_repo(root, ignore=None):
         if not initialised:
             return
         submodules, seen = [], set()
-        for record in _git(ws_dir, "ls-files", "-s", "-z").split(b"\0"):
+        index_shas = ws["index_shas"] = {}
+        # -v tags each entry: "H" cached, lower case assume-unchanged, "S" skip-worktree, "M" unmerged.
+        for record in _git(ws_dir, "ls-files", "-s", "-v", "-z").split(b"\0"):
             if not record:
                 continue
             info, _, raw_path = record.partition(b"\t")
@@ -258,12 +264,14 @@ def enumerate_repo(root, ignore=None):
                 continue
             seen.add(path)
             top = f"{rel_root}/{path}" if rel_root else path
-            mode, sha = info.split(b" ")[:2]
+            tag, mode, sha = info.split(b" ")[:3]
             if mode == b"160000":
                 if not ignore(top, is_dir=True):
                     submodules.append((path, top, sha.decode()))
             elif not ignore(top, source=lambda: _tracked_source(root, top)):
                 files.append((top, ws, path))
+                if tag == b"H" and mode in (b"100644", b"100755"):
+                    index_shas[path] = sha.decode()
         gitmodules = None
         for path, top, sha in submodules:
             sub_dir = ws_dir / path
@@ -280,6 +288,91 @@ def enumerate_repo(root, ignore=None):
     return workspaces, files
 
 
+def _git_input(cwd, args, data):
+    """stdout of a git call fed `data` on stdin, or None when git fails."""
+    result = subprocess.run(["git", *args], cwd=cwd, input=data, capture_output=True)
+    return result.stdout if result.returncode == 0 else None
+
+
+NO_ATTR = (b"unspecified", b"unset")
+
+
+def _attr_risks(ws_dir, paths):
+    """(paths to read from disk, paths that need a length check), or None when git fails.
+
+    A filter or working-tree encoding can turn the file into anything, so those
+    paths are read. Line ending and ident conversion, from attributes or
+    core.autocrlf, can only shorten content on its way into the index.
+    """
+    autocrlf = (_try_git(ws_dir, "config", "--get", "core.autocrlf") or "false").lower()
+    autocrlf = autocrlf not in ("false", "no", "off", "0")
+    attrs = ("filter", "working-tree-encoding", "text", "eol", "crlf", "ident")
+    out = _git_input(ws_dir, ["check-attr", "-z", "--stdin", *attrs],
+                     b"\0".join(os.fsencode(p) for p in paths) + b"\0")
+    if out is None:
+        return None
+    values = defaultdict(dict)
+    fields = out.split(b"\0")
+    for i in range(0, len(fields) - 2, 3):
+        values[os.fsdecode(fields[i])][fields[i + 1].decode()] = fields[i + 2]
+    unsafe, shrinkable = set(), set()
+    for path in paths:
+        got = values.get(path)
+        if got is None or len(got) != len(attrs):
+            unsafe.add(path)
+        elif got["filter"] not in NO_ATTR or got["working-tree-encoding"] not in NO_ATTR:
+            unsafe.add(path)
+        elif any(got[a] not in NO_ATTR for a in ("text", "eol", "crlf", "ident")) or (
+            autocrlf and got["text"] != b"unset" and got["crlf"] != b"unset"
+        ):
+            shrinkable.add(path)
+    return unsafe, shrinkable
+
+
+def _blob_sizes(ws_dir, shas):
+    """{blob id: size in bytes} from the object store."""
+    if not shas:
+        return {}
+    out = _git_input(ws_dir, ["cat-file", "--buffer", "--batch-check=%(objectname) %(objectsize)"],
+                     "".join(f"{sha}\n" for sha in shas).encode())
+    if out is None:
+        return {}
+    sizes = {}
+    for line in out.decode().splitlines():
+        sha, _, size = line.partition(" ")
+        if size.isdigit():
+            sizes[sha] = int(size)
+    return sizes
+
+
+def _index_digests(ws_dir, wanted):
+    """Index blob ids that equal the working-tree blob ids, for {path: (blob id, size on disk)}.
+
+    A path qualifies when `git diff-files` sees no change and no filter or
+    working-tree encoding applies. Where line ending or ident conversion could
+    apply, the blob must also be as long as the file on disk: those conversions
+    only ever shorten content on its way into the index, so equal lengths mean the
+    bytes went in unchanged. Any git failure leaves the path to be read from disk.
+    """
+    result = subprocess.run(["git", "diff-files", "--name-only", "-z", "--ignore-submodules"],
+                            cwd=ws_dir, capture_output=True)
+    if result.returncode != 0:
+        return {}
+    modified = {os.fsdecode(p) for p in result.stdout.split(b"\0") if p}
+    paths = [p for p in wanted if p not in modified]
+    if not paths:
+        return {}
+    risks = _attr_risks(ws_dir, paths)
+    if risks is None:
+        return {}
+    unsafe, shrinkable = risks
+    sizes = _blob_sizes(ws_dir, {wanted[p][0] for p in shrinkable})
+    return {
+        p: wanted[p][0] for p in paths
+        if p not in unsafe and (p not in shrinkable or sizes.get(wanted[p][0]) == wanted[p][1])
+    }
+
+
 def hash_files(root, files, old_states, reporter=None):
     """Hash the working-tree content of each file, reusing old hashes when stat matches.
 
@@ -287,11 +380,12 @@ def hash_files(root, files, old_states, reporter=None):
     content_hash is the git blob id of the raw bytes (no clean filter), so a clean
     file matches `git rev-parse HEAD:path` and a ref scan of the same blob.
     Tracked files missing from disk are left out. Symlinks hash their target text.
+    A regular file that git sees as unchanged from the index takes its index blob id
+    without being read, when that id is sure to equal the raw-bytes hash.
     """
-    states = {}
-    for index, (top, _, _) in enumerate(files, 1):
-        if reporter:
-            reporter.file("hash", index, len(files), top)
+    stats = {}
+    wanted = defaultdict(dict)  # workspace root: {workspace path: (index blob id, size)}
+    for top, ws, path in files:
         full = root / top
         try:
             st = os.lstat(full)
@@ -302,14 +396,36 @@ def hash_files(root, files, old_states, reporter=None):
             continue
         if is_private_env(top):
             continue  # never open a real env file, so it stays out of the model
+        stats[top] = (full, st)
+        old = old_states.get(top)
+        if old and old[0] == st.st_mtime_ns and old[1] == st.st_size:
+            continue
+        sha = None if is_link else ws.get("index_shas", {}).get(path)
+        if sha:
+            wanted[ws["root"]][path] = (sha, st.st_size)
+    from_index = {
+        ws_root: _index_digests(root / ws_root if ws_root else root, paths)
+        for ws_root, paths in wanted.items()
+    }
+
+    states = {}
+    for index, (top, ws, path) in enumerate(files, 1):
+        if reporter:
+            reporter.file("hash", index, len(files), top)
+        if top not in stats:
+            continue
+        full, st = stats[top]
+        is_link = stat.S_ISLNK(st.st_mode)
         old = old_states.get(top)
         if old and old[0] == st.st_mtime_ns and old[1] == st.st_size:
             digest = old[2]
         elif is_link:
             digest = blob_id(os.fsencode(os.readlink(full)))
         else:
-            with open(full, "rb") as f:
-                digest = blob_id_file(f)
+            digest = from_index.get(ws["root"], {}).get(path)
+            if digest is None:
+                with open(full, "rb") as f:
+                    digest = blob_id_file(f)
         states[top] = (st.st_mtime_ns, st.st_size, digest, PARSER_VERSION, is_link)
     return states
 

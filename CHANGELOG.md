@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detected Starlette and FastAPI explicit `Route` and `WebSocketRoute` declarations and Flask `app.add_url_rule` endpoint registrations in Python AST parser (`cbi-5ru.1`).
 - Auto-initialization in `cbi scan` when a custom `--out` directory is clean or missing (`cbi-5ru.3`).
 
+### Changed
+
+- `cbi scan` takes the git index blob id of tracked files that `git diff-files` sees as unchanged instead of reading them from disk, cutting the hash phase on large repos several-fold. Files with filters, working-tree encodings, assume-unchanged or skip-worktree flags are still read, and line-ending conversions are checked against the blob size, so hashes stay identical to raw-bytes hashing (`cbi-4dx.1`).
+
 
 ## [0.4.0] - 2026-11-09
 
