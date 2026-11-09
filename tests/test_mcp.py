@@ -1673,6 +1673,9 @@ def test_tools_call_endpoints_empty_repo(repo):
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload == {"endpoints": []}
 
+    res_md = server.execute_tool("cbi_endpoints", {"format": "markdown"})
+    assert res_md["content"][0]["text"] == "no endpoints found"
+
 
 def test_tools_call_tables_empty_repo(repo):
     server = MCPServer(root=repo)
@@ -1686,6 +1689,11 @@ def test_tools_call_tables_empty_repo(repo):
     assert not resp["result"]["isError"]
     payload = json.loads(resp["result"]["content"][0]["text"])
     assert payload == {"tables": [], "relationships": []}
+
+    res_md = server.execute_tool("cbi_tables", {"format": "markdown"})
+    assert res_md["content"][0]["text"] == "no tables found"
+    res_mm = server.execute_tool("cbi_tables", {"format": "mermaid"})
+    assert res_mm["content"][0]["text"] == "erDiagram"
 
 
 def test_tools_call_system_views_with_data(make_repo, monkeypatch):
@@ -1733,6 +1741,12 @@ def test_tools_call_system_views_with_data(make_repo, monkeypatch):
     assert not res["isError"]
     assert "GET    /api/accounts" in res["content"][0]["text"]
 
+    # cbi_endpoints: markdown format
+    res = server.execute_tool("cbi_endpoints", {"format": "markdown"})
+    assert not res["isError"]
+    assert "| Method | Route | Handler | Callers | Tables |" in res["content"][0]["text"]
+    assert "| GET | /api/accounts | accounts" in res["content"][0]["text"]
+
     # cbi_tables: default json output
     res = server.execute_tool("cbi_tables", {})
     assert not res["isError"]
@@ -1753,6 +1767,20 @@ def test_tools_call_system_views_with_data(make_repo, monkeypatch):
     res = server.execute_tool("cbi_tables", {"format": "text"})
     assert not res["isError"]
     assert "table accounts (2 columns)" in res["content"][0]["text"]
+
+    # cbi_tables: markdown format
+    res = server.execute_tool("cbi_tables", {"format": "markdown"})
+    assert not res["isError"]
+    assert "## Tables" in res["content"][0]["text"]
+    assert "| Table | Columns | Primary Key |" in res["content"][0]["text"]
+    assert "### `accounts`" in res["content"][0]["text"]
+
+    # cbi_tables: mermaid format
+    res = server.execute_tool("cbi_tables", {"format": "mermaid"})
+    assert not res["isError"]
+    assert res["content"][0]["text"].startswith("erDiagram")
+    assert "accounts {" in res["content"][0]["text"]
+    assert "INTEGER id PK" in res["content"][0]["text"]
 
 
 def test_tool_history(make_repo, monkeypatch):

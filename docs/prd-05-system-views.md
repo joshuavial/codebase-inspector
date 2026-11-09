@@ -86,6 +86,12 @@ Tables and columns are derived nodes in the existing model. Foreign keys, reads 
 - V9. Model text is rendered with `textContent`, never as HTML.
 - V10. The desktop app needs no separate schema implementation. Its viewer host, deep-link state, editor bridge and saved view state accept the new tab state and continue to use the same built assets.
 
+### CLI and MCP export formats
+
+- X1. `cbi tables` supports `--format` accepting `text` (default), `json`, `markdown` (GFM tables of tables, columns, types, primary keys, and relationships), and `mermaid` (valid Mermaid `erDiagram` syntax representing tables, attributes, and relationships). The `--json` flag is preserved as an alias for `--format json`.
+- X2. `cbi endpoints` supports `--format` accepting `text` (default), `json`, and `markdown` (clean GFM markdown table of HTTP methods, routes, handlers, and callers/tables). The `--json` flag is preserved as an alias for `--format json`.
+- X3. The MCP server tools `cbi_tables` and `cbi_endpoints` support a `format` parameter (`text`, `json`, `markdown`, `mermaid` for tables; `text`, `json`, `markdown` for endpoints) returning formatted representations directly to agent clients.
+
 ## Acceptance criteria
 
 - E1. A SQL migration fixture produces the expected tables, columns, primary keys, foreign keys and source evidence, including an `ALTER TABLE` foreign key.

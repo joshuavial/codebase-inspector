@@ -399,8 +399,8 @@ TOOLS = [
                 },
                 "format": {
                     "type": "string",
-                    "description": "Output format: 'json' (default) or 'text'.",
-                    "enum": ["json", "text"],
+                    "description": "Output format: 'json' (default), 'text', or 'markdown'.",
+                    "enum": ["json", "text", "markdown"],
                 },
             },
             "required": [],
@@ -418,8 +418,8 @@ TOOLS = [
                 },
                 "format": {
                     "type": "string",
-                    "description": "Output format: 'json' (default) or 'text'.",
-                    "enum": ["json", "text"],
+                    "description": "Output format: 'json' (default), 'text', 'markdown', or 'mermaid'.",
+                    "enum": ["json", "text", "markdown", "mermaid"],
                 },
             },
             "required": [],
@@ -1981,6 +1981,8 @@ class MCPServer:
             fmt = args.get("format", "json")
             if fmt == "text":
                 return system_views.format_endpoints_text(endpoints).rstrip()
+            if fmt == "markdown":
+                return system_views.format_endpoints_markdown(endpoints).rstrip()
             return json.dumps({"endpoints": endpoints}, indent=2)
         finally:
             conn.close()
@@ -1997,6 +1999,10 @@ class MCPServer:
             fmt = args.get("format", "json")
             if fmt == "text":
                 return system_views.format_tables_text(tables, rels, all_tables=view["tables"]).rstrip()
+            if fmt == "markdown":
+                return system_views.format_tables_markdown(tables, rels, all_tables=view["tables"]).rstrip()
+            if fmt == "mermaid":
+                return system_views.format_tables_mermaid(tables, rels, all_tables=view["tables"]).rstrip()
             return json.dumps({"tables": tables, "relationships": rels}, indent=2)
         finally:
             conn.close()
