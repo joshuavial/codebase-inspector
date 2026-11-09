@@ -243,10 +243,14 @@ def build_parser():
     cmds["query"].add_argument("sql", nargs="?", help="SQL query to execute against model.db (SELECT, WITH, EXPLAIN)")
     cmds["query"].add_argument("--schema", action="store_true", help="print table definitions (nodes, edges, diagnostics, coverage)")
     cmds["query"].add_argument("--limit", type=int, default=50, help="maximum rows to return (default: 50)")
+    cmds["endpoints"].add_argument("--format", choices=("text", "json", "markdown"), default="text",
+                                  help="output format (text, json, markdown; default: text)")
     cmds["endpoints"].add_argument("--path", help="only endpoints matching this path (substring)")
     cmds["endpoints"].add_argument("--method", help="only endpoints with this HTTP method (GET, POST, ...)")
     cmds["endpoints"].add_argument("--handler", help="only endpoints handled by this function or file")
     cmds["endpoints"].add_argument("--table", help="only endpoints that read or write this table")
+    cmds["tables"].add_argument("--format", choices=("text", "json", "markdown", "mermaid"), default="text",
+                                help="output format (text, json, markdown, mermaid; default: text)")
     cmds["tables"].add_argument("--table", help="only tables matching this table name")
     cmds["gallery"].description = (
         "Generate an offline, responsive static showcase of multiple repositories "

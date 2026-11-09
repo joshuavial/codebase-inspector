@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from collections import defaultdict, deque
 
 
@@ -224,12 +225,13 @@ caller references, downstream code calls, and database tables.
 
 Filter by path substring (--path), HTTP method (--method), handler name or
 file (--handler), or table read/written (--table).
-Use --json for structured JSON output.
+Use --format (text, json, markdown) or --json for structured output.
 
 Exit codes: 0 done, 1 no model (run `cbi init` and `cbi scan`).
 
 Example:
   cbi endpoints --method GET
+  cbi endpoints --format markdown
   cbi endpoints --path /api/accounts --json
   cbi endpoints --table accounts""",
     "tables": """\
@@ -237,12 +239,14 @@ List database tables, columns, primary and foreign keys, and code references
 (reads and writes) detected in the codebase model.
 
 Filter by table name or id substring (--table).
-Use --json for structured JSON output.
+Use --format (text, json, markdown, mermaid) or --json for structured output.
 
 Exit codes: 0 done, 1 no model (run `cbi init` and `cbi scan`).
 
 Example:
   cbi tables
+  cbi tables --format markdown
+  cbi tables --format mermaid
   cbi tables --table accounts
   cbi tables --json""",
 }
@@ -331,6 +335,49 @@ def format_endpoints_text(endpoints):
     return "\n\n".join(blocks)
 
 
+def format_endpoints_markdown(endpoints):
+    """Format endpoint view dictionaries into a clean GFM markdown table."""
+    if not endpoints:
+        return "no endpoints found"
+
+    def _esc(val):
+        return str(val).replace("|", "\\|").replace("\n", " ").strip()
+
+    lines = [
+        "| Method | Route | Handler | Callers | Tables |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for ep in endpoints:
+        method = ep.get("method") or ""
+        route = ep.get("path") or ""
+        handler = ep.get("handler")
+        if handler:
+            where = f" ({handler['file']}:{handler['line']})" if handler.get("file") else ""
+            handler_str = f"{handler['name']}{where}"
+        else:
+            handler_str = "-"
+
+        if ep.get("callers"):
+            caller_strs = [
+                f"{c['name']} ({c['file']}:{c['line']})" if c.get("file") else c["name"]
+                for c in ep["callers"]
+            ]
+            callers_str = ", ".join(caller_strs)
+        else:
+            callers_str = "-"
+
+        if ep.get("tables"):
+            table_strs = [f"{t['name']} ({t['mode']})" for t in ep["tables"]]
+            tables_str = ", ".join(table_strs)
+        else:
+            tables_str = "-"
+
+        lines.append(
+            f"| {_esc(method)} | {_esc(route)} | {_esc(handler_str)} | {_esc(callers_str)} | {_esc(tables_str)} |"
+        )
+    return "\n".join(lines)
+
+
 def format_tables_text(tables, relationships=None, all_tables=None):
     """Format table dictionaries into human-readable text."""
     if not tables:
@@ -393,6 +440,227 @@ def format_tables_text(tables, relationships=None, all_tables=None):
     return "\n\n".join(blocks)
 
 
+def format_tables_markdown(tables, relationships=None, all_tables=None):
+    """Format table dictionaries into GFM markdown tables of tables, columns, and relationships."""
+    if not tables:
+        return "no tables found"
+
+    source_tables = all_tables if all_tables is not None else tables
+    table_names = {t["id"]: t["name"] for t in source_tables if "id" in t}
+    col_names = {c["id"]: c["name"] for t in source_tables for c in t.get("columns", []) if "id" in c}
+
+    def _esc(val):
+        return str(val).replace("|", "\\|").replace("\n", " ").strip()
+
+    blocks = []
+
+    # Overview table of tables
+    overview_lines = [
+        "## Tables",
+        "",
+        "| Table | Columns | Primary Key |",
+        "| --- | --- | --- |",
+    ]
+    for table in tables:
+        name = table.get("name") or ""
+        cols = table.get("columns") or []
+        pk_cols = [c["name"] for c in cols if c.get("primaryKey")]
+        pk_str = ", ".join(pk_cols) if pk_cols else "-"
+        overview_lines.append(f"| {_esc(name)} | {len(cols)} | {_esc(pk_str)} |")
+    blocks.append("\n".join(overview_lines))
+
+    # Per-table column tables
+    for table in tables:
+        tbl_lines = [f"### `{table['name']}`", ""]
+        if table.get("models"):
+            tbl_lines.append(f"- **Models:** {', '.join(table['models'])}")
+
+        columns = table.get("columns") or []
+        if columns:
+            tbl_lines.append("| Column | Type | Primary Key | Nullable | Default |")
+            tbl_lines.append("| --- | --- | --- | --- | --- |")
+            for col in columns:
+                c_name = col.get("name") or ""
+                c_type = col.get("type") or "-"
+                c_pk = "Yes" if col.get("primaryKey") else "No"
+                c_null = "Yes" if col.get("nullable", True) else "No"
+                c_default = str(col["default"]) if col.get("default") is not None else "-"
+                tbl_lines.append(
+                    f"| {_esc(c_name)} | {_esc(c_type)} | {c_pk} | {c_null} | {_esc(c_default)} |"
+                )
+            tbl_lines.append("")
+
+        meta_lines = []
+        if table.get("foreignKeys"):
+            fk_strs = []
+            for fk in table["foreignKeys"]:
+                from_col = col_names.get(fk["column"]) or fk["column"].rsplit("#", 1)[-1]
+                to_tbl = table_names.get(fk["to"]) or fk["to"].rsplit(":", 1)[-1]
+                to_col = col_names.get(fk["targetColumn"]) or fk["targetColumn"].rsplit("#", 1)[-1]
+                fk_strs.append(f"`{from_col}` -> `{to_tbl}({to_col})`")
+            meta_lines.append(f"- **Foreign Keys:** {', '.join(fk_strs)}")
+
+        if table.get("referencedBy"):
+            ref_strs = []
+            for ref in table["referencedBy"]:
+                from_tbl = table_names.get(ref["from"]) or ref["from"].rsplit(":", 1)[-1]
+                from_col = col_names.get(ref["column"]) or ref["column"].rsplit("#", 1)[-1]
+                to_col = col_names.get(ref["targetColumn"]) or ref["targetColumn"].rsplit("#", 1)[-1]
+                ref_strs.append(f"`{from_tbl}({from_col})` -> `{to_col}`")
+            meta_lines.append(f"- **Referenced By:** {', '.join(ref_strs)}")
+
+        if table.get("reads"):
+            readers = [
+                f"`{r['name']}` ({r['file']}:{r['line']})" if r.get("file") else f"`{r['name']}`"
+                for r in table["reads"]
+            ]
+            meta_lines.append(f"- **Reads:** {', '.join(readers)}")
+
+        if table.get("writes"):
+            writers = [
+                f"`{w['name']}` ({w['file']}:{w['line']})" if w.get("file") else f"`{w['name']}`"
+                for w in table["writes"]
+            ]
+            meta_lines.append(f"- **Writes:** {', '.join(writers)}")
+
+        if meta_lines:
+            tbl_lines.extend(meta_lines)
+
+        blocks.append("\n".join(tbl_lines).rstrip())
+
+    # Relationships table
+    rels_to_format = []
+    if relationships:
+        for rel in relationships:
+            from_tbl = table_names.get(rel.get("from")) or (rel.get("from") or "").rsplit(":", 1)[-1]
+            from_col = col_names.get(rel.get("column")) or (rel.get("column") or "").rsplit("#", 1)[-1]
+            to_tbl = table_names.get(rel.get("to")) or (rel.get("to") or "").rsplit(":", 1)[-1]
+            to_col = col_names.get(rel.get("targetColumn")) or (rel.get("targetColumn") or "").rsplit("#", 1)[-1]
+            if from_tbl and to_tbl:
+                rels_to_format.append((from_tbl, from_col, to_tbl, to_col))
+
+    if rels_to_format:
+        rels_to_format = sorted(set(rels_to_format))
+        rel_lines = [
+            "## Relationships",
+            "",
+            "| From Table | Column | To Table | Target Column |",
+            "| --- | --- | --- | --- |",
+        ]
+        for f_tbl, f_col, t_tbl, t_col in rels_to_format:
+            rel_lines.append(f"| {_esc(f_tbl)} | {_esc(f_col)} | {_esc(t_tbl)} | {_esc(t_col)} |")
+        blocks.append("\n".join(rel_lines))
+
+    return "\n\n".join(blocks)
+
+
+def format_tables_mermaid(tables, relationships=None, all_tables=None):
+    """Format table dictionaries into valid Mermaid erDiagram syntax."""
+    if not tables:
+        return "erDiagram\n"
+
+    source_tables = all_tables if all_tables is not None else tables
+    table_names = {t["id"]: t["name"] for t in source_tables if "id" in t}
+    col_names = {c["id"]: c["name"] for t in source_tables for c in t.get("columns", []) if "id" in c}
+
+    def _mermaid_entity(name):
+        name = str(name).strip()
+        if re.match(r"^[A-Za-z0-9_]+$", name):
+            return name
+        return f'"{name}"'
+
+    lines = ["erDiagram"]
+
+    # Relationships first
+    rels_to_format = []
+    if relationships:
+        for rel in relationships:
+            from_tbl = table_names.get(rel.get("from")) or (rel.get("from") or "").rsplit(":", 1)[-1]
+            from_col = col_names.get(rel.get("column")) or (rel.get("column") or "").rsplit("#", 1)[-1]
+            to_tbl = table_names.get(rel.get("to")) or (rel.get("to") or "").rsplit(":", 1)[-1]
+            if from_tbl and to_tbl:
+                rels_to_format.append((to_tbl, from_tbl, from_col))
+
+    if rels_to_format:
+        for to_tbl, from_tbl, from_col in sorted(
+            set(rels_to_format),
+            key=lambda r: (r[0].lower(), r[1].lower(), r[2].lower()),
+        ):
+            to_ent = _mermaid_entity(to_tbl)
+            from_ent = _mermaid_entity(from_tbl)
+            label = re.sub(r'["\[\]|]+', "_", from_col or "references").strip() or "references"
+            lines.append(f'    {to_ent} ||--o{{ {from_ent} : "{label}"')
+
+    # Tables and attributes
+    for table in sorted(tables, key=lambda t: (t["name"].lower(), t.get("id", ""))):
+        ent = _mermaid_entity(table["name"])
+        columns = table.get("columns") or []
+        fk_col_ids = {fk["column"] for fk in table.get("foreignKeys", [])}
+        if not columns:
+            lines.append(f"    {ent}")
+            continue
+
+        lines.append(f"    {ent} {{")
+        for col in columns:
+            c_type = re.sub(r"\s+", "_", (col.get("type") or "").strip())
+            if not c_type:
+                c_type = "unknown"
+            c_name = re.sub(r"[^A-Za-z0-9_]", "_", (col.get("name") or "").strip()) or "col"
+
+            is_pk = bool(col.get("primaryKey"))
+            is_fk = col.get("id") in fk_col_ids
+            is_uk = bool(col.get("unique"))
+
+            if is_pk and is_fk:
+                key = " PK,FK"
+            elif is_pk:
+                key = " PK"
+            elif is_fk and is_uk:
+                key = " UK,FK"
+            elif is_fk:
+                key = " FK"
+            elif is_uk:
+                key = " UK"
+            else:
+                key = ""
+
+            lines.append(f"        {c_type} {c_name}{key}")
+        lines.append("    }")
+
+    return "\n".join(lines) + "\n"
+
+
+_ER_RELATIONSHIP = re.compile(
+    r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s+(\|\|--o\{|\}o--\|\||\|\|--\|\||\}o--o\{)\s+("[^"]+"|[A-Za-z0-9_]+)\s*:\s*("[^"]+"|[A-Za-z0-9_]+)\s*$'
+)
+_ER_ENTITY_START = re.compile(r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s*\{\s*$')
+_ER_ENTITY_SINGLE = re.compile(r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s*$')
+_ER_ATTR = re.compile(r'^\s*([A-Za-z0-9_()]+)\s+([A-Za-z0-9_]+)(\s+(PK|FK|UK|PK,FK|UK,FK))?\s*$')
+
+
+def valid_mermaid_er(text):
+    """True when text is valid Mermaid erDiagram syntax produced by this module."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines or lines[0].strip() != "erDiagram":
+        return False
+    in_block = False
+    for line in lines[1:]:
+        if in_block:
+            if line.strip() == "}":
+                in_block = False
+                continue
+            if not _ER_ATTR.match(line):
+                return False
+        else:
+            if _ER_ENTITY_START.match(line):
+                in_block = True
+                continue
+            if _ER_RELATIONSHIP.match(line) or _ER_ENTITY_SINGLE.match(line):
+                continue
+            return False
+    return not in_block
+
+
 def cmd_endpoints(conn, args):
     """CLI handler for `cbi endpoints`."""
     view = endpoint_view(conn)
@@ -403,8 +671,12 @@ def cmd_endpoints(conn, args):
         handler=getattr(args, "handler", None),
         table=getattr(args, "table", None),
     )
-    if getattr(args, "json", False):
+    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "text")
+    if fmt == "json":
         print(json.dumps({"endpoints": endpoints}, indent=2))
+        return 0
+    if fmt == "markdown":
+        print(format_endpoints_markdown(endpoints))
         return 0
     print(format_endpoints_text(endpoints))
     return 0
@@ -418,8 +690,15 @@ def cmd_tables(conn, args):
         view["relationships"],
         table=getattr(args, "table", None),
     )
-    if getattr(args, "json", False):
+    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "text")
+    if fmt == "json":
         print(json.dumps({"tables": tables, "relationships": rels}, indent=2))
+        return 0
+    if fmt == "markdown":
+        print(format_tables_markdown(tables, rels, all_tables=view["tables"]))
+        return 0
+    if fmt == "mermaid":
+        print(format_tables_mermaid(tables, rels, all_tables=view["tables"]).rstrip())
         return 0
     print(format_tables_text(tables, rels, all_tables=view["tables"]))
     return 0
