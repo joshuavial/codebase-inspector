@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `cbi tables --format markdown` (GFM tables) and `cbi tables --format mermaid` (Mermaid `erDiagram` with tables, columns, PK/FK, relationships).
+- `cbi endpoints --format markdown` (GFM tables of routes, HTTP methods, handlers, callers, and tables).
+- `format` parameter on `cbi_tables` and `cbi_endpoints` MCP tools.
+- Database schema migrations and HTTP endpoint impacts surfaced in `cbi diff` and `cbi review` with Mermaid visualization.
+- First-class `cbi gallery` CLI subcommand compiling multi-repo architecture showcases.
+- 25 native MCP tools and prompts over stdio JSON-RPC (`cbi mcp`), plus `cbi mcp --install` automated configuration generator for Claude Code, Cursor, and Windsurf.
+- Unified local smoke verification harness `scripts/smoke_all.py` validating 21 end-to-end checkpoints offline.
+
+### Changed
+
+- Updated documentation across `docs/prd-04-change-review.md`, `docs/prd-05-system-views.md`, `docs/prd-08-change-overview.md`, `docs/architecture.md`, and `docs/github-action.md`.
+
+### Fixed
+
+- Hardened Playwright browser availability probe and graceful fallback in viewer tests (`cbi-ecw.1`).
+- Fixed package name matching and added git shallow history depth guard in reusable GitHub Action (`cbi-ecw.2`).
+- Process-group reaping and test determinism improvements.
+
+
 ## [0.3.0] - 2026-11-06
 
 ### Added
