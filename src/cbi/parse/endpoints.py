@@ -48,6 +48,11 @@ def _by_name(defs, name):
     for index, defin in enumerate(defs or []):
         if defin["name"] == name:
             return index
+    if name.startswith(("self.", "cls.")):
+        short = name.split(".", 1)[1]
+        for index, defin in enumerate(defs or []):
+            if defin["name"] == short:
+                return index
     return None
 
 
@@ -478,9 +483,9 @@ def _ctor(node, lang):
         kind = "router"
     elif name == "express" and obj is None and not is_new:
         kind = "app"
-    elif name == "FastAPI":
+    elif name in ("FastAPI", "Starlette", "Flask"):
         kind = "app"
-    elif name == "APIRouter":
+    elif name in ("APIRouter", "Blueprint"):
         kind = "router"
     elif name == "Koa":
         kind = "app"
@@ -492,7 +497,7 @@ def _ctor(node, lang):
 def _ctor_prefix(call, lang, name):
     args = _args(call, lang)
     for kind, key, value in args:
-        if kind == "kw" and key == "prefix":
+        if kind == "kw" and key in ("prefix", "url_prefix"):
             text = _plain(value, lang)
             return _norm_prefix(text) if text is not None else ""
         if kind == "pos" and _is_object(value):
@@ -631,6 +636,155 @@ def _expr_text(node, lang):
     return None
 
 
+def _methods_from_node(val, lang):
+    if val is None:
+        return None
+    if val.type in ("list", "tuple", "set"):
+        found = []
+        for child in val.named_children:
+            text = _plain(child, lang)
+            if text:
+                verb = _verb_text(text) or text.strip().strip("\"'").upper()
+                if verb:
+                    found.append(verb)
+        return found
+    text = _plain(val, lang)
+    if text:
+        verb = _verb_text(text) or text.strip().strip("\"'").upper()
+        if verb:
+            return [verb]
+    return None
+
+
+def _resolve_handler_node(handler_node, fallback_node, lang):
+    if handler_node is None:
+        return ("line", _line(fallback_node)), None
+    if handler_node.type == "identifier":
+        ident = _text(handler_node)
+        return ("name", ident), ident
+    if handler_node.type == "string":
+        text = _plain(handler_node, lang)
+        if text:
+            return ("name", text), text
+        return ("line", _line(handler_node)), None
+    if lang == "python" and handler_node.type == "attribute":
+        expr = _expr_text(handler_node, lang)
+        if expr:
+            return ("name", expr), expr
+        return ("line", _line(handler_node)), None
+    if handler_node.type in PY_FUNCS or handler_node.type in TS_FUNCS:
+        return ("line", _line(handler_node)), None
+    expr = _expr_text(handler_node, lang)
+    if expr:
+        return ("name", expr), expr
+    return ("line", _line(handler_node)), None
+
+
+def _python_starlette_route(node, name, obj, state):
+    args = _args(node, "python")
+    path_kw = next((v for k, k_name, v in args if k == "kw" and k_name in ("path", "rule", "url")), None)
+    endpoint_kw = next((v for k, k_name, v in args if k == "kw" and k_name in ("endpoint", "handler", "view_func")), None)
+    methods_kw = next((v for k, k_name, v in args if k == "kw" and k_name == "methods"), None)
+    pos_args = [v for k, _k_name, v in args if k == "pos"]
+
+    if path_kw is not None:
+        path_node = path_kw
+        pos_for_handler = pos_args
+    else:
+        path_node = pos_args[0] if pos_args else None
+        pos_for_handler = pos_args[1:] if len(pos_args) > 1 else []
+
+    if path_node is None:
+        return
+    path = _path_value(path_node, "python")
+    if not path:
+        return
+
+    if endpoint_kw is not None:
+        handler_node = endpoint_kw
+    elif pos_for_handler:
+        handler_node = pos_for_handler[0]
+    else:
+        handler_node = None
+
+    handler, handler_name = _resolve_handler_node(handler_node, node, "python")
+
+    if name in ("WebSocketRoute", "add_websocket_route"):
+        methods = ["WEBSOCKET"]
+    else:
+        if methods_kw is not None:
+            methods = _methods_from_node(methods_kw, "python")
+            if methods is None:
+                methods = ["GET"]
+        else:
+            pos_for_methods = pos_for_handler[1:] if len(pos_for_handler) > 1 else []
+            if pos_for_methods:
+                methods = _methods_from_node(pos_for_methods[0], "python")
+                if methods is None:
+                    methods = ["GET"]
+            else:
+                methods = ["GET"]
+
+    router_name = obj if obj and obj not in ("routing", "starlette", "fastapi") else None
+    for method in methods:
+        state["routes"].append([handler, method, path, router_name, handler_name])
+
+
+def _python_flask_add_url_rule(node, obj, state):
+    if obj is None:
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "attribute":
+            obj = _expr_text(fn.child_by_field_name("object"), "python")
+    args = _args(node, "python")
+    path_kw = next((v for k, k_name, v in args if k == "kw" and k_name in ("rule", "path", "url")), None)
+    view_func_kw = next((v for k, k_name, v in args if k == "kw" and k_name == "view_func"), None)
+    endpoint_kw = next((v for k, k_name, v in args if k == "kw" and k_name in ("endpoint", "handler")), None)
+    methods_kw = next((v for k, k_name, v in args if k == "kw" and k_name == "methods"), None)
+    pos_args = [v for k, _k_name, v in args if k == "pos"]
+
+    if path_kw is not None:
+        path_node = path_kw
+        pos_rest = pos_args
+    else:
+        path_node = pos_args[0] if pos_args else None
+        pos_rest = pos_args[1:] if len(pos_args) > 1 else []
+
+    if path_node is None:
+        return
+    path = _path_value(path_node, "python")
+    if not path:
+        return
+
+    if view_func_kw is not None:
+        handler_node = view_func_kw
+    elif len(pos_rest) >= 2:
+        handler_node = pos_rest[1]
+    elif len(pos_rest) == 1:
+        handler_node = pos_rest[0]
+    elif endpoint_kw is not None:
+        handler_node = endpoint_kw
+    else:
+        handler_node = None
+
+    handler, handler_name = _resolve_handler_node(handler_node, node, "python")
+
+    if methods_kw is not None:
+        methods = _methods_from_node(methods_kw, "python")
+        if methods is None:
+            methods = ["GET"]
+    else:
+        methods = None
+        for pos in pos_rest[2:]:
+            methods = _methods_from_node(pos, "python")
+            if methods:
+                break
+        if not methods:
+            methods = ["GET"]
+
+    for method in methods:
+        state["routes"].append([handler, method, path, obj, handler_name])
+
+
 def _route_call(node, lang, state, func):
     if lang == "python" and node.parent is not None and node.parent.type == "decorator":
         _decorator_route(node, state)
@@ -644,12 +798,19 @@ def _route_call(node, lang, state, func):
         if target:
             state["test_clients"].add(target)
         return
-    if name == "include_router" and obj:
+    if name in ("include_router", "register_blueprint") and obj:
         _mount(node, lang, state, obj)
         return
     if name == "use" and obj:
         _mount_use(node, lang, state, obj)
         return
+    if lang == "python":
+        if name in ("Route", "WebSocketRoute", "APIRoute", "add_route", "add_websocket_route"):
+            _python_starlette_route(node, name, obj, state)
+            return
+        if name == "add_url_rule":
+            _python_flask_add_url_rule(node, obj, state)
+            return
     if not name or name.lower() not in VERBS:
         return
     if obj in CLIENTS:
@@ -707,7 +868,7 @@ def _mount(node, lang, state, parent):
     child = None
     extra = ""
     for kind, key, value in args:
-        if kind == "kw" and key == "prefix":
+        if kind == "kw" and key in ("prefix", "url_prefix"):
             text = _plain(value, lang)
             extra = _norm_prefix(text) if text else ""
         elif kind == "pos" and child is None:
@@ -798,7 +959,9 @@ def _client_call(node, lang, state, func, frame=None):
     if node.type == "new_expression":
         return
     obj, name = _callee(node, lang)
-    if name in ("include_router", "use"):
+    if name in ("include_router", "use", "register_blueprint"):
+        return
+    if lang == "python" and name in ("Route", "WebSocketRoute", "APIRoute", "add_route", "add_websocket_route", "add_url_rule"):
         return
     frame = frame or {"locals": {}, "params": [], "literals": state.get("literals", {})}
     args = _args(node, lang)
