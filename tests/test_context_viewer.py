@@ -31,9 +31,12 @@ def test_copy_button_copies_the_node_and_a_command(tmp_path):
 
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(channel="chrome", headless=True)
-        except Exception as err:
-            pytest.skip(f"system Chrome is not launchable: {err}")
+            browser = p.chromium.launch(headless=True)
+        except Exception:
+            try:
+                browser = p.chromium.launch(channel="chrome", headless=True)
+            except Exception as err:
+                pytest.skip(f"Playwright browser is not launchable: {err}")
         page = browser.new_page(viewport={"width": 1280, "height": 800})
         page.add_init_script("""
           window.__copied = "";

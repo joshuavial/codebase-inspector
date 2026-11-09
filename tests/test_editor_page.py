@@ -40,7 +40,10 @@ def enc(part):
     return quote(part, safe="-_.!~*'()")
 
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1400, "height": 900})
     page.on("pageerror", lambda err: errors.append(str(err)))
     page.add_init_script(
@@ -113,22 +116,15 @@ print("ok")
 
 
 def _playwright_python():
-    # The project venv does not depend on Playwright. A system Python may.
-    seen = []
-    for exe in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3", shutil.which("python3"), sys.executable):
-        if not exe or exe in seen or not Path(exe).is_file():
-            continue
-        seen.append(exe)
-        probe = subprocess.run([exe, "-c", "import playwright"], capture_output=True)
-        if probe.returncode == 0:
-            return exe
-    return None
+    try:
+        from conftest import find_playwright_runner
+        runner, _ = find_playwright_runner()
+        return runner[0] if runner and len(runner) == 1 else None
+    except Exception:
+        return None
 
 
-def test_double_click_opens_a_function_and_a_concept_drills(tmp_path):
-    exe = _playwright_python()
-    if not exe:
-        pytest.skip("playwright is not installed for this python")
+def test_double_click_opens_a_function_and_a_concept_drills(tmp_path, playwright_runner, check_playwright):
     conn = concept_model(tmp_path)
     project = tmp_path / "proj"
     project.mkdir()
@@ -136,10 +132,10 @@ def test_double_click_opens_a_function_and_a_concept_drills(tmp_path):
     script = tmp_path / "drive_editor.py"
     script.write_text(DRIVER)
     proc = subprocess.run(
-        [exe, str(script), str(viewer), FN, APP, API, UI, str(project)],
+        playwright_runner + [str(script), str(viewer), FN, APP, API, UI, str(project)],
         capture_output=True, text=True, timeout=60,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    check_playwright(proc)
     assert "ok" in proc.stdout
 
 
@@ -156,7 +152,10 @@ def css(node_id):
     return "[data-id=" + json.dumps(node_id) + "]"
 
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1400, "height": 900})
     page.on("pageerror", lambda err: errors.append(str(err)))
     page.add_init_script(
@@ -189,10 +188,7 @@ print("ok")
 """
 
 
-def test_ref_view_copies_the_git_show_command(tmp_path):
-    exe = _playwright_python()
-    if not exe:
-        pytest.skip("playwright is not installed for this python")
+def test_ref_view_copies_the_git_show_command(tmp_path, playwright_runner, check_playwright):
     conn = concept_model(tmp_path)
     project = tmp_path / "proj"
     project.mkdir()
@@ -201,8 +197,8 @@ def test_ref_view_copies_the_git_show_command(tmp_path):
     script = tmp_path / "drive_ref.py"
     script.write_text(REF_DRIVER)
     proc = subprocess.run(
-        [exe, str(script), str(viewer), FN, API, sha],
+        playwright_runner + [str(script), str(viewer), FN, API, sha],
         capture_output=True, text=True, timeout=60,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    check_playwright(proc)
     assert "ok" in proc.stdout

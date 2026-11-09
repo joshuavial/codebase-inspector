@@ -17,15 +17,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "data" / "system"
 
 
 def _playwright_python():
-    seen = []
-    for exe in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3",
-                shutil.which("python3"), sys.executable):
-        if not exe or exe in seen or not Path(exe).is_file():
-            continue
-        seen.append(exe)
-        if subprocess.run([exe, "-c", "import playwright"], capture_output=True).returncode == 0:
-            return exe
-    return None
+    try:
+        from conftest import find_playwright_runner
+        runner, _ = find_playwright_runner()
+        return runner[0] if runner and len(runner) == 1 else None
+    except Exception:
+        return None
 
 
 def _viewer(make_repo, monkeypatch, capsys, with_history=False):
@@ -76,7 +73,10 @@ from playwright.sync_api import sync_playwright
 index, database_png, endpoint_png = sys.argv[1:]
 errors = []
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1500, "height": 920})
     page.on("pageerror", lambda err: errors.append(str(err)))
     page.goto(Path(index).resolve().as_uri() + "#tab=database")
@@ -154,7 +154,10 @@ from playwright.sync_api import sync_playwright
 
 index = sys.argv[1]
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1600, "height": 1000})
     page.goto(Path(index).resolve().as_uri() + "?render=1#tab=database")
     page.wait_for_function("() => document.title === 'cbi-viewer-ready'", timeout=60000)
@@ -179,7 +182,10 @@ from playwright.sync_api import sync_playwright
 
 index = sys.argv[1]
 with sync_playwright() as p:
-    browser = p.chromium.launch()
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1500, "height": 920})
     page.goto(Path(index).resolve().as_uri())
     page.wait_for_selector("#timeline:not([hidden])", timeout=20000)
@@ -229,30 +235,24 @@ with sync_playwright() as p:
 '''
 
 
-def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, capsys, tmp_path):
-    exe = _playwright_python()
-    if not exe:
-        pytest.skip("playwright is not installed for this python")
+def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, capsys, tmp_path, playwright_runner, check_playwright):
     viewer, _root = _viewer(make_repo, monkeypatch, capsys)
     script = tmp_path / "drive_database.py"
     script.write_text(DRIVER)
     png = tmp_path / "database.png"
     endpoint_png = tmp_path / "endpoints.png"
-    proc = subprocess.run([exe, str(script), str(viewer), str(png), str(endpoint_png)], capture_output=True, text=True, timeout=60)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = subprocess.run(playwright_runner + [str(script), str(viewer), str(png), str(endpoint_png)], capture_output=True, text=True, timeout=60)
+    check_playwright(proc)
     assert png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert endpoint_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_history_replay_and_comparison_survive_system_tab_navigation(make_repo, monkeypatch, capsys, tmp_path):
-    exe = _playwright_python()
-    if not exe:
-        pytest.skip("playwright is not installed for this python")
+def test_history_replay_and_comparison_survive_system_tab_navigation(make_repo, monkeypatch, capsys, tmp_path, playwright_runner, check_playwright):
     viewer, _root = _viewer(make_repo, monkeypatch, capsys, with_history=True)
     script = tmp_path / "drive_history_tabs.py"
     script.write_text(HISTORY_DRIVER)
-    proc = subprocess.run([exe, str(script), str(viewer)], capture_output=True, text=True, timeout=60)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = subprocess.run(playwright_runner + [str(script), str(viewer)], capture_output=True, text=True, timeout=60)
+    check_playwright(proc)
 
 
 def test_database_capture_uses_cbi_render_path_when_chrome_is_installed(make_repo, monkeypatch, capsys, tmp_path):
@@ -265,10 +265,7 @@ def test_database_capture_uses_cbi_render_path_when_chrome_is_installed(make_rep
     assert endpoint_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n") and endpoint_png.stat().st_size > 1000
 
 
-def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypatch, capsys, tmp_path):
-    exe = _playwright_python()
-    if not exe:
-        pytest.skip("playwright is not installed for this python")
+def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypatch, capsys, tmp_path, playwright_runner, check_playwright):
     statements = []
     for prefix, count in (("core", 52), ("billing", 23)):
         for index in range(count):
@@ -284,8 +281,8 @@ def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypa
     viewer = Path(capsys.readouterr().out.strip())
     script = tmp_path / "drive_large_database.py"
     script.write_text(LARGE_DRIVER)
-    proc = subprocess.run([exe, str(script), str(viewer)], capture_output=True, text=True, timeout=90)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = subprocess.run(playwright_runner + [str(script), str(viewer)], capture_output=True, text=True, timeout=90)
+    check_playwright(proc)
 
 
 FOCUS_CHECK = r'''

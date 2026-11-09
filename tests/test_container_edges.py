@@ -28,7 +28,10 @@ from playwright.sync_api import sync_playwright
 index, focus = sys.argv[1:]
 url = Path(index).resolve().as_uri() + "#c=" + focus
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    try:
+        browser = p.chromium.launch(headless=True)
+    except Exception:
+        browser = p.chromium.launch(channel="chrome", headless=True)
     page = browser.new_page(viewport={"width": 1440, "height": 900})
     errors = []
     page.on("pageerror", lambda err: errors.append(str(err)))
@@ -146,15 +149,15 @@ def _model(tmp_path):
     return conn
 
 
-def test_container_relationships_match_the_drawer(tmp_path):
+def test_container_relationships_match_the_drawer(tmp_path, playwright_runner, check_playwright):
     index = build.build(_model(tmp_path), tmp_path / "viewer")
     script = tmp_path / "check_view.py"
     script.write_text(_CHECK)
     proc = subprocess.run(
-        ["uvx", "--from", "playwright", "python", str(script), str(index), BOX],
+        playwright_runner + [str(script), str(index), BOX],
         capture_output=True, text=True, timeout=180,
     )
-    assert proc.returncode == 0, proc.stdout + proc.stderr
+    check_playwright(proc)
     info = json.loads(proc.stdout)
     assert info["crumbs"].endswith("Box")
     assert info["usedBy"] == info["laneIn"] == 2

@@ -1,10 +1,15 @@
 import os
+import shutil
 import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
 
 # A git or gh call that waits on a credential prompt must fail the test, not the job.
 SUBPROCESS_TIMEOUT = 120
@@ -153,3 +158,151 @@ def make_repo(tmp_path):
         return root
 
     return make
+
+
+# Shared probe for Playwright browser availability across viewer tests.
+_PLAYWRIGHT_RUNNER_CACHE = None
+
+_PROBE_CODE = (
+    "import sys\n"
+    "try:\n"
+    "    from playwright.sync_api import sync_playwright\n"
+    "except Exception as exc:\n"
+    "    print(f'IMPORT_ERROR: {exc}')\n"
+    "    sys.exit(1)\n"
+    "try:\n"
+    "    with sync_playwright() as p:\n"
+    "        try:\n"
+    "            b = p.chromium.launch(headless=True)\n"
+    "            b.close()\n"
+    "            print('OK:chromium')\n"
+    "            sys.exit(0)\n"
+    "        except Exception as err_default:\n"
+    "            try:\n"
+    "                b = p.chromium.launch(channel='chrome', headless=True)\n"
+    "                b.close()\n"
+    "                print('OK:chrome')\n"
+    "                sys.exit(0)\n"
+    "            except Exception as err_chrome:\n"
+    "                print(f'LAUNCH_ERROR: default: {err_default}; chrome: {err_chrome}')\n"
+    "                sys.exit(2)\n"
+    "except Exception as exc:\n"
+    "    print(f'PLAYWRIGHT_ERROR: {exc}')\n"
+    "    sys.exit(3)\n"
+)
+
+
+def find_playwright_runner(use_cache=True):
+    """Find a command prefix capable of launching a headless browser via Playwright.
+
+    Returns (runner_argv, skip_reason).
+    runner_argv is a list of str (e.g. ['/path/to/python'] or ['uvx', '--from', 'playwright', 'python']).
+    skip_reason is an informative string if no working runner was found, else None.
+    """
+    global _PLAYWRIGHT_RUNNER_CACHE
+    if os.environ.get("CBI_TEST_NO_BROWSER") == "1":
+        return (None, "Playwright browser binaries are not installed (chromium_headless_shell and system Chrome unavailable)")
+    if use_cache and _PLAYWRIGHT_RUNNER_CACHE is not None:
+        return _PLAYWRIGHT_RUNNER_CACHE
+
+    seen = set()
+    candidates = []
+
+    # 1. Candidate python interpreters
+    for candidate in (
+        sys.executable,
+        "/opt/homebrew/bin/python3",
+        "/usr/local/bin/python3",
+        "/usr/bin/python3",
+        shutil.which("python3"),
+        shutil.which("python"),
+    ):
+        if not candidate or candidate in seen:
+            continue
+        p = Path(candidate)
+        if p.is_file():
+            seen.add(candidate)
+            candidates.append([candidate])
+
+    # 2. uvx candidate
+    uvx = shutil.which("uvx")
+    if uvx:
+        candidates.append([uvx, "--from", "playwright", "python"])
+
+    launch_error = None
+    has_playwright_import = False
+
+    for cmd in candidates:
+        try:
+            proc = _REAL_RUN(
+                _rewrite_argv(cmd + ["-c", _PROBE_CODE]),
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if proc.returncode == 0:
+                _PLAYWRIGHT_RUNNER_CACHE = (cmd, None)
+                return _PLAYWRIGHT_RUNNER_CACHE
+            elif proc.returncode == 2:
+                has_playwright_import = True
+                launch_error = proc.stdout.strip() or proc.stderr.strip()
+            elif proc.returncode != 1:
+                out = (proc.stdout + proc.stderr).strip()
+                if any(m in out for m in ("LAUNCH_ERROR", "BrowserType.launch", "Executable doesn't exist")):
+                    has_playwright_import = True
+                    launch_error = out
+        except Exception:
+            continue
+
+    if has_playwright_import:
+        reason = (
+            "Playwright browser binaries are not installed (chromium_headless_shell and system Chrome unavailable)"
+        )
+        if launch_error:
+            reason += f": {launch_error}"
+    else:
+        reason = "playwright is not installed (no Python interpreter with playwright or uvx found)"
+
+    _PLAYWRIGHT_RUNNER_CACHE = (None, reason)
+    return _PLAYWRIGHT_RUNNER_CACHE
+
+
+def require_playwright():
+    """Return runner argv prefix or skip the current test."""
+    runner, reason = find_playwright_runner()
+    if runner is None:
+        pytest.skip(reason)
+    return runner
+
+
+def check_playwright_proc(proc):
+    """Check a completed subprocess that ran a Playwright script.
+
+    Gracefully skips if browser launch failed due to missing browser binaries.
+    """
+    if proc.returncode != 0:
+        err = (proc.stderr or "") + (proc.stdout or "")
+        markers = (
+            "BrowserType.launch",
+            "Executable doesn't exist",
+            "playwright install",
+            'channel "chrome" is not found',
+            "browserType.launch: Executable doesn't exist",
+            "LAUNCH_ERROR",
+        )
+        if any(marker in err for marker in markers):
+            pytest.skip(f"Playwright browser launch failed: {err.strip()}")
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+@pytest.fixture
+def playwright_runner():
+    """Pytest fixture returning the command prefix to run Playwright with a headless browser."""
+    return require_playwright()
+
+
+@pytest.fixture
+def check_playwright():
+    """Pytest fixture providing check_playwright_proc."""
+    return check_playwright_proc
+

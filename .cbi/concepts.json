@@ -110,6 +110,7 @@
         "tests/drawer_open_check.js",
         "tests/layout_check.js",
         "tests/sketch_check.js",
+        "tests/test_browser_probe.py",
         "tests/test_compare_viewer.py",
         "tests/test_container_edges.py",
         "tests/test_context_viewer.py",
