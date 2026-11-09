@@ -55,7 +55,20 @@ From a local checkout:
 uv tool install .
 ```
 
-Then run `cbi prime`, followed by `cbi init` and `cbi scan` when prompted.
+Then run `cbi prime`, followed by `cbi scan` (which automatically initializes `.cbi/`). Run `cbi init` beforehand only if you wish to customize ignore rules before scanning.
+
+### Read-Only Repositories
+
+To explore any repository without creating in-tree files or modifying git status:
+
+```bash
+cbi scan --out /tmp/repo-model
+cbi prime --out /tmp/repo-model
+cbi context --out /tmp/repo-model
+cbi gallery . --out-dir /tmp/repo-gallery
+```
+
+All inspection, query, and static build commands accept `--out DIR` to read and write an isolated model directory.
 
 ---
 
@@ -65,7 +78,8 @@ From any repository root:
 
 ```bash
 cbi prime              # Orientation guide for your agent
-cbi scan               # Map repository into .cbi/model.db
+cbi scan               # Map repository into .cbi/model.db (auto-initializes .cbi/)
+cbi init               # Explicitly create .cbi/ to edit ignore rules before scanning
 cbi context [node]     # Architecture overview or node context for AI agents
 cbi mcp                # Run stdio Model Context Protocol server for coding agents
 cbi query "<sql>"      # Safe read-only SQL queries and schema introspection

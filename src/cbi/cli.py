@@ -619,7 +619,8 @@ def _model(args):
     if not path.exists():
         if sha:
             raise NoModel(f"no model for {sha}. Run `cbi scan --ref {args.ref}` first.")
-        raise NoModel(f"no model at {path}. Run `cbi init` and `cbi scan` first.")
+        out_flag = f" --out {args.out}" if getattr(args, "out", None) else ""
+        raise NoModel(f"no model at {path}. Run `cbi scan{out_flag}` first.")
     conn = store.open_db(path)
     tasks.attach_cache(conn)
     return conn
@@ -636,7 +637,8 @@ def _read_model(args):
     if not path.exists():
         if sha:
             raise NoModel(f"no model for {sha}. Run `cbi scan --ref {args.ref}` first.")
-        raise NoModel(f"no model at {path}. Run `cbi init` and `cbi scan` first.")
+        out_flag = f" --out {args.out}" if getattr(args, "out", None) else ""
+        raise NoModel(f"no model at {path}. Run `cbi scan{out_flag}` first.")
     conn = None
     try:
         conn = store.read_only(path)

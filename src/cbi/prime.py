@@ -10,6 +10,24 @@ from pathlib import Path
 
 from cbi import files, ingest, parts, store, tasks
 
+NOT_A_REPO = """\
+# cbi: codebase inspector
+
+cbi maps a git repository into a model you can query from the command line.
+
+## Not inside a git repository
+
+Codebase Inspector requires a git repository to track and map files.
+
+To get started:
+
+  git init            # initialize a git repository in the current directory
+  cbi scan            # map the repository into .cbi/model.db
+  cbi prime           # orientation guide for your agent
+
+Or change to an existing git repository and run `cbi prime` again.
+"""
+
 NOT_INITIALISED = """\
 # cbi: codebase inspector
 
@@ -39,12 +57,11 @@ They read and write DIR instead of .cbi/.
 
 Run these from the repo root:
 
-  cbi init    # create .cbi/ and write .cbi/ignore (edit it to skip data dirs)
   cbi scan    # map the repo; reports what it found and how many tasks wait
+              # (auto-initializes .cbi/; or run `cbi init` first to edit ignore rules)
 
 Or, to leave the repo untouched:
 
-  cbi init --out DIR
   cbi scan --out DIR
   cbi prime --out DIR
 
@@ -81,9 +98,13 @@ def render(root=None, out=None, ref=None, conn=None) -> str:
         try:
             root = files.repo_root(Path.cwd())
         except files.NotARepo:
-            return NOT_INITIALISED
+            return NOT_A_REPO
     else:
         root = Path(root).resolve()
+        try:
+            root = files.repo_root(root)
+        except files.NotARepo:
+            return NOT_A_REPO
     base = Path(out).resolve() if out else root / ".cbi"
     sha = files.resolve_commit(root, ref) if ref else None
     model_dir = base / "refs" / sha if sha else base

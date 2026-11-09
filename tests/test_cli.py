@@ -113,3 +113,26 @@ def test_query_disallows_writes_and_missing_sql(make_repo, monkeypatch, capsys):
     err_insert = capsys.readouterr().err
     assert "only read-only queries are permitted" in err_insert
 
+
+def test_prime_in_non_git_directory(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    assert main(["prime"]) == 0
+    out = capsys.readouterr().out
+    assert "Not inside a git repository" in out
+    assert "git init" in out
+
+
+def test_missing_model_error_mentions_scan_and_preserves_out(make_repo, monkeypatch, capsys, tmp_path):
+    repo = make_repo({"a.py": "x = 1\n"})
+    monkeypatch.chdir(repo)
+    # Reader without model mentions cbi scan
+    assert main(["context"]) == 1
+    err = capsys.readouterr().err
+    assert "no model at" in err and "Run `cbi scan` first." in err
+
+    # Reader with --out mentions cbi scan --out
+    custom_out = tmp_path / "custom-out"
+    assert main(["context", "--out", str(custom_out)]) == 1
+    err_out = capsys.readouterr().err
+    assert f"Run `cbi scan --out {custom_out}` first." in err_out
+
