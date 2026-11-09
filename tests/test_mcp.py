@@ -1181,7 +1181,7 @@ def test_tool_tasks(repo):
     assert isinstance(parsed, list)
 
     res_err = server.execute_tool("cbi_tasks", {"task_id": "nonexistent-task"})
-    assert res_err["isError"]
+    assert res_err["isError"] is True
     assert "Unknown task" in res_err["content"][0]["text"]
 
 
@@ -1304,7 +1304,7 @@ def test_tool_diff(repo):
     assert "no architectural changes" in resp["content"][0]["text"]
 
     res_err = server.execute_tool("cbi_diff", {"base_model": "nonexistent_model.db", "head_model": model_file})
-    assert res_err["isError"]
+    assert res_err["isError"] is True
     assert "Diff error" in res_err["content"][0]["text"]
 
 
@@ -2156,11 +2156,11 @@ def test_tool_task(repo):
 
     # 2. Unknown task handling
     res_unknown = server.execute_tool("cbi_task", {"task_id": "nonexistent-task"})
-    assert res_unknown["isError"]
+    assert res_unknown["isError"] is True
     assert "Unknown task" in res_unknown["content"][0]["text"]
 
     res_check_unknown = server.execute_tool("cbi_task", {"task_id": "nonexistent-task", "check": "{}"})
-    assert res_check_unknown["isError"]
+    assert res_check_unknown["isError"] is True
     assert "Unknown task" in res_check_unknown["content"][0]["text"]
 
     # Retrieve open tasks from fixture repo
