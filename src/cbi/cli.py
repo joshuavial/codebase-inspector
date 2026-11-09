@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, graph, history, ingest, manifests, mcp, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, system_views, tasks, team, update_check
+from cbi import bug_report, build, check, concepts, context, data, diff, docs, editor, files, gallery, graph, history, ingest, manifests, mcp, open_link, parse, parts, prime, progress, query, render, resolve, review, screens, store, system_views, tasks, team, update_check
 from cbi.ids import file_id
 from cbi.scan import (
     _map,
@@ -60,6 +60,7 @@ COMMANDS = {
     "query": "Execute a read-only SQL query against the codebase model.",
     "endpoints": "List HTTP routes with handlers, callers, downstream code and tables.",
     "tables": "List database tables, columns, foreign keys and code references.",
+    "gallery": "Generate an offline static multi-repository architecture showcase.",
 }
 
 
@@ -247,6 +248,46 @@ def build_parser():
     cmds["endpoints"].add_argument("--handler", help="only endpoints handled by this function or file")
     cmds["endpoints"].add_argument("--table", help="only endpoints that read or write this table")
     cmds["tables"].add_argument("--table", help="only tables matching this table name")
+    cmds["gallery"].description = (
+        "Generate an offline, responsive static showcase of multiple repositories "
+        "with interactive concept maps and PR architecture reviews."
+    )
+    cmds["gallery"].add_argument(
+        "repos",
+        nargs="*",
+        metavar="REPO",
+        help="repository specifier: /path/to/repo, name=/path/to/repo, or name=/path/to/repo:base..head",
+    )
+    cmds["gallery"].add_argument(
+        "--repo",
+        action="append",
+        dest="repo_flags",
+        default=[],
+        help="repository specifier: /path/to/repo, name=/path/to/repo, or name=/path/to/repo:base..head",
+    )
+    cmds["gallery"].add_argument(
+        "--config",
+        type=Path,
+        help="path to JSON configuration file describing repositories and metadata",
+    )
+    cmds["gallery"].add_argument(
+        "--out-dir",
+        "--out",
+        dest="out_dir",
+        type=Path,
+        default=Path("dist/gallery"),
+        help="destination directory for the gallery site (default: dist/gallery)",
+    )
+    cmds["gallery"].add_argument(
+        "--title",
+        default="Codebase Inspector Architecture Gallery",
+        help="gallery title",
+    )
+    cmds["gallery"].add_argument(
+        "--description",
+        default="Deterministic architecture reviews and interactive concept maps for modern codebases.",
+        help="gallery subtitle/description",
+    )
     return parser
 
 
@@ -1162,12 +1203,16 @@ def cmd_tables(args):
     return _query(args, system_views.cmd_tables)
 
 
+def cmd_gallery(args):
+    return gallery.cmd_gallery(args)
+
+
 HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan, "check": cmd_check, "worktrees": cmd_worktrees, "search": cmd_search,
             "show": cmd_show, "context": cmd_context, "tests-for": cmd_tests_for, "status": cmd_status, "tasks": cmd_tasks,
             "task": cmd_task, "submit": cmd_submit, "build": cmd_build, "diff": cmd_diff, "render": cmd_render,
             "review": cmd_review, "history": cmd_history, "open": cmd_open, "open-file": cmd_open_file,
             "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp,
-            "query": cmd_query, "endpoints": cmd_endpoints, "tables": cmd_tables}
+            "query": cmd_query, "endpoints": cmd_endpoints, "tables": cmd_tables, "gallery": cmd_gallery}
 HANDLERS["ingest"] = cmd_ingest
 
 

@@ -5,17 +5,21 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import pytest
-from generate_gallery import (
+import cbi.cli as cli
+from cbi.gallery import (
     generate_gallery,
     load_gallery_config,
-    main,
+    main as gallery_main,
     parse_repo_spec,
     render_markdown_to_html,
 )
+import generate_gallery as legacy_generate_gallery
 
 
 def _git(root, *args):
@@ -210,7 +214,8 @@ def test_main_cli_execution(make_repo, tmp_path, monkeypatch):
     repo_root = make_repo({"src/app.py": "def main(): pass\n"}, name="cli-repo")
     out_gallery = tmp_path / "cli_gallery"
 
-    rc = main([
+    # Test programmatic main in cbi.gallery
+    rc = gallery_main([
         "--repo", f"cli-repo={repo_root}",
         "--out", str(out_gallery),
         "--title", "CLI Generated Gallery",
@@ -218,3 +223,69 @@ def test_main_cli_execution(make_repo, tmp_path, monkeypatch):
     assert rc == 0
     assert (out_gallery / "index.html").is_file()
     assert "CLI Generated Gallery" in (out_gallery / "index.html").read_text(encoding="utf-8")
+
+    # Test legacy entrypoint wrapper delegation
+    out_legacy = tmp_path / "legacy_gallery"
+    rc_legacy = legacy_generate_gallery.main([
+        "--repo", f"cli-repo={repo_root}",
+        "--out", str(out_legacy),
+        "--title", "Legacy Script Gallery",
+    ])
+    assert rc_legacy == 0
+    assert (out_legacy / "index.html").is_file()
+    assert "Legacy Script Gallery" in (out_legacy / "index.html").read_text(encoding="utf-8")
+
+
+def test_cbi_gallery_cli_subcommand(make_repo, tmp_path):
+    repo_root = make_repo({"src/app.py": "def main(): pass\n"}, name="cbi-repo")
+    out_gallery = tmp_path / "cbi_gallery_subcmd"
+
+    # Positional repo specification with --out-dir
+    rc = cli.main([
+        "gallery",
+        f"cbi-repo={repo_root}",
+        "--out-dir", str(out_gallery),
+        "--title", "CBI Gallery Subcommand Showcase",
+    ])
+    assert rc == 0
+    assert (out_gallery / "index.html").is_file()
+    assert "CBI Gallery Subcommand Showcase" in (out_gallery / "index.html").read_text(encoding="utf-8")
+
+
+def test_cbi_gallery_cli_with_repo_flag_and_config(make_repo, tmp_path):
+    repo_root = make_repo({"src/app.py": "def main(): pass\n"}, name="flag-repo")
+    out_gallery = tmp_path / "cbi_gallery_flags"
+
+    # Using --repo flag and --out
+    rc = cli.main([
+        "gallery",
+        "--repo", f"flag-repo={repo_root}",
+        "--out", str(out_gallery),
+        "--title", "Flag Generated Gallery",
+    ])
+    assert rc == 0
+    assert (out_gallery / "index.html").is_file()
+    assert "Flag Generated Gallery" in (out_gallery / "index.html").read_text(encoding="utf-8")
+
+    # Using --config
+    config_file = tmp_path / "gallery.json"
+    config_file.write_text(json.dumps({
+        "title": "Configured Gallery",
+        "repos": [str(repo_root)],
+    }), encoding="utf-8")
+    out_cfg_gallery = tmp_path / "cbi_gallery_cfg"
+    rc = cli.main([
+        "gallery",
+        "--config", str(config_file),
+        "--out-dir", str(out_cfg_gallery),
+    ])
+    assert rc == 0
+    assert (out_cfg_gallery / "index.html").is_file()
+    assert "Configured Gallery" in (out_cfg_gallery / "index.html").read_text(encoding="utf-8")
+
+
+def test_legacy_script_wrapper_exports():
+    assert legacy_generate_gallery.generate_gallery is generate_gallery
+    assert legacy_generate_gallery.load_gallery_config is load_gallery_config
+    assert legacy_generate_gallery.parse_repo_spec is parse_repo_spec
+    assert legacy_generate_gallery.render_markdown_to_html is render_markdown_to_html

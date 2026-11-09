@@ -147,6 +147,7 @@
             "src/cbi/check.py",
             "src/cbi/cli.py",
             "src/cbi/editor.py",
+            "src/cbi/gallery.py",
             "src/cbi/mcp.py",
             "src/cbi/scan.py",
             "tests/test_bug_report.py",

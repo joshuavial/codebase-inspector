@@ -49,6 +49,7 @@ src/cbi/
   ingest.py               lcov, coverage.py JSON, JUnit XML
   data.py                 schema and table-use extraction
   system_views.py         database and endpoint viewer projections
+  gallery.py              multi-repository architecture showcase generator
   build.py                viewer export
   viewer/                 index.html, app.js, style.css, vendor/minisearch.min.js (copied by build)
 tests/

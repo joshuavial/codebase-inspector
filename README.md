@@ -78,6 +78,7 @@ cbi endpoints          # List HTTP routes with handlers, callers, and database t
 cbi tables             # List database tables, columns, foreign keys, and code references
 cbi review BASE..HEAD  # Generate architectural PR review & Mermaid graph
 cbi build              # Export interactive static HTML viewer
+cbi gallery [repos...] # Generate offline multi-repository architecture showcase
 cbi check              # CI gate: fail if committed map drifts from source
 ```
 
@@ -159,6 +160,21 @@ cbi endpoints --table accounts --json
 cbi tables
 cbi tables --table accounts
 cbi tables --json
+```
+
+### Multi-Repository Architecture Gallery
+
+Generate a responsive, offline static showcase presenting interactive concept maps and PR architecture reviews across one or multiple repositories:
+
+```bash
+# Showcase current repository or explicit paths
+cbi gallery --out-dir dist/gallery
+
+# Include architectural comparison ranges (base..head) for PR reviews
+cbi gallery fastapi=/path/to/fastapi httpx=/path/to/httpx:0.24.0..0.25.0 --title "API Stack Showcase"
+
+# Configure multi-repo metadata via JSON
+cbi gallery --config gallery.json --out-dir dist/gallery
 ```
 
 ---

@@ -465,48 +465,43 @@ def smoke_composite_action_simulation(repo_dir: Path, base_sha: str) -> List[Smo
 
 
 def smoke_gallery_generator(repo_dir: Path, base_sha: str, head_sha: str) -> List[SmokeStepResult]:
-    """Verify review gallery generator workflow."""
-    from generate_gallery import generate_gallery
-
+    """Verify review gallery generator workflow via cbi gallery CLI subcommand."""
     results = []
     out_gallery = repo_dir / ".cbi" / "smoke_gallery_out"
 
     t0 = time.perf_counter()
-    repos_cfg = [
-        {
-            "name": "smoke-fixture",
-            "path": repo_dir,
-            "compare": f"{base_sha}..{head_sha}",
-            "description": "Smoke test synthetic repository",
-            "tags": ["Python", "Smoke"],
-        }
-    ]
+    spec = f"smoke-fixture={repo_dir}:{base_sha}..{head_sha}"
+    code, out, err = run_cbi_cli(
+        repo_dir,
+        [
+            "gallery",
+            spec,
+            "--out-dir",
+            str(out_gallery),
+            "--title",
+            "Smoke Verification Gallery",
+        ],
+    )
+    dt = (time.perf_counter() - t0) * 1000
 
-    try:
-        gallery_res = generate_gallery(repos_cfg, out_gallery, title="Smoke Verification Gallery")
-        dt = (time.perf_counter() - t0) * 1000
+    index_file = out_gallery / "index.html"
+    viewer_file = out_gallery / "repos" / "smoke-fixture" / "viewer" / "index.html"
+    review_file = out_gallery / "repos" / "smoke-fixture" / "review" / "index.html"
 
-        index_file = out_gallery / "index.html"
-        viewer_file = out_gallery / "repos" / "smoke-fixture" / "viewer" / "index.html"
-        review_file = out_gallery / "repos" / "smoke-fixture" / "review" / "index.html"
-
-        passed = (
-            gallery_res is not None
-            and index_file.is_file()
-            and viewer_file.is_file()
-            and review_file.is_file()
-        )
-        results.append(SmokeStepResult(
-            "gallery.generate",
-            passed,
-            dt,
-            f"Compiled showcase at {index_file}",
-            None if passed else "Missing expected gallery HTML assets",
-        ))
-    except Exception as err:
-        dt = (time.perf_counter() - t0) * 1000
-        results.append(SmokeStepResult("gallery.generate", False, dt, "Gallery generation raised exception", str(err)))
-
+    passed = (
+        code == 0
+        and index_file.is_file()
+        and viewer_file.is_file()
+        and review_file.is_file()
+    )
+    error_msg = None if passed else (f"Exit code {code}: {err}\n{out}" if code != 0 else "Missing expected gallery HTML assets")
+    results.append(SmokeStepResult(
+        "gallery.generate",
+        passed,
+        dt,
+        f"Compiled showcase at {index_file}",
+        error_msg,
+    ))
     return results
 
 
