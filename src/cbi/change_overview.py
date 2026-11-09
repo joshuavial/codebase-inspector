@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 STRUCTURE_KINDS = {
     "concept-added", "concept-removed", "concept-split", "concept-merged",
     "file-moved-concept",
+    "table-added", "table-removed", "table-changed",
+    "endpoint-added", "endpoint-removed", "endpoint-changed",
 }
 RELATIONSHIP_KINDS = {
     "relationship-added", "relationship-removed", "relationship-volume",

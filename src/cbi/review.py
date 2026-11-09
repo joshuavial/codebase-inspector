@@ -771,6 +771,28 @@ def render_review(root, base_sha, head_sha, spec, result, diagram, mermaid, narr
     lines += ["### Changed integration points", ""]
     integrations = [c for c in _unique(result) if c["kind"].startswith("integration-")]
     lines += [f"- {c['kind']}  {c['summary']}" for c in integrations] or ["None."]
+    lines.append("")
+    lines += ["### Database schema changes", ""]
+    tables = [c for c in _unique(result) if c["kind"].startswith("table-")]
+    if tables:
+        for c in tables:
+            lines.append(f"- {c['kind']}  {c['summary']}")
+            for code in c.get("code") or []:
+                if code.get("path"):
+                    lines.append(f"  - {code['path']}  {code['name']}")
+    else:
+        lines.append("None.")
+    lines.append("")
+    lines += ["### API route changes", ""]
+    endpoints = [c for c in _unique(result) if c["kind"].startswith("endpoint-")]
+    if endpoints:
+        for c in endpoints:
+            lines.append(f"- {c['kind']}  {c['summary']}")
+            for code in c.get("code") or []:
+                if code.get("path"):
+                    lines.append(f"  - {code['path']}  {code['name']}")
+    else:
+        lines.append("None.")
     lines += ["", *_image_lines(images)]
     return "\n".join(lines)
 

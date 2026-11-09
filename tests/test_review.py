@@ -424,3 +424,131 @@ def test_orphans_count_a_barrel_an_import_passes_through(make_repo, monkeypatch,
     body = run_json(capsys, "orphans")
     assert {row["path"] for row in body["unreferenced"]} == {"spare/index.ts"}
     assert {row["path"] for row in body["unreachable"]} == {"spare/index.ts", "spare/Spare.ts"}
+
+
+def test_review_surfaces_database_schema_and_api_route_changes(tmp_path):
+    from cbi import diff, review, store
+
+    base_db = tmp_path / "base.db"
+    head_db = tmp_path / "head.db"
+
+    base_nodes = [
+        {"id": "local:repo:migrations/001_users.sql", "parent_id": None, "kind": "file",
+         "display_kind": "source file", "name": "001_users.sql", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:table:users", "parent_id": "local:repo", "kind": "table",
+         "display_kind": "table", "name": "users", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:table:users#id", "parent_id": "local:repo:table:users", "kind": "column",
+         "display_kind": "column", "name": "id", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "",
+         "attrs": json.dumps({"type": "INTEGER", "primary_key": True})},
+        {"id": "local:repo:table:users#name", "parent_id": "local:repo:table:users", "kind": "column",
+         "display_kind": "column", "name": "name", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "",
+         "attrs": json.dumps({"type": "TEXT"})},
+        {"id": "local:repo:table:legacy", "parent_id": "local:repo", "kind": "table",
+         "display_kind": "table", "name": "legacy", "workspace_id": "local:repo",
+         "path": "migrations/000_legacy.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:src/api.py", "parent_id": None, "kind": "file",
+         "display_kind": "source file", "name": "api.py", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:src/api.py#get_users", "parent_id": "local:repo:src/api.py", "kind": "symbol",
+         "display_kind": "function", "name": "get_users", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": "v1", "signature": "def get_users():",
+         "attrs": json.dumps({"http_routes": [{"method": "GET", "path": "/api/users"}]})},
+        {"id": "local:repo:src/api.py#del_users", "parent_id": "local:repo:src/api.py", "kind": "symbol",
+         "display_kind": "function", "name": "del_users", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": "v1", "signature": "def del_users():",
+         "attrs": json.dumps({"http_routes": [{"method": "DELETE", "path": "/api/users/:id"}]})},
+    ]
+
+    head_nodes = [
+        {"id": "local:repo:migrations/001_users.sql", "parent_id": None, "kind": "file",
+         "display_kind": "source file", "name": "001_users.sql", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:migrations/002_orders.sql", "parent_id": None, "kind": "file",
+         "display_kind": "source file", "name": "002_orders.sql", "workspace_id": "local:repo",
+         "path": "migrations/002_orders.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:table:users", "parent_id": "local:repo", "kind": "table",
+         "display_kind": "table", "name": "users", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:table:users#id", "parent_id": "local:repo:table:users", "kind": "column",
+         "display_kind": "column", "name": "id", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "",
+         "attrs": json.dumps({"type": "INTEGER", "primary_key": True})},
+        {"id": "local:repo:table:users#name", "parent_id": "local:repo:table:users", "kind": "column",
+         "display_kind": "column", "name": "name", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "",
+         "attrs": json.dumps({"type": "VARCHAR(100)", "nullable": False})},
+        {"id": "local:repo:table:users#email", "parent_id": "local:repo:table:users", "kind": "column",
+         "display_kind": "column", "name": "email", "workspace_id": "local:repo",
+         "path": "migrations/001_users.sql", "content_hash": None, "signature": "",
+         "attrs": json.dumps({"type": "VARCHAR(255)"})},
+        {"id": "local:repo:table:orders", "parent_id": "local:repo", "kind": "table",
+         "display_kind": "table", "name": "orders", "workspace_id": "local:repo",
+         "path": "migrations/002_orders.sql", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:src/api.py", "parent_id": None, "kind": "file",
+         "display_kind": "source file", "name": "api.py", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": None, "signature": "", "attrs": None},
+        {"id": "local:repo:src/api.py#get_users", "parent_id": "local:repo:src/api.py", "kind": "symbol",
+         "display_kind": "function", "name": "get_users", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": "v2_mod", "signature": "def get_users():",
+         "attrs": json.dumps({"http_routes": [{"method": "GET", "path": "/api/users"}]})},
+        {"id": "local:repo:src/api.py#post_orders", "parent_id": "local:repo:src/api.py", "kind": "symbol",
+         "display_kind": "function", "name": "post_orders", "workspace_id": "local:repo",
+         "path": "src/api.py", "content_hash": "v1", "signature": "def post_orders():",
+         "attrs": json.dumps({"http_routes": [{"method": "POST", "path": "/api/orders"}]})},
+    ]
+
+    for path, nodes in [(base_db, base_nodes), (head_db, head_nodes)]:
+        conn = store.open_db(path)
+        conn.executemany(
+            "INSERT INTO nodes (id, parent_id, kind, display_kind, name, workspace_id, path, content_hash, signature, attrs) "
+            "VALUES (:id, :parent_id, :kind, :display_kind, :name, :workspace_id, :path, :content_hash, :signature, :attrs)",
+            nodes,
+        )
+        conn.commit()
+        conn.close()
+
+    base_conn, head_conn = diff.open_model(base_db), diff.open_model(head_db)
+    try:
+        result = diff.compare(base_conn, head_conn)
+        diagram = review.build_diagram(result, base_conn, head_conn)
+        mermaid = review.render_mermaid(diagram)
+    finally:
+        base_conn.close()
+        head_conn.close()
+
+    assert review.valid_mermaid(mermaid)
+
+    rendered = review.render_review(
+        tmp_path, "base" * 10, "head" * 10, {}, result, diagram, mermaid, None, None, None
+    )
+
+    # 1. Structural counts include table and endpoint changes
+    assert "- 1 table-added" in rendered
+    assert "- 1 table-removed" in rendered
+    assert "- 1 table-changed" in rendered
+    assert "- 1 endpoint-added" in rendered
+    assert "- 1 endpoint-removed" in rendered
+    assert "- 1 endpoint-changed" in rendered
+
+    # 2. Database schema changes section
+    assert "### Database schema changes" in rendered
+    assert "- table-added  orders" in rendered
+    assert "migrations/002_orders.sql  orders" in rendered
+    assert "- table-removed  legacy" in rendered
+    assert "migrations/000_legacy.sql  legacy" in rendered
+    assert "- table-changed  users (+email, altered: name)" in rendered
+    assert "migrations/001_users.sql  users" in rendered
+
+    # 3. API route changes section
+    assert "### API route changes" in rendered
+    assert "- endpoint-added  POST /api/orders" in rendered
+    assert "src/api.py  post_orders" in rendered
+    assert "- endpoint-removed  DELETE /api/users/:id" in rendered
+    assert "src/api.py  del_users" in rendered
+    assert "- endpoint-changed  GET /api/users  handler get_users modified" in rendered
+    assert "src/api.py  get_users" in rendered
+

@@ -684,3 +684,154 @@ def test_render_edges_ignore_weight_and_non_components(tmp_path):
         [("local:repo:ui.tsx#Box", "local:repo:ui.tsx#Badge", "calls", 1, jsx)],
     )
     assert [c["kind"] for c in added] == ["render-added"]
+
+
+def test_table_diff_detects_additions_removals_and_modifications(tmp_path):
+    f1 = _node(id="local:repo:migrations/001_users.sql", kind="file", display_kind="source file",
+               name="001_users.sql", path="migrations/001_users.sql")
+    f0 = _node(id="local:repo:migrations/000_legacy.sql", kind="file", display_kind="source file",
+               name="000_legacy.sql", path="migrations/000_legacy.sql")
+    f2 = _node(id="local:repo:migrations/002_orders.sql", kind="file", display_kind="source file",
+               name="002_orders.sql", path="migrations/002_orders.sql")
+
+    # Base tables
+    legacy_tbl = _node(id="local:repo:table:legacy", kind="table", display_kind="table",
+                       name="legacy", path="migrations/000_legacy.sql")
+    users_tbl = _node(id="local:repo:table:users", kind="table", display_kind="table",
+                      name="users", path="migrations/001_users.sql")
+
+    # Base columns
+    users_id = _node(id="local:repo:table:users#id", parent_id="local:repo:table:users",
+                     kind="column", display_kind="column", name="id", path="migrations/001_users.sql",
+                     attrs=json.dumps({"type": "INTEGER", "primary_key": True, "nullable": False}))
+    users_name = _node(id="local:repo:table:users#name", parent_id="local:repo:table:users",
+                       kind="column", display_kind="column", name="name", path="migrations/001_users.sql",
+                       attrs=json.dumps({"type": "TEXT", "nullable": True}))
+    users_old = _node(id="local:repo:table:users#old_col", parent_id="local:repo:table:users",
+                      kind="column", display_kind="column", name="old_col", path="migrations/001_users.sql",
+                      attrs=json.dumps({"type": "TEXT", "nullable": True}))
+
+    base_nodes = [f0, f1, legacy_tbl, users_tbl, users_id, users_name, users_old]
+
+    # Head columns for users: old_col removed, email added, name type altered
+    users_email = _node(id="local:repo:table:users#email", parent_id="local:repo:table:users",
+                        kind="column", display_kind="column", name="email", path="migrations/001_users.sql",
+                        attrs=json.dumps({"type": "VARCHAR(255)", "nullable": False}))
+    users_name_head = _node(id="local:repo:table:users#name", parent_id="local:repo:table:users",
+                            kind="column", display_kind="column", name="name", path="migrations/001_users.sql",
+                            attrs=json.dumps({"type": "VARCHAR(100)", "nullable": False}))
+
+    # Head table added: orders
+    orders_tbl = _node(id="local:repo:table:orders", kind="table", display_kind="table",
+                       name="orders", path="migrations/002_orders.sql")
+    orders_id = _node(id="local:repo:table:orders#id", parent_id="local:repo:table:orders",
+                      kind="column", display_kind="column", name="id", path="migrations/002_orders.sql",
+                      attrs=json.dumps({"type": "INTEGER", "primary_key": True, "nullable": False}))
+
+    head_nodes = [f1, f2, users_tbl, users_id, users_name_head, users_email, orders_tbl, orders_id]
+
+    changes = _compared(tmp_path, "tables", base_nodes, head_nodes)
+    by_kind = {c["kind"]: c for c in changes}
+    assert "table-removed" in by_kind
+    assert "table-changed" in by_kind
+    assert "table-added" in by_kind
+
+    removed = by_kind["table-removed"]
+    assert removed["summary"] == "legacy"
+    assert removed["before"]["name"] == "legacy"
+    assert removed["code"][0]["path"] == "migrations/000_legacy.sql"
+
+    added = by_kind["table-added"]
+    assert added["summary"] == "orders"
+    assert added["after"]["name"] == "orders"
+    assert added["code"][0]["path"] == "migrations/002_orders.sql"
+
+    changed = by_kind["table-changed"]
+    assert "users" in changed["summary"]
+    assert "+email" in changed["summary"]
+    assert "-old_col" in changed["summary"]
+    assert "altered: name" in changed["summary"]
+    assert changed["after"]["added"] == ["email"]
+    assert changed["after"]["removed"] == ["old_col"]
+    assert changed["after"]["altered"][0]["name"] == "name"
+    assert changed["code"][0]["path"] == "migrations/001_users.sql"
+
+
+def test_endpoint_diff_detects_additions_removals_and_modifications(tmp_path):
+    f = _node(id="local:repo:src/routes.py", kind="file", display_kind="source file",
+              name="routes.py", path="src/routes.py")
+
+    # Base handlers
+    h_get = _node(id="local:repo:src/routes.py#get_users", kind="symbol", display_kind="function",
+                  name="get_users", path="src/routes.py", signature="def get_users():",
+                  content_hash="h1", attrs=json.dumps({"http_routes": [{"method": "GET", "path": "/api/users"}]}))
+    h_del = _node(id="local:repo:src/routes.py#delete_user", kind="symbol", display_kind="function",
+                  name="delete_user", path="src/routes.py", signature="def delete_user():",
+                  content_hash="h2", attrs=json.dumps({"http_routes": [{"method": "DELETE", "path": "/api/users/:id"}]}))
+    h_post_v1 = _node(id="local:repo:src/routes.py#create_v1", kind="symbol", display_kind="function",
+                      name="create_v1", path="src/routes.py", signature="def create_v1():",
+                      content_hash="h3", attrs=json.dumps({"http_routes": [{"method": "POST", "path": "/api/users"}]}))
+
+    base_nodes = [f, h_get, h_del, h_post_v1]
+
+    h_get_modified = _node(id="local:repo:src/routes.py#get_users", kind="symbol", display_kind="function",
+                           name="get_users", path="src/routes.py", signature="def get_users():",
+                           content_hash="h1_mod", attrs=json.dumps({"http_routes": [{"method": "GET", "path": "/api/users"}]}))
+    h_post_v2 = _node(id="local:repo:src/routes.py#create_v2", kind="symbol", display_kind="function",
+                      name="create_v2", path="src/routes.py", signature="def create_v2():",
+                      content_hash="h4", attrs=json.dumps({"http_routes": [{"method": "POST", "path": "/api/users"}]}))
+    h_orders = _node(id="local:repo:src/routes.py#get_orders", kind="symbol", display_kind="function",
+                     name="get_orders", path="src/routes.py", signature="def get_orders():",
+                     content_hash="h5", attrs=json.dumps({"http_routes": [{"method": "GET", "path": "/api/orders"}]}))
+
+    head_nodes = [f, h_get_modified, h_post_v2, h_orders]
+
+    changes = _compared(tmp_path, "endpoints", base_nodes, head_nodes)
+    by_kind = {c["kind"]: [] for c in changes}
+    for c in changes:
+        by_kind[c["kind"]].append(c)
+
+    assert "endpoint-removed" in by_kind
+    assert "endpoint-added" in by_kind
+    assert "endpoint-changed" in by_kind
+
+    removed = by_kind["endpoint-removed"][0]
+    assert removed["summary"] == "DELETE /api/users/:id"
+    assert removed["before"]["method"] == "DELETE"
+    assert removed["code"][0]["path"] == "src/routes.py"
+
+    added = by_kind["endpoint-added"][0]
+    assert added["summary"] == "GET /api/orders"
+    assert added["after"]["method"] == "GET"
+    assert added["code"][0]["path"] == "src/routes.py"
+
+    changed_summaries = {c["summary"] for c in by_kind["endpoint-changed"]}
+    assert any("POST /api/users" in s and "create_v1 -> create_v2" in s for s in changed_summaries)
+    assert any("GET /api/users" in s and "get_users modified" in s for s in changed_summaries)
+
+
+def test_table_and_endpoint_changes_populate_attention_structure(tmp_path):
+    concept = _node(id="api", kind="concept", display_kind="service", name="API")
+    f_routes = _node(id="local:repo:api.py", kind="file", display_kind="source file", name="api.py", path="api.py")
+    h_ep = _node(id="local:repo:api.py#handler", kind="symbol", display_kind="function",
+                 name="handler", path="api.py", signature="def handler():",
+                 attrs=json.dumps({"http_routes": [{"method": "GET", "path": "/items"}]}))
+
+    base_nodes = [concept, f_routes]
+    head_nodes = [concept, f_routes, h_ep]
+    owns = [("api", "local:repo:api.py", "owns", 1, None)]
+
+    _write(tmp_path / "att-base.db", base_nodes, owns)
+    _write(tmp_path / "att-head.db", head_nodes, owns)
+    base, head = diff.open_model(tmp_path / "att-base.db"), diff.open_model(tmp_path / "att-head.db")
+    try:
+        result = diff.compare(base, head)
+    finally:
+        base.close()
+        head.close()
+
+    overview = result["overview"]
+    api_item = next(it for it in overview["items"] if it["id"] == "api")
+    assert "GET /items" in api_item["attention"]["structure"]
+    assert any("structural change" in r for r in api_item["reasons"])
+

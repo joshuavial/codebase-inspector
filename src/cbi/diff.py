@@ -111,6 +111,12 @@ JSON shape, keys sorted, groups and changes in the order above:
   deployable-added     after {id, name}     deployable-removed before {id, name}
   package-added        after {id, name}     package-removed before {id, name}
   depends-on-added     after {from, to}     depends-on-removed before {from, to}
+  table-added          after {id, name, path, columns}
+  table-removed        before {id, name, path, columns}
+  table-changed        before and after {id, name, path}
+  endpoint-added       after {method, path, handler}
+  endpoint-removed     before {method, path, handler}
+  endpoint-changed     before and after {method, path, handler}
   env-read             after {name}         env-unread before {name}
   symbol-added         after {id, name, path, display_kind}
   symbol-removed       before {id, name, path, display_kind}
@@ -151,6 +157,8 @@ KINDS = (
     "relationship-removed", "relationship-added", "relationship-volume",
     "file-moved-concept", "deployable-removed", "deployable-added",
     "package-removed", "package-added", "depends-on-removed", "depends-on-added",
+    "table-added", "table-removed", "table-changed",
+    "endpoint-added", "endpoint-removed", "endpoint-changed",
     "file-moved", "env-unread", "env-read",
     "symbol-removed", "symbol-added", "symbol-moved", "symbol-changed", "untested",
     "render-removed", "render-added", "test-removed", "test-added",
@@ -296,6 +304,8 @@ def compare(base_conn, head_conn, line_stats=None):
     changes += _node_kind_changes(ctx, "deployable")
     changes += _node_kind_changes(ctx, "package")
     changes += _depends_changes(ctx)
+    changes += _table_changes(ctx)
+    changes += _endpoint_changes(ctx)
     changes += _env_changes(ctx)
     changes += _symbol_changes(ctx)
     changes += _test_changes(ctx)
@@ -950,6 +960,193 @@ def _dep_summary(ctx, src, dst):
             return nid
         return f"{node['display_kind']} {node['name']}"
     return f"{bit(src)} -> {bit(dst)}"
+
+
+def _tables_by_name(side):
+    """Return dict of table_name_lower -> (table_node, [column_nodes])."""
+    tables = {}
+    for node in side.nodes.values():
+        if node["kind"] == "table":
+            tables[node["name"].lower()] = (node, [])
+    for node in side.nodes.values():
+        if node["kind"] == "column" and node.get("parent_id"):
+            tbl_node = side.nodes.get(node["parent_id"])
+            if tbl_node and tbl_node["kind"] == "table" and tbl_node["name"].lower() in tables:
+                tables[tbl_node["name"].lower()][1].append(node)
+    for _, (_, cols) in tables.items():
+        cols.sort(key=lambda c: (not bool(c["attrs"].get("primary_key")), c["name"].lower()))
+    return tables
+
+
+def _find_file_id(side, path):
+    if not path:
+        return None
+    for n in side.nodes.values():
+        if n["kind"] in ("file", "doc") and n.get("path") == path:
+            return n["id"]
+    return None
+
+
+def _table_changes(ctx):
+    base_tables = _tables_by_name(ctx.base)
+    head_tables = _tables_by_name(ctx.head)
+    out = []
+
+    for name_lower in sorted(set(head_tables) - set(base_tables)):
+        node, cols = head_tables[name_lower]
+        col_list = [{"name": c["name"], "type": c["attrs"].get("type") or ""} for c in cols]
+        fid = _find_file_id(ctx.head, node["path"])
+        groups = _place(ctx, None, fid)
+        out.append(_change(
+            "table-added", node["name"], groups,
+            after={"id": node["id"], "name": node["name"], "path": node["path"], "columns": col_list},
+            code=[_ref(node)],
+        ))
+
+    for name_lower in sorted(set(base_tables) - set(head_tables)):
+        node, cols = base_tables[name_lower]
+        col_list = [{"name": c["name"], "type": c["attrs"].get("type") or ""} for c in cols]
+        fid = _find_file_id(ctx.base, node["path"])
+        groups = _place(ctx, fid, None)
+        out.append(_change(
+            "table-removed", node["name"], groups,
+            before={"id": node["id"], "name": node["name"], "path": node["path"], "columns": col_list},
+            code=[_ref(node)],
+        ))
+
+    for name_lower in sorted(set(base_tables) & set(head_tables)):
+        b_node, b_cols = base_tables[name_lower]
+        h_node, h_cols = head_tables[name_lower]
+        b_col_map = {c["name"].lower(): c for c in b_cols}
+        h_col_map = {c["name"].lower(): c for c in h_cols}
+
+        added_cols = [h_col_map[k] for k in sorted(set(h_col_map) - set(b_col_map))]
+        removed_cols = [b_col_map[k] for k in sorted(set(b_col_map) - set(h_col_map))]
+        altered_cols = []
+        for k in sorted(set(b_col_map) & set(h_col_map)):
+            bc, hc = b_col_map[k], h_col_map[k]
+            ba, ha = bc["attrs"], hc["attrs"]
+            diffs = []
+            if (ba.get("type") or "") != (ha.get("type") or ""):
+                diffs.append(f"type: {ba.get('type') or '—'} -> {ha.get('type') or '—'}")
+            if bool(ba.get("nullable", True)) != bool(ha.get("nullable", True)):
+                diffs.append(f"nullable: {bool(ba.get('nullable', True))} -> {bool(ha.get('nullable', True))}")
+            if bool(ba.get("primary_key")) != bool(ha.get("primary_key")):
+                diffs.append(f"primary_key: {bool(ba.get('primary_key'))} -> {bool(ha.get('primary_key'))}")
+            if bool(ba.get("unique")) != bool(ha.get("unique")):
+                diffs.append(f"unique: {bool(ba.get('unique'))} -> {bool(ha.get('unique'))}")
+            if ba.get("default") != ha.get("default"):
+                diffs.append(f"default: {ba.get('default')} -> {ha.get('default')}")
+            if diffs:
+                altered_cols.append({
+                    "name": hc["name"], "diffs": diffs,
+                    "before": {"type": ba.get("type") or "", "nullable": bool(ba.get("nullable", True))},
+                    "after": {"type": ha.get("type") or "", "nullable": bool(ha.get("nullable", True))},
+                })
+
+        if added_cols or removed_cols or altered_cols:
+            parts = []
+            if added_cols:
+                parts.append(f"+{', +'.join(c['name'] for c in added_cols)}")
+            if removed_cols:
+                parts.append(f"-{', -'.join(c['name'] for c in removed_cols)}")
+            if altered_cols:
+                parts.append(f"altered: {', '.join(a['name'] for a in altered_cols)}")
+            summary = f"{h_node['name']} ({', '.join(parts)})"
+            b_fid = _find_file_id(ctx.base, b_node["path"])
+            h_fid = _find_file_id(ctx.head, h_node["path"])
+            groups = _place(ctx, b_fid, h_fid)
+            out.append(_change(
+                "table-changed", summary, groups,
+                before={"id": b_node["id"], "name": b_node["name"], "path": b_node["path"]},
+                after={
+                    "id": h_node["id"], "name": h_node["name"], "path": h_node["path"],
+                    "added": [c["name"] for c in added_cols],
+                    "removed": [c["name"] for c in removed_cols],
+                    "altered": altered_cols,
+                },
+                code=[_ref(h_node)],
+            ))
+
+    return out
+
+
+def _route_records(side):
+    routes = defaultdict(list)
+    for node in side.nodes.values():
+        route_list = node["attrs"].get("http_routes")
+        if not isinstance(route_list, list):
+            continue
+        for r in route_list:
+            if not isinstance(r, dict):
+                continue
+            method = str(r.get("method") or "").upper()
+            path = str(r.get("path") or "")
+            if not method or not path:
+                continue
+            routes[(method, path)].append(node)
+    res = {}
+    for (method, path), handlers in routes.items():
+        unique = {h["id"]: h for h in handlers}
+        res[(method, path)] = sorted(unique.values(), key=lambda h: (h["path"], h["name"], h["id"]))
+    return res
+
+
+def _endpoint_changes(ctx):
+    base_routes = _route_records(ctx.base)
+    head_routes = _route_records(ctx.head)
+    out = []
+
+    for key in sorted(set(head_routes) - set(base_routes)):
+        method, path = key
+        handlers = head_routes[key]
+        h = handlers[0]
+        h_fid = _file_id(h) or _find_file_id(ctx.head, h.get("path"))
+        groups = _place(ctx, None, h_fid)
+        out.append(_change(
+            "endpoint-added", f"{method} {path}", groups,
+            after={"method": method, "path": path, "handler": _ref(h)},
+            code=[_ref(node) for node in handlers],
+        ))
+
+    for key in sorted(set(base_routes) - set(head_routes)):
+        method, path = key
+        handlers = base_routes[key]
+        h = handlers[0]
+        b_fid = _file_id(h) or _find_file_id(ctx.base, h.get("path"))
+        groups = _place(ctx, b_fid, None)
+        out.append(_change(
+            "endpoint-removed", f"{method} {path}", groups,
+            before={"method": method, "path": path, "handler": _ref(h)},
+            code=[_ref(node) for node in handlers],
+        ))
+
+    for key in sorted(set(base_routes) & set(head_routes)):
+        method, path = key
+        b_handlers = base_routes[key]
+        h_handlers = head_routes[key]
+        b_h, h_h = b_handlers[0], h_handlers[0]
+
+        handler_changed = (b_h["id"] != h_h["id"] or b_h["name"] != h_h["name"] or b_h["path"] != h_h["path"])
+        sig_changed = b_h.get("signature") != h_h.get("signature")
+        body_changed = b_h.get("content_hash") != h_h.get("content_hash")
+
+        if handler_changed or sig_changed or body_changed:
+            if handler_changed:
+                summary = f"{method} {path}  handler: {b_h['name']} -> {h_h['name']}"
+            else:
+                summary = f"{method} {path}  handler {h_h['name']} modified"
+            b_fid = _file_id(b_h) or _find_file_id(ctx.base, b_h.get("path"))
+            h_fid = _file_id(h_h) or _find_file_id(ctx.head, h_h.get("path"))
+            groups = _place(ctx, b_fid, h_fid)
+            out.append(_change(
+                "endpoint-changed", summary, groups,
+                before={"method": method, "path": path, "handler": _ref(b_h)},
+                after={"method": method, "path": path, "handler": _ref(h_h)},
+                code=[_ref(node) for node in h_handlers],
+            ))
+
+    return out
 
 
 def _env_names(side):

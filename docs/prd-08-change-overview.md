@@ -365,7 +365,7 @@ Viewer and desktop app:
 - O1. Extend the diff output with additions and deletions per file, rolled up to module and concept, without reading or executing target code.
 - O2. Build one deterministic hierarchy from changed concepts, presentation modules, files, symbols and line hunks. The existing stable node IDs remain the keys.
 - O3. Record direct context endpoints and attention facts at each level. Do not copy the whole relationship graph into each item.
-- O4. Keep the existing change kinds and exhaustive `groups` output. The overview is a projection over those facts and git line counts.
+- O4. Keep the change kinds and exhaustive `groups` output, incorporating database schema and HTTP endpoint structural change kinds (`table-added`, `table-removed`, `table-changed`, `endpoint-added`, `endpoint-removed`, `endpoint-changed`) into attention ranking. The overview is a projection over those facts and git line counts.
 - O5. Use the current concepts on both sides under the PRD-04 provisional ownership rules. A comparison without concepts starts at deployable or package, then module, file, function and lines.
 
 ### Viewer

@@ -29,6 +29,8 @@ Computed deterministically from the two models by stable node IDs:
 - concepts added, removed, renamed, split or merged (from ownership changes), and files moving between concepts;
 - relationships between concepts added or removed, and changes in the call and import volume behind them;
 - integration points added, removed or changed (new external system, different mechanism);
+- database tables and columns added, removed or altered (table-added, table-removed, table-changed);
+- HTTP API route endpoints added, removed or modified (endpoint-added, endpoint-removed, endpoint-changed);
 - deployables, packages and dependencies added or removed;
 - env vars newly read or no longer read;
 - functions and classes added, removed or changed (signature or body), rolled up to their concepts;
@@ -40,7 +42,7 @@ Each item says which concept it belongs to and links to the code behind it.
 ## User journeys
 
 1. **Compare in the app.** In a project, choose two sides (worktree, branch, commit, or a pull request by number) and open the comparison. The concept map shows the head with changes marked: added, removed and changed concepts, new and removed arrows, new integration points. A summary panel lists the changes by concept. Drilling into a changed concept shows changed functions; a changed function shows its code diff. A toggle shows the base map with what was removed.
-2. **Describe a change from the CLI.** `cbi diff <base> <head>` prints the structural changes as text, Markdown or JSON. `cbi review <pr | branch>` resolves a pull request through `gh` (or a branch against its base) and writes a review folder: `review.md` with the summary and a Mermaid diagram of the changed concepts, and before/after images of the concept map as PNG and SVG.
+2. **Describe a change from the CLI.** `cbi diff <base> <head>` prints the structural changes as text, Markdown or JSON. `cbi review <pr | branch>` resolves a pull request through `gh` (or a branch against its base) and writes a review folder: `review.md` with the summary, a Mermaid diagram of the changed concepts, dedicated sections highlighting database schema changes and API route changes, and before/after images of the concept map as PNG and SVG.
 3. **Add the narrative.** If an agent is available, `cbi review` opens a `summarise-change` judgement task with the structural diff as input. The agent's answer (a few sentences on what the change does to the architecture and what to look at) is added to `review.md` and cached for that pair of versions.
 4. **Post to the PR.** `cbi review <pr> --post` posts `review.md` as a PR comment through `gh`, and updates its own earlier comment on later runs instead of adding new ones. Images stay files for the user or an agent to attach; the Mermaid diagram renders in GitHub without them.
 5. **Open the comparison in the app.** `cbi open --compare main..pr/2345` (or `--pr 2345`, which uses the PR's base) opens the desktop app on that comparison, and `cbi review` prints the same `cbi://` link at the top of `review.md` for anyone with the app installed.
