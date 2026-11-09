@@ -43,7 +43,7 @@ from cbi import (
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "cbi"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 
 TOOLS = [
     {
