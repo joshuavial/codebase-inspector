@@ -57,6 +57,46 @@ def test_points_prefer_merges_and_fall_back_to_first_parent(make_repo):
 
     later = commit(merged, "direct after merges", **{"late.py": "late = True\n"})
     assert later not in {point["sha"] for point in history.history_points(merged, since="2000-01-01")}
+    squash = commit(merged, "squash feature (#8)", **{"squash.py": "squash = True\n"})
+    points = history.history_points(merged, since="2000-01-01")
+    assert points[-1]["sha"] == squash
+    assert points[-1]["pr"] == 8
+    assert len(points[-1]["parents"]) == 1
+
+
+def test_history_points_includes_squash_merged_prs_after_merges(make_repo):
+    repo = make_repo({"a.py": "x = 1\n"}, name="squash-repo")
+    initial = git(repo, "rev-parse", "HEAD")
+
+    git(repo, "checkout", "-q", "-b", "feature-1")
+    commit(repo, "inside branch", **{"b.py": "y = 2\n"})
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "--no-ff", "-m", "Merge pull request #1 from feature-1", "feature-1")
+    merge_sha = git(repo, "rev-parse", "HEAD")
+
+    direct = commit(repo, "direct commit without pr", **{"direct.py": "d = 1\n"})
+    squash_1 = commit(repo, "squash feature (#2)", **{"squash1.py": "s1 = 1\n"})
+    direct_2 = commit(repo, "another direct commit", **{"direct2.py": "d = 2\n"})
+    squash_2 = commit(repo, "Merge pull request #3 from squash-branch", **{"squash2.py": "s2 = 2\n"})
+
+    points = history.history_points(repo, since="2000-01-01")
+    shas = [p["sha"] for p in points]
+
+    assert initial in shas
+    assert merge_sha in shas
+    assert direct not in shas
+    assert direct_2 not in shas
+    assert squash_1 in shas
+    assert squash_2 in shas
+    assert shas == [initial, merge_sha, squash_1, squash_2]
+
+    squash_point_1 = next(p for p in points if p["sha"] == squash_1)
+    assert len(squash_point_1["parents"]) == 1
+    assert squash_point_1["pr"] == 2
+
+    squash_point_2 = next(p for p in points if p["sha"] == squash_2)
+    assert len(squash_point_2["parents"]) == 1
+    assert squash_point_2["pr"] == 3
 
 
 def test_project_concepts_keeps_move_and_marks_folder_guess(tmp_path):
