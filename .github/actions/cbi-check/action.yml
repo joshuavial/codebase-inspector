@@ -52,7 +52,7 @@ runs:
         echo "Installing Codebase Inspector CLI..."
         if [ -f "${{ github.action_path }}/pyproject.toml" ]; then
           uv tool install "${{ github.action_path }}" --force
-        elif [ -f "./pyproject.toml" ] && grep -q 'name = "cbi"' ./pyproject.toml 2>/dev/null; then
+        elif [ -f "./pyproject.toml" ] && grep -E -q 'name = "(codebase-inspector|cbi)"' ./pyproject.toml 2>/dev/null; then
           uv tool install . --force
         else
           uv tool install git+https://github.com/joshuavial/codebase-inspector --force
@@ -72,11 +72,34 @@ runs:
       id: check-step
       shell: bash
       run: |
-        echo "Running cbi check against base ref: ${{ inputs.base-ref }}..."
+        BASE_REF="${{ inputs.base-ref }}"
+        BASE_REF="${BASE_REF:-main}"
+        RESOLVED_BASE_REF=""
+        if git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null 2>&1; then
+          RESOLVED_BASE_REF="${BASE_REF}"
+        elif git rev-parse --verify --quiet "origin/${BASE_REF}^{commit}" >/dev/null 2>&1; then
+          RESOLVED_BASE_REF="origin/${BASE_REF}"
+        fi
+
+        IS_SHALLOW=$(git rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+        if [ -z "$RESOLVED_BASE_REF" ] || ! git merge-base "$RESOLVED_BASE_REF" HEAD >/dev/null 2>&1; then
+          if [ "$IS_SHALLOW" = "true" ] || [ -f ".git/shallow" ]; then
+            echo "::error::Base ref '${BASE_REF}' is not resolvable because the repository checkout is shallow. Please configure actions/checkout with 'fetch-depth: 0' to enable merge-base resolution."
+          else
+            echo "::error::Base ref '${BASE_REF}' could not be resolved in git (or shares no common merge-base with HEAD). Please ensure '${BASE_REF}' exists or set 'fetch-depth: 0' in actions/checkout."
+          fi
+          if [ -n "$GITHUB_OUTPUT" ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "problems=1" >> "$GITHUB_OUTPUT"
+          fi
+          exit 1
+        fi
+
+        echo "Running cbi check against base ref: $RESOLVED_BASE_REF..."
         CHECK_OUTPUT_FILE="${RUNNER_TEMP:-/tmp}/cbi-check-output.txt"
         
         set +e
-        cbi check --base "${{ inputs.base-ref }}" --format github > "$CHECK_OUTPUT_FILE" 2>&1
+        cbi check --base "$RESOLVED_BASE_REF" --format github > "$CHECK_OUTPUT_FILE" 2>&1
         CHECK_EXIT=$?
         set -e
         
@@ -110,12 +133,23 @@ runs:
       if: inputs.review == 'true'
       shell: bash
       run: |
-        echo "Generating architectural review against base ref: ${{ inputs.base-ref }}..."
+        BASE_REF="${{ inputs.base-ref }}"
+        BASE_REF="${BASE_REF:-main}"
+        RESOLVED_BASE_REF=""
+        if git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null 2>&1; then
+          RESOLVED_BASE_REF="${BASE_REF}"
+        elif git rev-parse --verify --quiet "origin/${BASE_REF}^{commit}" >/dev/null 2>&1; then
+          RESOLVED_BASE_REF="origin/${BASE_REF}"
+        else
+          RESOLVED_BASE_REF="${BASE_REF}"
+        fi
+
+        echo "Generating architectural review against base ref: $RESOLVED_BASE_REF..."
         REVIEW_DIR="${RUNNER_TEMP:-/tmp}/cbi-review"
         mkdir -p "$REVIEW_DIR"
         
         set +e
-        cbi review "${{ inputs.base-ref }}..HEAD" --out-dir "$REVIEW_DIR" --format markdown
+        cbi review "${RESOLVED_BASE_REF}..HEAD" --out-dir "$REVIEW_DIR" --format markdown
         REVIEW_EXIT=$?
         set -e
         

@@ -108,7 +108,7 @@ jobs:
 
 | Input | Description | Type | Default | Required |
 |---|---|---|---|---|
-| `base-ref` | Target branch or commit SHA to compare changes against. For pull requests, use `${{ github.base_ref }}`. | string | `main` | No |
+| `base-ref` | Target branch or commit SHA to compare changes against. For pull requests, use `${{ github.base_ref }}`. Requires full history (`fetch-depth: 0`). | string | `main` | No |
 | `fail-on-problems` | Whether to fail the workflow if `cbi check` discovers unowned files, missing summaries, or schema inconsistencies. | boolean | `true` | No |
 | `review` | Whether to generate the structural architectural review and Mermaid diff diagram for pull requests. | boolean | `true` | No |
 | `python-version` | Python runtime version for `uv` environment setup. | string | `3.13` | No |
@@ -121,6 +121,47 @@ jobs:
 | `problems-count` | Number of architectural violations or missing summaries detected. | `0` |
 | `review-markdown` | Complete Markdown architectural review with Mermaid diagram and changed concept details. | `"# Review ..."` |
 | `review-file` | Absolute path to the generated `review.md` file on the runner filesystem. | `"/tmp/cbi-review/review.md"` |
+
+---
+
+## Git Checkout Depth Requirement (`fetch-depth: 0`)
+
+Codebase Inspector relies on Git to identify files modified relative to the target branch:
+- `cbi check` computes the merge base between your current PR commit (`HEAD`) and the target base branch (`base-ref`).
+- `cbi review` extracts the structural commit range diff (`base-ref..HEAD`) and parses modified ASTs.
+
+The default GitHub Actions checkout action (`actions/checkout@v4`) creates a **shallow clone** (`fetch-depth: 1`) containing only the head commit. Under shallow clones:
+- The base branch (e.g. `main` or `origin/main`) is not fetched into local Git history.
+- Merge-base resolution fails with obscure `git rev-parse` or `git merge-base` errors.
+
+To avoid this, always set `fetch-depth: 0` in `actions/checkout`:
+```yaml
+- name: Checkout Code
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+```
+
+### Shallow Checkout Guard
+
+The Action automatically validates that `base-ref` is resolvable and shares a common merge-base with `HEAD` before executing `cbi check`. If a shallow checkout prevents resolution, the Action halts immediately and emits a GitHub Actions `::error` annotation:
+
+```text
+::error::Base ref 'main' is not resolvable because the repository checkout is shallow. Please configure actions/checkout with 'fetch-depth: 0' to enable merge-base resolution.
+```
+
+---
+
+## Local Action Installation & Package Detection
+
+When the Action runs, it installs Codebase Inspector without requiring remote network downloads whenever local sources are available:
+
+1. **Composite Action Path:** If `${{ github.action_path }}/pyproject.toml` exists, it installs from the action path (`uv tool install "${{ github.action_path }}" --force`).
+2. **Local Repository / Monorepo:** If `./pyproject.toml` exists and declares package name `codebase-inspector` or `cbi` (e.g., when testing in this repository or a monorepo checkout), it installs locally via:
+   ```bash
+   uv tool install . --force
+   ```
+3. **Remote Git Fallback:** Only if neither local path contains a Codebase Inspector package does it fall back to installing from remote Git (`uv tool install git+https://github.com/joshuavial/codebase-inspector --force`).
 
 ---
 
