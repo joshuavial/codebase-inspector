@@ -13,14 +13,14 @@ from collections import Counter, defaultdict
 
 STRUCTURE_KINDS = {
     "concept-added", "concept-removed", "concept-split", "concept-merged",
-    "file-moved-concept",
+    "concept-renamed", "file-moved-concept",
     "table-added", "table-removed", "table-changed",
     "endpoint-added", "endpoint-removed", "endpoint-changed",
 }
 RELATIONSHIP_KINDS = {
     "relationship-added", "relationship-removed", "relationship-volume",
 }
-INTEGRATION_ATTENTION = {"integration-added", "integration-changed"}
+INTEGRATION_ATTENTION = {"integration-added", "integration-changed", "integration-removed"}
 SYMBOL_KINDS = {"symbol-added", "symbol-removed", "symbol-moved", "symbol-changed"}
 
 
@@ -390,14 +390,13 @@ def _attention(item, changes, changed):
         "added": sum(1 for c in changes if c["kind"] == "test-added"),
         "removed": attention["removed_tests"],
     })
-    removed = sum(1 for c in changes if c["kind"] == "integration-removed")
-    item["measures"]["integrations"] = len(attention["integrations"]) + removed
+    item["measures"]["integrations"] = len(attention["integrations"])
     item["measures"]["env_vars"] = sum(1 for c in changes if c["kind"] in ("env-read", "env-unread"))
     item["measures"]["relationships"] = len(attention["relationships"])
     reasons = []
     if attention["integrations"]:
         n = len(attention["integrations"])
-        reasons.append(f"{n} integration point{'s' if n != 1 else ''} added, changed or touched")
+        reasons.append(f"{n} integration point{'s' if n != 1 else ''} added, changed, removed or touched")
     if attention["untested"]:
         reasons.append(f"{attention['untested']} changed production function" + ("s" if attention["untested"] != 1 else "") + " without a linked test")
     if attention["structure"]:

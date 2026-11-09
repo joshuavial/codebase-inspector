@@ -417,3 +417,55 @@ def test_relocated_file_and_ownership_and_symbol_share_one_move_evidence(
     assert move["from"] == "producer" and move["to"] == "delivery"
     assert move["path"] == "delivery/archive.ts"
     assert move["target_id"].endswith(":delivery/archive.ts")
+
+
+def test_attention_ranking_for_concept_renamed_and_integration_removed():
+    def make_item(cid, name, churn=0):
+        return {
+            "id": cid,
+            "name": name,
+            "attention": {
+                "integrations": [], "untested": 0, "structure": [], "relationships": [],
+                "env_vars": [], "removed_tests": 0, "provisional": False,
+            },
+            "measures": change_overview._measure(additions=churn),
+            "relationships": [],
+        }
+
+    # concept-renamed is in STRUCTURE_KINDS and populates attention["structure"]
+    item_renamed = make_item("c1", "RenamedConcept", churn=10)
+    change_overview._attention(item_renamed, [{"kind": "concept-renamed", "summary": "Old -> New"}], {})
+    assert item_renamed["attention"]["structure"] == ["Old -> New"]
+    assert "1 structural change" in item_renamed["reasons"]
+    why_renamed = change_overview._why(item_renamed)
+    assert "- Old -> New" in why_renamed
+
+    # integration-removed is in INTEGRATION_ATTENTION, populates attention["integrations"],
+    # and counts toward measures["integrations"]
+    item_removed_int = make_item("c2", "IntRemovedConcept", churn=10)
+    change_overview._attention(
+        item_removed_int,
+        [{"kind": "integration-removed", "summary": "c2 -> ext.api  calls  via HTTP"}],
+        {},
+    )
+    assert item_removed_int["attention"]["integrations"] == ["c2 -> ext.api  calls  via HTTP"]
+    assert item_removed_int["measures"]["integrations"] == 1
+    assert any("integration point" in r for r in item_removed_int["reasons"])
+    why_int = change_overview._why(item_removed_int)
+    assert "- c2 -> ext.api  calls  via HTTP" in why_int
+
+    # Relative attention ranking check:
+    # 1. Integrations (c2) > 2. Untested (c0) > 3. Structure (c1) > 4. Relationships (c4) > 5. Churn (c3)
+    item_untested = make_item("c0", "UntestedConcept", churn=10)
+    item_untested["measures"]["untested"] = 1
+    change_overview._attention(item_untested, [], {})
+
+    item_churn = make_item("c3", "ChurnConcept", churn=100)
+    change_overview._attention(item_churn, [], {})
+
+    item_rel = make_item("c4", "RelConcept", churn=50)
+    change_overview._attention(item_rel, [{"kind": "relationship-added", "summary": "c4 -> c1"}], {})
+
+    ranked = sorted([item_churn, item_rel, item_renamed, item_untested, item_removed_int], key=change_overview._attention_key)
+    assert [it["id"] for it in ranked] == ["c2", "c0", "c1", "c4", "c3"]
+

@@ -835,3 +835,56 @@ def test_table_and_endpoint_changes_populate_attention_structure(tmp_path):
     assert "GET /items" in api_item["attention"]["structure"]
     assert any("structural change" in r for r in api_item["reasons"])
 
+
+def test_concept_renamed_and_integration_removed_populate_attention(tmp_path):
+    # 1. worker: concept-renamed
+    c_worker_b = _node(id="worker", kind="concept", display_kind="service", name="OldWorker")
+    c_worker_h = _node(id="worker", kind="concept", display_kind="service", name="NewWorker")
+    f_worker = _node(id="local:repo:worker.py", kind="file", display_kind="source file", name="worker.py", path="worker.py")
+    owns_worker = ("worker", "local:repo:worker.py", "owns", 1, None)
+
+    # 2. gateway: integration-removed
+    c_gw = _node(id="gateway", kind="concept", display_kind="service", name="Gateway")
+    ext = _node(id="ext:service", kind="external", display_kind="saas", name="ExternalService")
+    f_gw = _node(id="local:repo:gw.py", kind="file", display_kind="source file", name="gw.py", path="gw.py")
+    owns_gw = ("gateway", "local:repo:gw.py", "owns", 1, None)
+    edge_int = ("gateway", "ext:service", "relates", 1, json.dumps({"label": "calls", "integration": True, "via": "HTTP"}))
+
+    # 3. other: relationship-added
+    c_other = _node(id="other", kind="concept", display_kind="service", name="Other")
+    f_other = _node(id="local:repo:other.py", kind="file", display_kind="source file", name="other.py", path="other.py")
+    owns_other = ("other", "local:repo:other.py", "owns", 1, None)
+    edge_rel = ("other", "worker", "relates", 1, json.dumps({"label": "uses"}))
+
+    base_nodes = [c_worker_b, f_worker, c_gw, ext, f_gw, c_other, f_other]
+    base_edges = [owns_worker, owns_gw, owns_other, edge_int]
+
+    head_nodes = [c_worker_h, f_worker, c_gw, ext, f_gw, c_other, f_other]
+    head_edges = [owns_worker, owns_gw, owns_other, edge_rel]
+
+    _write(tmp_path / "att-rank-base.db", base_nodes, base_edges)
+    _write(tmp_path / "att-rank-head.db", head_nodes, head_edges)
+
+    base, head = diff.open_model(tmp_path / "att-rank-base.db"), diff.open_model(tmp_path / "att-rank-head.db")
+    try:
+        result = diff.compare(base, head)
+    finally:
+        base.close()
+        head.close()
+
+    overview = result["overview"]
+    items = {it["id"]: it for it in overview["items"]}
+
+    # integration-removed populates attention["integrations"] and measures["integrations"]
+    assert items["gateway"]["attention"]["integrations"] == ["Gateway -> ExternalService  calls  HTTP"]
+    assert items["gateway"]["measures"]["integrations"] == 1
+    assert any("integration point" in r for r in items["gateway"]["reasons"])
+
+    # concept-renamed populates attention["structure"]
+    assert items["worker"]["attention"]["structure"] == ["OldWorker -> NewWorker"]
+    assert any("structural change" in r for r in items["worker"]["reasons"])
+
+    # Attention ranking: gateway (integration) > worker (structure) > other (relationship)
+    assert [it["id"] for it in overview["items"]] == ["gateway", "worker", "other"]
+
+
