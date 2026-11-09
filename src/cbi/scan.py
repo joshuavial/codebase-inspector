@@ -5,9 +5,12 @@ AST parsing, symbol resolution, judgement projection, and ref scanning.
 """
 
 import json
+import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from cbi import concepts, data, docs, files, manifests, parse, progress, resolve, screens, store, tasks, team
@@ -194,16 +197,40 @@ def scan_ref(root, out, ref, *, force=False, restore_judgement=True):
     return sha, False, counts, task_counts
 
 
+def parse_workers(jobs):
+    """Threads for parsing `jobs` files. CBI_PARSE_WORKERS overrides the CPU-based default."""
+    raw = os.environ.get("CBI_PARSE_WORKERS", "").strip()
+    try:
+        wanted = int(raw) if raw else min(32, (os.cpu_count() or 4) * 2)
+    except ValueError:
+        wanted = min(32, (os.cpu_count() or 4) * 2)
+    return max(1, min(wanted, jobs))
+
+
+def _parse_one(root, top, fid, ws_id, rel, lang, is_test, read_lock=None):
+    """(loc, nodes, facts, has_error) for one file. Safe off the main thread: tree-sitter
+    gets a fresh parser per call and releases the GIL while it parses."""
+    if read_lock is None:
+        source = (root / top).read_bytes()
+    else:
+        with read_lock:
+            source = (root / top).read_bytes()
+    nodes, facts, has_error = parse.symbol_nodes(fid, ws_id, rel, lang, source, is_test)
+    return len(source.splitlines()), nodes, facts, has_error
+
+
 def _parse_changed(conn, root, tracked, states, old, known, parsed=None, reporter=None):
     """Parse code files whose content or parser version changed, or that are new to the model.
-    With a shared parse store, a file version parsed for another ref is read from it instead."""
+    With a shared parse store, a file version parsed for another ref is read from it instead.
+
+    Reading and parsing run on a thread pool. Every SQLite read and write stays on this
+    thread and applies results in `tracked` order, so the model matches a sequential parse."""
     by_ws = {}
     for _top, ws, rel in tracked:
         by_ws.setdefault(ws["id"], []).append(rel)
     roots = {wid: files.cs_test_roots(paths) for wid, paths in by_ws.items()}
+    work = []  # (index, top, ws, rel, fid, lang, is_test, key, cached row or None)
     for index, (top, ws, rel) in enumerate(tracked, 1):
-        if reporter:
-            reporter.file("parse", index, len(tracked), top)
         state = states.get(top)
         if not state or state[4]:  # gone from disk, or a symlink
             continue
@@ -217,20 +244,40 @@ def _parse_changed(conn, root, tracked, states, old, known, parsed=None, reporte
             "SELECT loc, nodes, facts, has_error FROM parsed "
             "WHERE file_id = ? AND blob = ? AND lang = ? AND test = ? AND parser = ?", key,
         ).fetchone() if parsed else None
-        if row:
-            loc, nodes, facts, has_error = row[0], json.loads(row[1]), json.loads(row[2]), bool(row[3])
-        else:
-            source = (root / top).read_bytes()
-            nodes, facts, has_error = parse.symbol_nodes(fid, ws["id"], rel, lang, source, role == "test")
-            loc = len(source.splitlines())
-            if parsed:
-                parsed.execute("INSERT OR REPLACE INTO parsed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                               (*key, loc, json.dumps(nodes), json.dumps(facts), int(has_error)))
-        store.replace_file_symbols(conn, ws["id"], rel, loc, nodes, fid, facts)
-        if any(n["kind"] == "test" for n in nodes):
-            conn.execute(
-                "UPDATE nodes SET display_kind = 'test file', attrs = json_set(attrs, '$.role', 'test') "
-                "WHERE id = ? AND json_extract(attrs, '$.role') != 'test'",
-                (fid,),
-            )
-        store.set_diagnostic(conn, fid, "parse_error", "tree-sitter reported syntax errors" if has_error else None)
+        work.append((index, top, ws, rel, fid, lang, role == "test", key, row))
+    misses = [pos for pos, item in enumerate(work) if not item[8]]
+    workers = parse_workers(len(misses))
+    # A commit tree reads through one `git cat-file --batch` pipe per object store; serialise it.
+    read_lock = None if isinstance(root, Path) else threading.Lock()
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cbi-parse") if workers > 1 else None
+    try:
+        futures = {}
+        if pool:
+            for pos in misses:
+                _index, top, ws, rel, fid, lang, is_test, _key, _row = work[pos]
+                futures[pos] = pool.submit(_parse_one, root, top, fid, ws["id"], rel, lang, is_test, read_lock)
+        for pos, (index, top, ws, rel, fid, lang, is_test, key, row) in enumerate(work):
+            if reporter:
+                reporter.file("parse", index, len(tracked), top)
+            if row:
+                loc, nodes, facts, has_error = row[0], json.loads(row[1]), json.loads(row[2]), bool(row[3])
+            else:
+                if pool:
+                    loc, nodes, facts, has_error = futures.pop(pos).result()
+                else:
+                    loc, nodes, facts, has_error = _parse_one(root, top, fid, ws["id"], rel, lang, is_test)
+                if parsed:
+                    parsed.execute("INSERT OR REPLACE INTO parsed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                   (*key, loc, json.dumps(nodes), json.dumps(facts), int(has_error)))
+            store.replace_file_symbols(conn, ws["id"], rel, loc, nodes, fid, facts)
+            if any(n["kind"] == "test" for n in nodes):
+                conn.execute(
+                    "UPDATE nodes SET display_kind = 'test file', attrs = json_set(attrs, '$.role', 'test') "
+                    "WHERE id = ? AND json_extract(attrs, '$.role') != 'test'",
+                    (fid,),
+                )
+            store.set_diagnostic(conn, fid, "parse_error", "tree-sitter reported syntax errors" if has_error else None)
+    finally:
+        if pool:
+            # A failed file stops the scan: files not yet started are dropped rather than parsed.
+            pool.shutdown(wait=True, cancel_futures=True)

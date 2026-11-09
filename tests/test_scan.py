@@ -414,3 +414,123 @@ def test_named_build_sources_added_after_init_survive_artifact_rules(make_repo, 
     ref_paths = {row[0] for row in conn.execute("SELECT path FROM nodes WHERE kind = 'file'")}
     conn.close()
     assert source.keys() <= ref_paths and "data/notes.txt" not in ref_paths
+
+
+PARSE_TABLES = ("nodes", "edges", "diagnostics", "facts")
+
+
+def _parse_repo(make_repo):
+    """Enough code files across languages to keep several parse workers busy, with a
+    test file and one file tree-sitter rejects."""
+    files = {f"pkg/mod{i}.py": f"import os\n\n\ndef f{i}(x):\n    return os.environ.get('K{i}', x) + {i}\n\n\n"
+                               f"class C{i}:\n    def m(self):\n        return f{i}(1)\n" for i in range(24)}
+    files.update({f"web/part{i}.ts": f"export function p{i}(a: number) {{ return a + {i}; }}\n" for i in range(12)})
+    files["web/main.ts"] = "import { p0 } from './part0';\nexport const run = () => p0(1);\n"
+    files["tests/test_mod.py"] = "from pkg.mod0 import f0\n\n\ndef test_f0():\n    assert f0(1)\n"
+    files["pkg/broken.py"] = "def broken(:\n    return\n"
+    return make_repo(files, name="parallel")
+
+
+def _rows(db):
+    conn = sqlite3.connect(db)
+    try:
+        # rowid order too: parallel parsing must write rows in the same order as a sequential scan.
+        return {table: conn.execute(f"SELECT rowid, * FROM {table} ORDER BY rowid").fetchall()
+                for table in PARSE_TABLES}
+    finally:
+        conn.close()
+
+
+def _scan_with_workers(root, out, workers, monkeypatch, ref=None):
+    monkeypatch.setenv("CBI_PARSE_WORKERS", str(workers))
+    assert main(["init", "--out", str(out)]) == 0
+    assert main(["scan", "--out", str(out), *(["--ref", ref] if ref else [])]) == 0
+    if ref:
+        return next((out / "refs").glob("*/model.db"))
+    return out / "model.db"
+
+
+def test_parse_workers_default_override_and_cap(monkeypatch):
+    from cbi.scan import parse_workers
+
+    monkeypatch.delenv("CBI_PARSE_WORKERS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    assert parse_workers(100) == 8
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    assert parse_workers(100) == 32
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert parse_workers(100) == 8
+    assert parse_workers(3) == 3 and parse_workers(0) == 1
+    monkeypatch.setenv("CBI_PARSE_WORKERS", "1")
+    assert parse_workers(100) == 1
+    monkeypatch.setenv("CBI_PARSE_WORKERS", "0")
+    assert parse_workers(100) == 1
+    monkeypatch.setenv("CBI_PARSE_WORKERS", "nope")
+    assert parse_workers(100) == 8
+
+
+def test_parallel_parse_matches_sequential(make_repo, monkeypatch, tmp_path, capsys):
+    root = _parse_repo(make_repo)
+    monkeypatch.chdir(root)
+    sequential = _rows(_scan_with_workers(root, tmp_path / "one", 1, monkeypatch))
+    parallel = _rows(_scan_with_workers(root, tmp_path / "many", 8, monkeypatch))
+    assert parallel == sequential
+    symbols = [row for row in parallel["nodes"] if row[3] not in ("file", "dir", "workspace")]
+    assert len(symbols) > 50
+    assert any(row[3] == "test" for row in parallel["nodes"])
+    errors = [row for row in parallel["diagnostics"] if row[2] == "parse_error"]
+    assert [row[1].rsplit(":", 1)[1] for row in errors] == ["pkg/broken.py"]
+    assert parallel["facts"]
+
+
+def test_parallel_ref_parse_matches_sequential(make_repo, monkeypatch, tmp_path, capsys):
+    root = _parse_repo(make_repo)
+    monkeypatch.chdir(root)
+    sequential = _rows(_scan_with_workers(root, tmp_path / "one", 1, monkeypatch, ref="HEAD"))
+    parallel = _rows(_scan_with_workers(root, tmp_path / "many", 8, monkeypatch, ref="HEAD"))
+    assert parallel == sequential and parallel["nodes"]
+
+
+def test_parallel_parse_runs_on_worker_threads(make_repo, monkeypatch, tmp_path, capsys):
+    import threading
+
+    from cbi import parse
+
+    root = _parse_repo(make_repo)
+    monkeypatch.chdir(root)
+    threads = []
+    real = parse.symbol_nodes
+    monkeypatch.setattr(parse, "symbol_nodes",
+                        lambda *a: threads.append(threading.current_thread().name) or real(*a))
+    _scan_with_workers(root, tmp_path / "many", 4, monkeypatch)
+    assert len(threads) == 39 and all(name.startswith("cbi-parse") for name in threads)
+    threads.clear()
+    _scan_with_workers(root, tmp_path / "one", 1, monkeypatch)
+    assert threads == ["MainThread"] * 39
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_parse_failure_stops_the_scan_and_keeps_the_model(make_repo, monkeypatch, tmp_path, capsys, workers):
+    from cbi import parse
+
+    root = _parse_repo(make_repo)
+    monkeypatch.chdir(root)
+    db = _scan_with_workers(root, tmp_path / "model", workers, monkeypatch)
+    before = _rows(db)
+    for i in range(24):
+        (root / "pkg" / f"mod{i}.py").write_text(f"def g{i}():\n    return {i}\n")
+    real = parse.symbol_nodes
+
+    def failing(fid, *rest):
+        if fid.endswith("pkg/mod7.py"):
+            raise RuntimeError("parser exploded")
+        return real(fid, *rest)
+
+    monkeypatch.setattr(parse, "symbol_nodes", failing)
+    with pytest.raises(RuntimeError, match="parser exploded"):
+        main(["scan", "--out", str(tmp_path / "model")])
+    assert _rows(db) == before  # the scan transaction rolled back
+    monkeypatch.setattr(parse, "symbol_nodes", real)
+    assert main(["scan", "--out", str(tmp_path / "model")]) == 0
+    names = {row[5] for row in _rows(db)["nodes"]}
+    assert {f"g{i}" for i in range(24)} <= names and "f7" not in names
