@@ -1665,7 +1665,7 @@ class MCPServer:
         try:
             base_conn, head_conn = diff.open_pair(base_model, head_model, base, head, self.root, self.out)
         except diff.DiffError as err:
-            return f"Diff error: {err}"
+            raise ValueError(f"Diff error: {err}") from err
 
         try:
             if self.root is None or (base_model and head_model):
@@ -1694,7 +1694,7 @@ class MCPServer:
                 try:
                     b = tasks.brief(conn, task_id, self.root)
                 except tasks.UnknownTask as err:
-                    return f"Unknown task: {err}"
+                    raise ValueError(f"Unknown task: {err}") from err
                 if as_json:
                     return json.dumps(b, indent=2)
                 return tasks.brief_text(b).rstrip()
@@ -2230,7 +2230,7 @@ class MCPServer:
                 try:
                     warnings = tasks.check(conn, task_id, check_text, self.root)
                 except tasks.UnknownTask as err:
-                    return f"Unknown task: {err}"
+                    raise ValueError(f"Unknown task: {err}") from err
                 except tasks.AnswerError as err:
                     if as_json:
                         return json.dumps({"ok": False, "errors": str(err).splitlines()}, indent=2)
@@ -2246,7 +2246,7 @@ class MCPServer:
             try:
                 b = tasks.brief(conn, task_id, self.root)
             except tasks.UnknownTask as err:
-                return f"Unknown task: {err}"
+                raise ValueError(f"Unknown task: {err}") from err
 
             has_parts = bool(args.get("parts", False))
             part_idx = args.get("part")

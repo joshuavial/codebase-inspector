@@ -1180,6 +1180,10 @@ def test_tool_tasks(repo):
     parsed = json.loads(resp_json["content"][0]["text"])
     assert isinstance(parsed, list)
 
+    res_err = server.execute_tool("cbi_tasks", {"task_id": "nonexistent-task"})
+    assert res_err["isError"]
+    assert "Unknown task" in res_err["content"][0]["text"]
+
 
 def test_tools_call_submit(repo):
     server = MCPServer(root=repo)
@@ -1298,6 +1302,10 @@ def test_tool_diff(repo):
     resp = server.execute_tool("cbi_diff", {"base_model": model_file, "head_model": model_file})
     assert not resp["isError"]
     assert "no architectural changes" in resp["content"][0]["text"]
+
+    res_err = server.execute_tool("cbi_diff", {"base_model": "nonexistent_model.db", "head_model": model_file})
+    assert res_err["isError"]
+    assert "Diff error" in res_err["content"][0]["text"]
 
 
 def test_tool_diff_drilldown(repo):
@@ -1612,6 +1620,10 @@ def test_concurrent_requests_stress(repo):
 
     server = MCPServer(root=repo)
 
+    tasks_res = server.execute_tool("cbi_tasks", {"format": "json"})
+    open_tasks = json.loads(tasks_res["content"][0]["text"])
+    stress_task_id = open_tasks[0]["id"] if open_tasks else "test"
+
     tools_and_args = [
         ("cbi_scan", {"format": "text"}),
         ("cbi_scan", {"format": "json"}),
@@ -1637,7 +1649,7 @@ def test_concurrent_requests_stress(repo):
         ("cbi_worktrees", {"format": "text"}),
         ("cbi_worktrees", {"format": "json"}),
         ("cbi_prime", {}),
-        ("cbi_task", {"task_id": "test"}),
+        ("cbi_task", {"task_id": stress_task_id}),
         ("cbi_init", {"format": "json"}),
         ("cbi_ingest", {"files": ["coverage.lcov"]}),
     ]
@@ -2144,7 +2156,12 @@ def test_tool_task(repo):
 
     # 2. Unknown task handling
     res_unknown = server.execute_tool("cbi_task", {"task_id": "nonexistent-task"})
+    assert res_unknown["isError"]
     assert "Unknown task" in res_unknown["content"][0]["text"]
+
+    res_check_unknown = server.execute_tool("cbi_task", {"task_id": "nonexistent-task", "check": "{}"})
+    assert res_check_unknown["isError"]
+    assert "Unknown task" in res_check_unknown["content"][0]["text"]
 
     # Retrieve open tasks from fixture repo
     tasks_res = server.execute_tool("cbi_tasks", {"format": "json"})
