@@ -173,9 +173,11 @@ cbi gallery --out-dir dist/gallery
 # Include architectural comparison ranges (base..head) for PR reviews
 cbi gallery fastapi=/path/to/fastapi httpx=/path/to/httpx:0.24.0..0.25.0 --title "API Stack Showcase"
 
-# Configure multi-repo metadata via JSON
-cbi gallery --config gallery.json --out-dir dist/gallery
+# Configure multi-repo metadata via JSON (supports optional --cache-dir for isolated models)
+cbi gallery --config gallery.json --out-dir dist/gallery --cache-dir /tmp/cbi-cache
 ```
+
+External repositories remain strictly read-only: models are cached out-of-tree at `<out-dir>/models/<repo_name>/model.db` (or `--cache-dir`), leaving working trees clean with zero `.cbi/` files created.
 
 ---
 

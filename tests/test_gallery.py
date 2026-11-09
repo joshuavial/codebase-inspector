@@ -13,6 +13,8 @@ if str(ROOT / "scripts") not in sys.path:
 import pytest
 import cbi.cli as cli
 from cbi.gallery import (
+    ensure_repo_scanned,
+    extract_repo_metrics,
     generate_gallery,
     load_gallery_config,
     main as gallery_main,
@@ -158,6 +160,10 @@ def test_generate_gallery_end_to_end(make_repo, tmp_path):
     assert res["gallery_dir"] == out_gallery
     assert out_gallery.is_dir()
 
+    # Target repository must remain completely pristine and read-only
+    assert not (repo_root / ".cbi").exists()
+    assert (out_gallery / "models" / "synth-repo" / "model.db").is_file()
+
     # 2. Check main gallery index
     index_html = out_gallery / "index.html"
     assert index_html.is_file()
@@ -202,6 +208,8 @@ def test_generate_gallery_without_review(make_repo, tmp_path):
     ]
 
     res = generate_gallery(repos_config, out_gallery)
+    assert not (repo_root / ".cbi").exists()
+    assert (out_gallery / "models" / "single-commit" / "model.db").is_file()
     assert res["index_path"].is_file()
     content = res["index_path"].read_text(encoding="utf-8")
     assert "single-commit" in content
@@ -289,3 +297,109 @@ def test_legacy_script_wrapper_exports():
     assert legacy_generate_gallery.load_gallery_config is load_gallery_config
     assert legacy_generate_gallery.parse_repo_spec is parse_repo_spec
     assert legacy_generate_gallery.render_markdown_to_html is render_markdown_to_html
+
+
+def test_gallery_read_only_repo_preserves_external_tree(make_repo, tmp_path):
+    """Running cbi gallery on a repository must keep it 100% read-only with 0 untracked files."""
+    base_files = {
+        "src/__init__.py": "",
+        "src/service.py": "def handle():\n    return 'ok'\n",
+        "tests/__init__.py": "",
+        "tests/test_service.py": "from src.service import handle\ndef test_handle():\n    assert handle() == 'ok'\n",
+    }
+    repo_root = make_repo(base_files, name="readonly-repo")
+    base_sha = _git(repo_root, "rev-parse", "HEAD")
+
+    # Add second commit
+    (repo_root / "src" / "service.py").write_text("def handle():\n    return 'updated'\n", encoding="utf-8")
+    _git(repo_root, "add", "src/service.py")
+    _git(repo_root, "-c", "user.name=test", "-c", "user.email=test@test.local", "commit", "-q", "-m", "update handle")
+    head_sha = _git(repo_root, "rev-parse", "HEAD")
+
+    # Verify no .cbi exists beforehand and working tree is clean
+    assert not (repo_root / ".cbi").exists()
+    assert _git(repo_root, "status", "--porcelain") == ""
+
+    out_gallery = tmp_path / "dist_readonly_gallery"
+    repos_config = [
+        {
+            "name": "readonly-repo",
+            "path": repo_root,
+            "compare": f"{base_sha}..{head_sha}",
+            "description": "Strictly read-only repository",
+            "tags": ["Production", "Held"],
+        }
+    ]
+
+    res = generate_gallery(repos_config, out_gallery, title="Held Repos Gallery")
+
+    # 1. Zero modification to external repository
+    assert not (repo_root / ".cbi").exists(), "cbi gallery must NOT create .cbi in target repository"
+    assert _git(repo_root, "status", "--porcelain") == "", "Target repository git status must remain 100% clean"
+
+    # 2. Out-of-tree model isolation
+    model_db = out_gallery / "models" / "readonly-repo" / "model.db"
+    assert model_db.is_file(), f"Expected isolated model cache at {model_db}"
+
+    # 3. Viewer and Review generated correctly
+    viewer_index = out_gallery / "repos" / "readonly-repo" / "viewer" / "index.html"
+    review_index = out_gallery / "repos" / "readonly-repo" / "review" / "index.html"
+    assert viewer_index.is_file()
+    assert review_index.is_file()
+
+    # 4. Root index links resolve
+    index_content = (out_gallery / "index.html").read_text(encoding="utf-8")
+    assert "./repos/readonly-repo/viewer/index.html" in index_content
+    assert "./repos/readonly-repo/review/index.html" in index_content
+
+
+def test_gallery_custom_cache_dir(make_repo, tmp_path):
+    """Gallery supports user-configurable cache_dir for models."""
+    repo_root = make_repo({"src/app.py": "def run(): pass\n"}, name="custom-cache-repo")
+    out_gallery = tmp_path / "dist_custom_cache_gallery"
+    custom_cache = tmp_path / "isolated_cache"
+
+    res = generate_gallery(
+        [{"name": "custom-cache-repo", "path": repo_root}],
+        out_gallery,
+        cache_dir=custom_cache,
+    )
+
+    assert not (repo_root / ".cbi").exists()
+    assert (custom_cache / "custom-cache-repo" / "model.db").is_file()
+    assert not (out_gallery / "models").exists()
+    assert res["index_path"].is_file()
+
+
+def test_ensure_repo_scanned_out_of_tree(make_repo, tmp_path):
+    """ensure_repo_scanned accepts an explicit model_dir and writes model.db there."""
+    repo_root = make_repo({"src/main.py": "x = 1\n"}, name="scanned-repo")
+    model_dir = tmp_path / "external_model_dir"
+
+    ensure_repo_scanned(repo_root, model_dir)
+
+    assert not (repo_root / ".cbi").exists()
+    assert (model_dir / "model.db").is_file()
+    assert (model_dir / "ignore").is_file()
+
+    # extract_repo_metrics using model_dir
+    metrics = extract_repo_metrics(repo_root, model_dir)
+    assert metrics["total_files"] >= 1
+
+
+def test_cbi_gallery_cli_with_cache_dir_flag(make_repo, tmp_path):
+    """cbi gallery CLI accepts --cache-dir."""
+    repo_root = make_repo({"src/main.py": "def go(): pass\n"}, name="cli-cache-repo")
+    out_gallery = tmp_path / "cli_cache_out"
+    cache_dir = tmp_path / "cli_cache_models"
+
+    rc = cli.main([
+        "gallery",
+        f"cli-cache-repo={repo_root}",
+        "--out", str(out_gallery),
+        "--cache-dir", str(cache_dir),
+    ])
+    assert rc == 0
+    assert not (repo_root / ".cbi").exists()
+    assert (cache_dir / "cli-cache-repo" / "model.db").is_file()
+    assert (out_gallery / "index.html").is_file()

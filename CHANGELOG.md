@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Isolated out-of-tree model directory cache in `cbi gallery` via `--cache-dir` (default: `<out-dir>/models/<repo_name>/model.db`), guaranteeing external repositories remain strictly read-only without in-tree modifications or untracked `.cbi/` directories (`cbi-5ru.2`).
 - Detected Starlette and FastAPI explicit `Route` and `WebSocketRoute` declarations and Flask `app.add_url_rule` endpoint registrations in Python AST parser (`cbi-5ru.1`).
+
 
 ## [0.4.0] - 2026-11-09
 

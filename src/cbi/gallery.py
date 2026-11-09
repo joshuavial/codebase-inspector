@@ -94,12 +94,18 @@ def load_gallery_config(config_path: Path) -> Dict[str, Any]:
                 "tags": item.get("tags", []),
             })
 
+    cache_dir = None
+    if "cache_dir" in data and data["cache_dir"]:
+        cache_dir_p = Path(data["cache_dir"])
+        cache_dir = (base_dir / cache_dir_p).resolve() if not cache_dir_p.is_absolute() else cache_dir_p
+
     return {
         "title": data.get("title", "Codebase Inspector Architecture Gallery"),
         "description": data.get(
             "description",
             "Deterministic architecture reviews and interactive concept maps for modern codebases.",
         ),
+        "cache_dir": cache_dir,
         "repos": parsed_repos,
     }
 
@@ -127,21 +133,32 @@ def run_cbi(args: List[str], cwd: Path) -> str:
     return res.stdout
 
 
-def ensure_repo_scanned(repo_path: Path) -> None:
-    """Ensure repository has a valid .cbi/model.db database."""
-    cbi_dir = repo_path / ".cbi"
-    model_db = cbi_dir / "model.db"
+def ensure_repo_scanned(repo_path: Path, model_dir: Optional[Path] = None) -> None:
+    """Ensure repository has a valid model.db database."""
+    repo_path = Path(repo_path).resolve()
+    if model_dir is None:
+        model_dir = repo_path / ".cbi"
+    else:
+        model_dir = Path(model_dir).resolve()
+
+    model_db = model_dir / "model.db"
     if not model_db.is_file():
-        if not (cbi_dir / "ignore").is_file():
-            run_cbi(["init"], repo_path)
-        run_cbi(["scan"], repo_path)
+        if not (model_dir / "ignore").is_file():
+            run_cbi(["init", "--out", str(model_dir)], repo_path)
+        run_cbi(["scan", "--out", str(model_dir)], repo_path)
 
 
-def extract_repo_metrics(repo_path: Path) -> Dict[str, Any]:
-    """Extract architectural statistics and cycle status from .cbi/model.db."""
-    model_db = repo_path / ".cbi" / "model.db"
+def extract_repo_metrics(repo_path: Path, model_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Extract architectural statistics and cycle status from model.db."""
+    repo_path = Path(repo_path).resolve()
+    if model_dir is None:
+        model_dir = repo_path / ".cbi"
+    else:
+        model_dir = Path(model_dir).resolve()
+
+    model_db = model_dir / "model.db"
     if not model_db.is_file():
-        ensure_repo_scanned(repo_path)
+        ensure_repo_scanned(repo_path, model_dir)
 
     conn = sqlite3.connect(f"file:{model_db}?mode=ro", uri=True)
     try:
@@ -194,10 +211,17 @@ def extract_repo_metrics(repo_path: Path) -> Dict[str, Any]:
         conn.close()
 
 
-def build_repo_viewer(repo_path: Path, out_dir: Path) -> Path:
+def build_repo_viewer(repo_path: Path, out_dir: Path, model_dir: Optional[Path] = None) -> Path:
     """Build the static interactive concept map viewer into out_dir."""
-    ensure_repo_scanned(repo_path)
-    model_db = repo_path / ".cbi" / "model.db"
+    repo_path = Path(repo_path).resolve()
+    out_dir = Path(out_dir).resolve()
+    if model_dir is None:
+        model_dir = repo_path / ".cbi"
+    else:
+        model_dir = Path(model_dir).resolve()
+
+    ensure_repo_scanned(repo_path, model_dir)
+    model_db = model_dir / "model.db"
     conn = sqlite3.connect(f"file:{model_db}?mode=ro", uri=True)
     try:
         index_path = build.build(conn, out_dir, root=repo_path)
@@ -340,13 +364,26 @@ def render_markdown_to_html(md_text: str) -> str:
     return "\n".join(html_lines)
 
 
-def build_repo_review(repo_path: Path, compare_range: str, out_dir: Path, repo_name: str) -> Dict[str, Any]:
+def build_repo_review(
+    repo_path: Path,
+    compare_range: str,
+    out_dir: Path,
+    repo_name: str,
+    model_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Execute cbi review and generate standalone dark-themed review HTML."""
+    repo_path = Path(repo_path).resolve()
+    out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    ensure_repo_scanned(repo_path)
+    if model_dir is None:
+        model_dir = repo_path / ".cbi"
+    else:
+        model_dir = Path(model_dir).resolve()
+
+    ensure_repo_scanned(repo_path, model_dir)
 
     # Execute review
-    review.review(repo_path, compare_range, out_dir=out_dir)
+    review.review(repo_path, compare_range, model=model_dir, out_dir=out_dir)
 
     review_md_path = out_dir / "review.md"
     if not review_md_path.is_file():
@@ -1009,12 +1046,19 @@ def generate_gallery(
     out_dir: Path,
     title: str = "Codebase Inspector Architecture Gallery",
     description: str = "Deterministic architecture reviews and interactive concept maps for modern codebases.",
+    cache_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Generate the full multi-repository showcase site."""
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     repos_base = out_dir / "repos"
     repos_base.mkdir(parents=True, exist_ok=True)
+
+    if cache_dir:
+        models_base = Path(cache_dir).resolve()
+    else:
+        models_base = out_dir / "models"
+    models_base.mkdir(parents=True, exist_ok=True)
 
     processed_repos = []
 
@@ -1027,19 +1071,20 @@ def generate_gallery(
         repo_dest = repos_base / slug
         viewer_dest = repo_dest / "viewer"
         review_dest = repo_dest / "review"
+        model_dir = models_base / repo_name
 
         # 1. Ensure scanned & extract metrics
-        ensure_repo_scanned(repo_path)
-        metrics = extract_repo_metrics(repo_path)
+        ensure_repo_scanned(repo_path, model_dir)
+        metrics = extract_repo_metrics(repo_path, model_dir)
 
         # 2. Build concept map viewer
-        viewer_index = build_repo_viewer(repo_path, viewer_dest)
+        viewer_index = build_repo_viewer(repo_path, viewer_dest, model_dir)
 
         # 3. Build review if requested
         review_info = None
         if compare_range:
             try:
-                review_info = build_repo_review(repo_path, compare_range, review_dest, repo_name)
+                review_info = build_repo_review(repo_path, compare_range, review_dest, repo_name, model_dir)
             except Exception as err:
                 print(f"Warning: review failed for {repo_name} ({compare_range}): {err}", file=sys.stderr)
                 review_info = {"has_review": False, "error": str(err)}
@@ -1048,6 +1093,7 @@ def generate_gallery(
             "name": repo_name,
             "slug": slug,
             "path": repo_path,
+            "model_dir": model_dir,
             "description": item.get("description", f"Repository {repo_name}"),
             "tags": item.get("tags", []),
             "metrics": metrics,
@@ -1064,6 +1110,7 @@ def generate_gallery(
 
     return {
         "gallery_dir": out_dir,
+        "cache_dir": models_base,
         "index_path": index_path,
         "repos": processed_repos,
     }
@@ -1078,11 +1125,14 @@ def cmd_gallery(args: argparse.Namespace) -> int:
         "description",
         "Deterministic architecture reviews and interactive concept maps for modern codebases.",
     )
+    cache_dir = getattr(args, "cache_dir", None)
 
     if getattr(args, "config", None):
         try:
             cfg = load_gallery_config(args.config)
             repo_specs.extend(cfg["repos"])
+            if not cache_dir and cfg.get("cache_dir"):
+                cache_dir = cfg["cache_dir"]
             if not title or title == "Codebase Inspector Architecture Gallery":
                 title = cfg.get("title", title)
             if not description or description.startswith("Deterministic architecture"):
@@ -1106,7 +1156,7 @@ def cmd_gallery(args: argparse.Namespace) -> int:
     out_dir = getattr(args, "out_dir", None) or getattr(args, "out", None) or Path("dist/gallery")
     print(f"Generating architecture gallery for {len(repo_specs)} repositories in {out_dir}...")
     try:
-        res = generate_gallery(repo_specs, out_dir, title=title, description=description)
+        res = generate_gallery(repo_specs, out_dir, title=title, description=description, cache_dir=cache_dir)
         print(f"✓ Gallery generated successfully: {res['index_path']}")
         return 0
     except Exception as err:
@@ -1136,6 +1186,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--config",
         type=Path,
         help="Path to JSON configuration file describing repositories and metadata",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory for isolated model caches (default: <out-dir>/models)",
     )
     parser.add_argument(
         "--out",

@@ -275,6 +275,12 @@ def build_parser():
         help="path to JSON configuration file describing repositories and metadata",
     )
     cmds["gallery"].add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="directory for isolated model caches (default: <out-dir>/models)",
+    )
+    cmds["gallery"].add_argument(
         "--out-dir",
         "--out",
         dest="out_dir",

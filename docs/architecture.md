@@ -472,3 +472,15 @@ All generated text, including atomic answer exports, restored judgement files,
 viewer JavaScript, history and review Markdown, is written explicitly as UTF-8.
 This keeps reads and writes compatible on hosts whose default is cp1252.
 Binary outputs and exact snapshot copies preserve their original bytes.
+
+## Gallery model cache isolation (2026-11-09, cbi-5ru.2)
+
+`cbi gallery` generates multi-repository showcases without modifying target repositories.
+Each target repository is treated as strictly read-only: no `.cbi/` directory or
+untracked file is created inside external checkouts.
+
+Instead, `cbi gallery` stores each repository's model database in an isolated
+out-of-tree cache directory at `<out-dir>/models/<repo_name>/model.db` (or a
+user-configured `--cache-dir`), passing `--out` to `cbi init`, `cbi scan`,
+and `cbi review`. Architectural metrics and interactive concept maps are built
+directly from this isolated cache.
