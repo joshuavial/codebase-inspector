@@ -180,6 +180,7 @@ def test_split_compare_and_unknown_concept():
     with pytest.raises(render.RenderError):
         render.split_compare("a..b..c")
     assert render.concept_focus(_payload(), "top") is None
+    assert render.concept_focus(_payload(), "overview") is None
     assert render.concept_focus(_payload(), APP) == APP
     with pytest.raises(render.RenderError) as missing:
         render.concept_focus(_payload(), "nope")
@@ -272,7 +273,7 @@ def test_render_images_writes_four_and_drops_partials(tmp_path, monkeypatch):
 
     def fake(model, change_list, view, side, png, svg, root=None):
         seen.append(side)
-        assert view == "top"
+        assert view == "overview"
         Path(png).write_bytes(b"png")
         Path(svg).write_text("<svg></svg>")
 
@@ -282,6 +283,18 @@ def test_render_images_writes_four_and_drops_partials(tmp_path, monkeypatch):
     assert set(result) == {"before.png", "before.svg", "after.png", "after.svg"}
     assert seen == ["base", "head"]
     assert all(path.is_file() for path in result.values())
+
+    seen_none = []
+
+    def fake_none(model, change_list, view, side, png, svg, root=None):
+        seen_none.append(view)
+        Path(png).write_bytes(b"png")
+        Path(svg).write_text("<svg></svg>")
+
+    monkeypatch.setattr(render, "render_view", fake_none)
+    out_none = tmp_path / "images_none"
+    render.render_images({"base": "base-model", "head": "head-model"}, None, out_none)
+    assert seen_none == ["top", "top"]
 
     def fail_second(model, change_list, view, side, png, svg, root=None):
         if side == "head":
@@ -311,6 +324,7 @@ def test_render_help_names_the_capture(capsys):
     out = capsys.readouterr().out
     assert "--view" in out and "--png" in out and "--svg" in out
     assert "--compare" in out and "--side" in out
+    assert "overview" in out
     assert "cbi-render-ready" in out
     assert "temporary" in out
     assert "3 Chrome" in out
@@ -388,6 +402,48 @@ def test_cli_compare_draws_the_chosen_side(make_repo, monkeypatch, capsys, tmp_p
     }
     out = capsys.readouterr().out
     assert str(png.resolve()) in out and str(svg.resolve()) in out
+
+
+def test_cli_render_overview_compare(make_repo, monkeypatch, capsys, tmp_path):
+    repo = make_repo({"a.py": "x = 1\n"})
+    monkeypatch.chdir(repo)
+    base, head = sqlite3.connect(":memory:"), sqlite3.connect(":memory:")
+    monkeypatch.setattr("cbi.diff.models_for_refs", lambda *_a, **_k: (base, head))
+    monkeypatch.setattr("cbi.diff.compare_refs", lambda *_a: {"groups": [{"id": "x"}]})
+    seen = {}
+
+    def fake(model, change_list, view, side, png, svg, root=None):
+        seen.update(model=model, changes=change_list, view=view, side=side, root=root)
+        Path(png).write_bytes(b"png")
+        Path(svg).write_text("<svg/>")
+
+    monkeypatch.setattr(render, "render_view", fake)
+    png, svg = tmp_path / "overview.png", tmp_path / "overview.svg"
+    code = main(["render", "--view", "overview", "--compare", "base-ref..head-ref",
+                 "--png", str(png), "--svg", str(svg)])
+    assert code == 0
+    assert seen == {
+        "model": head, "changes": {"groups": [{"id": "x"}]}, "view": "overview", "side": "head", "root": repo,
+    }
+    out = capsys.readouterr().out
+    assert str(png.resolve()) in out and str(svg.resolve()) in out
+
+
+def test_render_view_overview_publishes_when_ready(tmp_path, monkeypatch):
+    monkeypatch.setattr(render, "find_chrome", lambda: Path("/bin/chrome"))
+
+    def fake(chrome, page, timeout=120):
+        assert chrome == Path("/bin/chrome")
+        assert page.name == "render.html"
+        assert timeout == 120
+        return b"\x89PNG\r\n\x1a\nfake", render.READY, "<svg><text>Overview &amp; UI</text><\\/script></svg>"
+
+    monkeypatch.setattr(render, "_capture", fake)
+    png, svg = tmp_path / "overview.png", tmp_path / "overview.svg"
+    render.render_view(_payload(), _added_ui(), "overview", "head", png, svg)
+    assert png.read_bytes().startswith(b"\x89PNG")
+    assert "&amp;" in svg.read_text()
+    assert "</script>" in svg.read_text()
 
 
 def test_stage_feeds_the_viewer_diff(tmp_path):
@@ -624,6 +680,19 @@ def test_render_fixture_when_chrome_is_installed(tmp_path):
         pytest.skip("no system Chrome or Chromium")
     png, svg = tmp_path / "map.png", tmp_path / "map.svg"
     render.render_view(_payload(), _added_ui(), "top", "head", png, svg)
+    text = svg.read_text(encoding="utf-8")
+    assert ">UI</text>" in text and ">App</text>" not in text
+    assert ' chg-added"' in text
+    assert ">Added</text>" in text
+    raw = png.read_bytes()
+    assert raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) > 0
+
+
+def test_render_fixture_overview_when_chrome_is_installed(tmp_path):
+    if render.find_chrome() is None:
+        pytest.skip("no system Chrome or Chromium")
+    png, svg = tmp_path / "overview.png", tmp_path / "overview.svg"
+    render.render_view(_payload(), _added_ui(), "overview", "head", png, svg)
     text = svg.read_text(encoding="utf-8")
     assert ">UI</text>" in text and ">App</text>" not in text
     assert ' chg-added"' in text

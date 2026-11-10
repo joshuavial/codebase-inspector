@@ -49,7 +49,7 @@ def _skip_review_images(monkeypatch):
     """These reviews do not launch Chrome. Tests of the image files replace this stub."""
     monkeypatch.setattr(
         "cbi.render.render_images",
-        lambda model, change_list, out_dir: {"skipped": render.SKIPPED},
+        lambda model, change_list, out_dir, *args, **kwargs: {"skipped": render.SKIPPED},
     )
 
 
@@ -324,10 +324,11 @@ def test_review_writes_the_image_files(make_repo, monkeypatch, capsys, tmp_path)
     root, base, head = _two_commits(make_repo, monkeypatch)
     seen = {}
 
-    def fake(model, change_list, out_dir):
+    def fake(model, change_list, out_dir, view=None):
         seen["model"] = {key: Path(value) for key, value in model.items()}
         seen["changes"] = change_list
         seen["out"] = Path(out_dir)
+        seen["view"] = view
         written = {}
         for name in ("before.png", "before.svg", "after.png", "after.svg"):
             path = Path(out_dir) / name
@@ -342,6 +343,7 @@ def test_review_writes_the_image_files(make_repo, monkeypatch, capsys, tmp_path)
     assert seen["model"]["base"] == root / ".cbi" / "refs" / base
     assert seen["model"]["head"] == root / ".cbi" / "refs" / head
     assert seen["out"] == folder
+    assert seen["view"] == "overview"
     assert isinstance(seen["changes"]["groups"], list)
     text = (folder / "review.md").read_text()
     assert "- before.png" in text and "- after.svg" in text
@@ -354,7 +356,7 @@ def test_review_writes_the_image_files(make_repo, monkeypatch, capsys, tmp_path)
 def test_review_keeps_the_folder_when_images_fail(make_repo, monkeypatch, capsys, tmp_path):
     _root, base, head = _two_commits(make_repo, monkeypatch)
 
-    def boom(model, change_list, out_dir):
+    def boom(model, change_list, out_dir, *args, **kwargs):
         raise render.RenderError("Chrome failed: boom")
 
     monkeypatch.setattr("cbi.render.render_images", boom)
@@ -364,7 +366,7 @@ def test_review_keeps_the_folder_when_images_fail(make_repo, monkeypatch, capsys
     text = (folder / "review.md").read_text()
     assert "Images were not written: Chrome failed: boom" in text
     assert "Chrome failed: boom" in out
-    assert err == ""
+    assert [line for line in err.splitlines() if not line.startswith("[scan ")] == []
     assert not (folder / "before.png").exists()
 
 

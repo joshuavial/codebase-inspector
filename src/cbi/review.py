@@ -151,12 +151,13 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
 
 
 def _capture_images(model, base_sha, head_sha, result, folder):
-    """before/after PNG and SVG in the review folder, or a skip or failure note."""
+    """before/after level 0 change overview PNG and SVG in the review folder, or a skip or failure note."""
     try:
         return render.render_images(
             {"base": model / "refs" / base_sha, "head": model / "refs" / head_sha},
             result,
             folder,
+            view="overview",
         )
     except render.RenderError as err:
         return {"failed": str(err)}

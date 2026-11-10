@@ -159,7 +159,9 @@ def build_parser():
     cmds["diff"].add_argument("--detail", action="store_true",
                               help="print the exhaustive PRD-04 structural list instead of the overview")
     cmds["render"].description = render.HELP
-    cmds["render"].add_argument("--view", required=True, metavar="top|ID", help="top, or a concept id")
+    cmds["render"].add_argument(
+        "--view", required=True, metavar="top|overview|ID", help="top, overview, or a concept id"
+    )
     cmds["render"].add_argument("--compare", metavar="BASE..HEAD",
                                 help="highlight changes between two git refs, same as cbi diff")
     cmds["render"].add_argument("--side", choices=("base", "head"), default="head",

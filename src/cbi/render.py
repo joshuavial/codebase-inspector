@@ -28,8 +28,9 @@ from cbi import build, diff
 HELP = """\
 Write a PNG and an SVG of one concept-map view.
 
---view top draws the top level. --view ID draws that concept. --png and
---svg are the files to write. --out is the model directory (default .cbi/).
+--view top draws the top level. --view overview draws the level 0 change
+overview. --view ID draws that concept. --png and --svg are the files to
+write. --out is the model directory (default .cbi/).
 
 --compare BASE..HEAD loads those two versions (same as `cbi diff`) and
 highlights the change list. --side base writes the base map (removed and
@@ -151,16 +152,16 @@ def split_compare(spec):
 
 
 def concept_focus(payload, view):
-    """None for the top level, or the concept id. Unknown ids raise."""
-    if view == "top":
+    """None for the top level or overview, or the concept id. Unknown ids raise."""
+    if view in ("top", "overview"):
         return None
     if not view or not _contains(payload.get("concepts") or [], view):
         raise RenderError(f"no concept {view}")
     return view
 
 
-def render_images(model, change_list, out_dir):
-    """Write before.png, before.svg, after.png and after.svg of the top level.
+def render_images(model, change_list, out_dir, view=None):
+    """Write before.png, before.svg, after.png and after.svg of the change overview or top level.
 
     `model` is {"base": side, "head": side}. A side is a sqlite connection,
     a path to model.db or the directory that contains it, or a concept-view
@@ -176,12 +177,14 @@ def render_images(model, change_list, out_dir):
         raise RenderError("render_images model needs base and head")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if view is None:
+        view = "overview" if change_list else "top"
     written = []
     try:
         for side, png_name, svg_name in _SIDES:
             png = out_dir / png_name
             svg = out_dir / svg_name
-            render_view(model[side], change_list, "top", side, png, svg)
+            render_view(model[side], change_list, view, side, png, svg)
             written.extend((png, svg))
     except Exception:
         for path in written:
@@ -320,10 +323,12 @@ def _diff_payload(change_list):
     """
     if not change_list:
         return None
+    overview = change_list.get("overview") if isinstance(change_list, dict) else None
     return {
         "base": "",
         "head": "",
         "changes": change_list,
+        "overview": overview,
         "removed": {"concepts": [], "relationships": [], "externals": []},
         "provisional": [],
     }
