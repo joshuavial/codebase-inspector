@@ -15,6 +15,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -1027,11 +1028,19 @@ class MCPServer:
             ref_str = str(ref).strip()
             if not ref_str:
                 raise ValueError("ref parameter cannot be empty")
-            candidate = self.out / "refs" / ref_str / "model.db"
+            refs_dir = (self.out / "refs").resolve()
+            candidate = (self.out / "refs" / ref_str / "model.db").resolve()
+            if ".." in ref_str or "/" in ref_str or "\\" in ref_str or not candidate.is_relative_to(refs_dir):
+                raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
             if not candidate.is_file():
                 try:
                     sha = files.resolve_commit(self.root, ref_str)
-                    candidate = self.out / "refs" / sha / "model.db"
+                    sha_candidate = (self.out / "refs" / sha / "model.db").resolve()
+                    if not sha_candidate.is_relative_to(refs_dir):
+                        raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
+                    candidate = sha_candidate
+                except ValueError:
+                    raise
                 except Exception:
                     pass
             if not candidate.is_file():
@@ -2404,20 +2413,60 @@ class MCPServer:
             runner_cwd = Path(cwd_arg)
             if not runner_cwd.is_absolute():
                 runner_cwd = (self.root / runner_cwd).resolve()
+            else:
+                runner_cwd = runner_cwd.resolve()
         else:
-            runner_cwd = getattr(self, "cwd", self.root)
+            runner_cwd = Path(getattr(self, "cwd", self.root)).resolve()
+
+        permitted_cwd_roots = [
+            self.root.resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+        ]
+        try:
+            permitted_cwd_roots.append(Path("/tmp").resolve())
+        except Exception:
+            pass
+
+        if not any(runner_cwd.is_relative_to(r) for r in permitted_cwd_roots):
+            raise ValueError(f"Path '{cwd_arg}' traverses outside allowed directories: {runner_cwd}")
+
+        allowed_roots = [
+            self.root.resolve(),
+            runner_cwd.resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+        ]
+        try:
+            allowed_roots.append(Path("/tmp").resolve())
+        except Exception:
+            pass
+
+        resolved_files = []
+        for f in files_arg:
+            if not isinstance(f, (str, Path)):
+                raise ValueError(f"Invalid file path: {f!r}")
+            f_str = str(f).strip()
+            if not f_str:
+                raise ValueError("File path cannot be empty")
+            path = Path(f)
+            if not path.is_absolute():
+                if (runner_cwd / path).is_file():
+                    path = runner_cwd / path
+                else:
+                    path = self.root / path
+                resolved = path.resolve()
+                if not (resolved.is_relative_to(self.root.resolve()) or resolved.is_relative_to(runner_cwd.resolve())):
+                    raise ValueError(f"Path '{f}' traverses outside allowed directories: {resolved}")
+            else:
+                resolved = path.resolve()
+                if not any(resolved.is_relative_to(r) for r in allowed_roots):
+                    raise ValueError(f"Path '{f}' traverses outside allowed directories: {resolved}")
+            resolved_files.append((f, path))
 
         with self._scan_lock:
             conn = self._get_write_connection()
             try:
                 records = []
-                for f in files_arg:
-                    path = Path(f)
-                    if not path.is_absolute():
-                        if (runner_cwd / path).is_file():
-                            path = runner_cwd / path
-                        else:
-                            path = self.root / path
+                for f, path in resolved_files:
                     try:
                         r = ingest.ingest(conn, self.root, runner_cwd, path)
                         records.append((f, r))

@@ -2750,6 +2750,120 @@ def test_graph_analysis_tools_ref_parameter(repo):
         assert res_empty["isError"] is True, f"Expected {tool_name} with empty ref to return isError=True"
 
 
+def test_get_connection_prevents_path_traversal(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Direct _get_connection with path traversal raises ValueError
+    traversal_refs = [
+        "../../outside",
+        "../../../etc/passwd",
+        "../../etc/passwd",
+        "../",
+        "..",
+        "/etc/passwd",
+        "/tmp/evil",
+        "refs/../../evil",
+        r"..\..\evil",
+    ]
+    for ref in traversal_refs:
+        with pytest.raises(ValueError, match="path traversal outside refs directory is forbidden"):
+            server._get_connection(ref=ref)
+
+    # 2. Query tools with traversal ref return isError=True with clear message
+    res_query = server.execute_tool("cbi_query", {"sql": "SELECT 1", "ref": "../../outside"})
+    assert res_query["isError"] is True
+    assert "path traversal outside refs directory is forbidden" in res_query["content"][0]["text"]
+
+    res_show = server.execute_tool("cbi_show", {"node": "Circle", "ref": "/etc/passwd"})
+    assert res_show["isError"] is True
+    assert "path traversal outside refs directory is forbidden" in res_show["content"][0]["text"]
+
+    res_context = server.execute_tool("cbi_context", {"ref": ".."})
+    assert res_context["isError"] is True
+    assert "path traversal outside refs directory is forbidden" in res_context["content"][0]["text"]
+
+    # 3. Nonexistent valid ref format still raises "No CBI model found for ref"
+    res_nonexistent = server.execute_tool("cbi_query", {"sql": "SELECT 1", "ref": "nonexistent-branch"})
+    assert res_nonexistent["isError"] is True
+    assert "No CBI model found for ref" in res_nonexistent["content"][0]["text"]
+
+    # 4. Valid ref functions as expected
+    scan_res = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    head_sha = json.loads(scan_res["content"][0]["text"])["ref"]
+    conn_sha = server._get_connection(ref=head_sha)
+    assert conn_sha is not None
+    conn_sha.close()
+
+
+def test_tool_ingest_prevents_path_traversal(repo, tmp_path):
+    server = MCPServer(root=repo)
+
+    lcov_content = """\
+TN:
+SF:src/shapes/circle.ts
+DA:18,1
+end_of_record
+"""
+    # 1. Path traversal via relative path with ..
+    res_dotdot = server.execute_tool("cbi_ingest", {"files": ["../../outside.json"]})
+    assert res_dotdot["isError"] is True
+    assert "traverses outside allowed directories" in res_dotdot["content"][0]["text"]
+
+    # 2. Path traversal via absolute path outside allowed directories
+    res_abs = server.execute_tool("cbi_ingest", {"files": ["/etc/passwd"]})
+    assert res_abs["isError"] is True
+    assert "traverses outside allowed directories" in res_abs["content"][0]["text"]
+
+    # 3. Path escaping repo root
+    res_outside = server.execute_tool("cbi_ingest", {"files": ["../outside.lcov"]})
+    assert res_outside["isError"] is True
+    assert "traverses outside allowed directories" in res_outside["content"][0]["text"]
+
+    # 4. Ingest from tempdir (tmp_path) is allowed
+    temp_lcov = tmp_path / "coverage.lcov"
+    temp_lcov.write_text(lcov_content)
+    res_temp = server.execute_tool("cbi_ingest", {"files": [str(temp_lcov)]})
+    assert res_temp["isError"] is False
+    assert "lcov" in res_temp["content"][0]["text"]
+
+    # 5. Ingest from custom runner_cwd is allowed
+    sub_dir = repo / "sub_project"
+    sub_dir.mkdir()
+    sub_lcov = sub_dir / "sub_coverage.lcov"
+    sub_lcov.write_text(lcov_content)
+    res_cwd = server.execute_tool("cbi_ingest", {"files": ["sub_coverage.lcov"], "cwd": str(sub_dir)})
+    assert res_cwd["isError"] is False
+    assert "lcov" in res_cwd["content"][0]["text"]
+
+    # 6. Ingest from repo root is allowed
+    root_lcov = repo / "root_coverage.lcov"
+    root_lcov.write_text(lcov_content)
+    res_root = server.execute_tool("cbi_ingest", {"files": ["root_coverage.lcov"]})
+    assert res_root["isError"] is False
+
+    # 7. Symlink pointing outside allowed directories is rejected
+    symlink_etc = repo / "symlink_etc.lcov"
+    symlink_etc.symlink_to(Path("/etc/passwd"))
+    try:
+        res_sym = server.execute_tool("cbi_ingest", {"files": ["symlink_etc.lcov"]})
+        assert res_sym["isError"] is True
+        assert "traverses outside allowed directories" in res_sym["content"][0]["text"]
+    finally:
+        if symlink_etc.is_symlink():
+            symlink_etc.unlink()
+
+    # 8. Mixed valid and invalid files are rejected
+    res_mixed = server.execute_tool("cbi_ingest", {"files": ["root_coverage.lcov", "/etc/passwd"]})
+    assert res_mixed["isError"] is True
+    assert "traverses outside allowed directories" in res_mixed["content"][0]["text"]
+
+    # 9. Empty path string is rejected
+    res_empty = server.execute_tool("cbi_ingest", {"files": ["   "]})
+    assert res_empty["isError"] is True
+    assert "cannot be empty" in res_empty["content"][0]["text"]
+
+
+
 
 
 
