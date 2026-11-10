@@ -388,10 +388,37 @@ def test_format_tables_markdown_and_mermaid_units():
     assert system_views.valid_mermaid_er(mermaid)
 
 
+def test_format_tables_mermaid_precision_scale_and_quotes():
+    tables = [
+        {
+            "id": "t_payments",
+            "name": 'payments "2026"',
+            "columns": [
+                {"id": "c1", "name": "id", "type": "INTEGER", "primaryKey": True},
+                {"id": "c2", "name": "amount", "type": "NUMERIC(10, 2)", "nullable": False},
+                {"id": "c3", "name": "fee", "type": "DECIMAL(10, 2)", "nullable": False},
+                {"id": "c4", "name": "rate", "type": "DECIMAL(5,2)"},
+            ],
+            "foreignKeys": [],
+            "referencedBy": [],
+        }
+    ]
+    mermaid = system_views.format_tables_mermaid(tables)
+    assert 'payments \\"2026\\"' in mermaid
+    assert "NUMERIC(10_2) amount" in mermaid
+    assert "DECIMAL(10_2) fee" in mermaid
+    assert "DECIMAL(5_2) rate" in mermaid
+    assert "," not in mermaid
+    assert system_views.valid_mermaid_er(mermaid)
+
+
 def test_valid_mermaid_er_validator():
     assert system_views.valid_mermaid_er("erDiagram\n")
     assert system_views.valid_mermaid_er('erDiagram\n    users ||--o{ orders : "user_id"\n    users {\n        int id PK\n    }\n')
+    assert system_views.valid_mermaid_er('erDiagram\n    "payments \\"2026\\"" {\n        NUMERIC(10_2) amount\n        DECIMAL(10_2) fee\n    }\n')
+    assert not system_views.valid_mermaid_er('erDiagram\n    payments {\n        NUMERIC(10,_2) amount\n    }\n')
     assert not system_views.valid_mermaid_er("flowchart LR\n  a --> b")
     assert not system_views.valid_mermaid_er("erDiagram\n    users {\n        broken line here with too many words and bad key\n    }\n")
+
 
 

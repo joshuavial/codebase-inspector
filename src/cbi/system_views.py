@@ -567,7 +567,8 @@ def format_tables_mermaid(tables, relationships=None, all_tables=None):
         name = str(name).strip()
         if re.match(r"^[A-Za-z0-9_]+$", name):
             return name
-        return f'"{name}"'
+        escaped = name.replace('"', '\\"')
+        return f'"{escaped}"'
 
     lines = ["erDiagram"]
 
@@ -602,7 +603,7 @@ def format_tables_mermaid(tables, relationships=None, all_tables=None):
 
         lines.append(f"    {ent} {{")
         for col in columns:
-            c_type = re.sub(r"\s+", "_", (col.get("type") or "").strip())
+            c_type = re.sub(r"[,\s]+", "_", (col.get("type") or "").strip())
             if not c_type:
                 c_type = "unknown"
             c_name = re.sub(r"[^A-Za-z0-9_]", "_", (col.get("name") or "").strip()) or "col"
@@ -631,10 +632,10 @@ def format_tables_mermaid(tables, relationships=None, all_tables=None):
 
 
 _ER_RELATIONSHIP = re.compile(
-    r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s+(\|\|--o\{|\}o--\|\||\|\|--\|\||\}o--o\{)\s+("[^"]+"|[A-Za-z0-9_]+)\s*:\s*("[^"]+"|[A-Za-z0-9_]+)\s*$'
+    r'^\s*("(?:[^"\\]|\\.)*"|[A-Za-z0-9_]+)\s+(\|\|--o\{|\}o--\|\||\|\|--\|\||\}o--o\{)\s+("(?:[^"\\]|\\.)*"|[A-Za-z0-9_]+)\s*:\s*("[^"]+"|[A-Za-z0-9_]+)\s*$'
 )
-_ER_ENTITY_START = re.compile(r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s*\{\s*$')
-_ER_ENTITY_SINGLE = re.compile(r'^\s*("[^"]+"|[A-Za-z0-9_]+)\s*$')
+_ER_ENTITY_START = re.compile(r'^\s*("(?:[^"\\]|\\.)*"|[A-Za-z0-9_]+)\s*\{\s*$')
+_ER_ENTITY_SINGLE = re.compile(r'^\s*("(?:[^"\\]|\\.)*"|[A-Za-z0-9_]+)\s*$')
 _ER_ATTR = re.compile(r'^\s*([A-Za-z0-9_()]+)\s+([A-Za-z0-9_]+)(\s+(PK|FK|UK|PK,FK|UK,FK))?\s*$')
 
 
