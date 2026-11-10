@@ -202,4 +202,48 @@ def test_deps_start_end_aliases_match_from_to(make_repo, monkeypatch, capsys):
     assert text_start_end == text_from_to
 
 
+def test_hotspots_argument_aliases():
+    parser = cli.build_parser()
+
+    args_by = parser.parse_args(["hotspots", "--by", "loc"])
+    assert args_by.by == "loc"
+
+    args_metric = parser.parse_args(["hotspots", "--metric", "loc"])
+    assert args_metric.by == "loc"
+
+
+def test_hotspots_metric_alias_matches_by(make_repo, monkeypatch, capsys):
+    files = {
+        "a.py": "x = 1\n",
+        "b.py": "import a\ny = 2\n",
+    }
+    repo = make_repo(files)
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+
+    # JSON format: --by loc vs --metric loc
+    assert main(["hotspots", "--by", "loc", "--json"]) == 0
+    out_by_json = capsys.readouterr().out
+    data_by_json = json.loads(out_by_json)
+
+    assert main(["hotspots", "--metric", "loc", "--json"]) == 0
+    out_metric_json = capsys.readouterr().out
+    data_metric_json = json.loads(out_metric_json)
+
+    assert data_metric_json == data_by_json
+    assert data_metric_json["by"] == "loc"
+
+    # Text format: --by loc vs --metric loc
+    assert main(["hotspots", "--by", "loc"]) == 0
+    text_by = capsys.readouterr().out
+
+    assert main(["hotspots", "--metric", "loc"]) == 0
+    text_metric = capsys.readouterr().out
+
+    assert text_metric == text_by
+    assert "by loc" in text_metric
+
+
+
 

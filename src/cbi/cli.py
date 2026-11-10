@@ -115,7 +115,8 @@ def build_parser():
     cmds["show"].add_argument("--min-confidence", type=float, default=None, metavar="F",
                               help="hide edges below F (text default 0.6; --json keeps them all unless this is set)")
     cmds["show"].add_argument("--all", action="store_true", help="do not cap relationships or tests at 10")
-    cmds["hotspots"].add_argument("--by", choices=("fan-in", "fan-out", "loc", "symbols"), default="fan-in",
+    cmds["hotspots"].add_argument("--by", "--metric", dest="by",
+                                  choices=("fan-in", "fan-out", "loc", "symbols"), default="fan-in",
                                   help="rank by this metric (default fan-in)")
     cmds["hotspots"].add_argument("--kind", metavar="K", help="only this display kind or kind")
     cmds["hotspots"].add_argument("--limit", type=int, default=20, help="most rows per list (default 20)")
