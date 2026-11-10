@@ -21,6 +21,7 @@ from cbi.mcp import (
     RESOURCES,
     SERVER_NAME,
     SERVER_VERSION,
+    TOOLS,
     read_message,
     write_message,
 )
@@ -144,6 +145,12 @@ def test_tools_list():
     tools_by_name = {t["name"]: t for t in tools}
     assert "kind" in tools_by_name["cbi_status"]["inputSchema"]["properties"]
     assert "kind" in tools_by_name["cbi_check"]["inputSchema"]["properties"]
+    assert "offset" in tools_by_name["cbi_tasks"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_tasks"]["inputSchema"]["properties"]["offset"]["type"] == "integer"
+    assert "base_model" in tools_by_name["cbi_diff"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_diff"]["inputSchema"]["properties"]["base_model"]["type"] == "string"
+    assert "head_model" in tools_by_name["cbi_diff"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_diff"]["inputSchema"]["properties"]["head_model"]["type"] == "string"
 
     query_tools_with_ref = [
         "cbi_show",
@@ -1189,6 +1196,12 @@ def test_cbi_mcp_cli_config(capsys):
 
 def test_tool_tasks(repo):
     server = MCPServer(root=repo)
+
+    # Assert offset is declared in cbi_tasks inputSchema properties
+    tool_def = next(t for t in TOOLS if t["name"] == "cbi_tasks")
+    assert "offset" in tool_def["inputSchema"]["properties"]
+    assert tool_def["inputSchema"]["properties"]["offset"]["type"] == "integer"
+
     resp = server.execute_tool("cbi_tasks", {})
     assert not resp["isError"]
     # In fixture repo with initial scan, tasks may exist or be empty
@@ -1198,6 +1211,20 @@ def test_tool_tasks(repo):
     assert not resp_json["isError"]
     parsed = json.loads(resp_json["content"][0]["text"])
     assert isinstance(parsed, list)
+
+    # Test invoking cbi_tasks with offset
+    resp_offset_0 = server.execute_tool("cbi_tasks", {"format": "json", "offset": 0})
+    assert not resp_offset_0["isError"]
+    assert json.loads(resp_offset_0["content"][0]["text"]) == parsed
+
+    resp_offset_1 = server.execute_tool("cbi_tasks", {"format": "json", "offset": 1})
+    assert not resp_offset_1["isError"]
+    parsed_offset_1 = json.loads(resp_offset_1["content"][0]["text"])
+    assert isinstance(parsed_offset_1, list)
+    if len(parsed) > 1:
+        assert parsed_offset_1 == parsed[1:]
+    else:
+        assert parsed_offset_1 == []
 
     res_err = server.execute_tool("cbi_tasks", {"task_id": "nonexistent-task"})
     assert res_err["isError"] is True

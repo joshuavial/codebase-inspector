@@ -222,6 +222,14 @@ TOOLS = [
                     "type": "string",
                     "description": "Head git ref, commit SHA, or path to head model.db (default: HEAD / current working tree model).",
                 },
+                "base_model": {
+                    "type": "string",
+                    "description": "Path to pre-scanned base model database.",
+                },
+                "head_model": {
+                    "type": "string",
+                    "description": "Path to pre-scanned head model database.",
+                },
                 "concept": {
                     "type": "string",
                     "description": "Optional concept ID to focus the diff on.",
@@ -268,6 +276,10 @@ TOOLS = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of open tasks to return (default: 20).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Offset into task list for pagination (default 0).",
                 },
                 "format": {
                     "type": "string",
