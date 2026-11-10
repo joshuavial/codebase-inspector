@@ -1,6 +1,6 @@
 # Architecture
 
-Covers PRD-01 to PRD-07 (`docs/prd-0*.md`). Living document: update it when a decision changes. The reasons behind the significant decisions are in the ADR register, `docs/adr/README.md`. Review findings that shaped it are recorded in `docs/planning/decision-log.md`.
+Covers PRD-01 to PRD-08 (`docs/prd-0*.md`). Living document: update it when a decision changes. The reasons behind the significant decisions are in the ADR register, `docs/adr/README.md`. Review findings that shaped it are recorded in `docs/planning/decision-log.md`.
 
 ## Constraints from the PRD
 
