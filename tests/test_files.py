@@ -1,4 +1,45 @@
-from cbi.files import Ignore, classify, cs_test_roots, doc_collections
+from cbi.files import BASE_IGNORE, Ignore, classify, cs_test_roots, default_ignore, doc_collections
+
+
+def test_base_ignore_excludes_credentials_and_private_keys(make_repo):
+    ignore = Ignore(BASE_IGNORE)
+    secrets = [
+        "id_rsa",
+        "id_rsa.pub",
+        "id_rsa_deploy",
+        "server.pem",
+        "private.key",
+        "credentials.json",
+        "gcp-service-account.json",
+        "nested/keys/id_rsa",
+        "nested/keys/id_rsa.pub",
+        "nested/keys/id_rsa_deploy",
+        "certs/server.pem",
+        "certs/private.key",
+        "auth/credentials.json",
+        "config/gcp-service-account.json",
+    ]
+    for path in secrets:
+        assert ignore(path), f"expected {path} to be ignored by BASE_IGNORE"
+
+    non_secrets = [
+        "src/keys.ts",
+        "app.json",
+        "server.js",
+        "src/credentials.py",
+        "package.json",
+    ]
+    for path in non_secrets:
+        assert not ignore(path), f"expected {path} to not be ignored by BASE_IGNORE"
+
+    repo = make_repo({"src/app.py": "print(1)\n"})
+    default_text = default_ignore(repo)
+    default_rules = Ignore(default_text)
+    for path in secrets:
+        assert default_rules(path), f"expected {path} to be ignored by default_ignore"
+    for path in non_secrets:
+        assert not default_rules(path), f"expected {path} to not be ignored by default_ignore"
+
 
 
 def test_ignore_follows_gitignore_rules():

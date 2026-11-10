@@ -224,7 +224,7 @@ def build_repo_viewer(repo_path: Path, out_dir: Path, model_dir: Optional[Path] 
     model_db = model_dir / "model.db"
     conn = sqlite3.connect(f"file:{model_db}?mode=ro", uri=True)
     try:
-        index_path = build.build(conn, out_dir, root=repo_path)
+        index_path = build.build(conn, out_dir, root=repo_path, editor="none")
         return Path(index_path)
     finally:
         conn.close()

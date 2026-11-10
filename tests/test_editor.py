@@ -160,7 +160,10 @@ def test_build_writes_the_editor_config(tmp_path):
     assert html.index("app.js") < html.index("data/diff.js") < html.index("data/concepts.js")
     assert (viewer.parent / "open-editor.js").is_file()
     none = build.build(conn, tmp_path / "none", editor="none", project=project)
-    assert '"editor":"none"' in (none.parent / "data" / "editor.js").read_text()
+    none_editor = (none.parent / "data" / "editor.js").read_text()
+    assert '"editor":"none"' in none_editor
+    assert '"root":""' in none_editor
+    assert project.resolve().as_posix() not in none_editor
     cursor = build.build(conn, tmp_path / "cursor", editor="cursor", project=project)
     assert '"editor":"cursor"' in (cursor.parent / "data" / "editor.js").read_text()
     unknown = build.build(conn, tmp_path / "other", editor="emacs", project=project)

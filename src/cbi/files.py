@@ -58,6 +58,13 @@ BASE_IGNORE = """\
 # Generated bundles. Directory names alone never exclude tracked source.
 *.min.js
 *.min.css
+
+# Private keys and cloud credentials
+id_rsa*
+*.pem
+*.key
+credentials.json
+*service-account*.json
 """
 
 

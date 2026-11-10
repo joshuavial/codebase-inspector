@@ -90,9 +90,10 @@ def build(conn, out, root=None, compare=None, history=None, place=None, *, edito
         )
     (data / "diff.js").write_text(_script("diff", payload), encoding="utf-8")
     (data / "history.js").write_text(_script("history", history), encoding="utf-8")
+    editor_choice = editor if editor in ("vscode", "cursor", "none") else "vscode"
     editor_payload = {
-        "editor": editor if editor in ("vscode", "cursor", "none") else "vscode",
-        "root": _project_root(root, project),
+        "editor": editor_choice,
+        "root": "" if editor_choice == "none" else _project_root(root, project),
     }
     if ref_sha:
         editor_payload["sha"] = ref_sha

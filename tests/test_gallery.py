@@ -13,6 +13,7 @@ if str(ROOT / "scripts") not in sys.path:
 import pytest
 import cbi.cli as cli
 from cbi.gallery import (
+    build_repo_viewer,
     ensure_repo_scanned,
     extract_repo_metrics,
     generate_gallery,
@@ -181,6 +182,14 @@ def test_generate_gallery_end_to_end(make_repo, tmp_path):
     assert viewer_index.is_file()
     assert (out_gallery / "repos" / "synth-repo" / "viewer" / "app.js").is_file()
     assert (out_gallery / "repos" / "synth-repo" / "viewer" / "data" / "tree.js").is_file()
+    editor_js = out_gallery / "repos" / "synth-repo" / "viewer" / "data" / "editor.js"
+    assert editor_js.is_file()
+    editor_content = editor_js.read_text(encoding="utf-8")
+    assert '"editor":"none"' in editor_content
+    assert '"root":""' in editor_content
+    assert "/Users/" not in editor_content
+    assert "/home/" not in editor_content
+    assert str(repo_root) not in editor_content
 
     # 4. Check review directory
     review_index = out_gallery / "repos" / "synth-repo" / "review" / "index.html"
@@ -403,3 +412,43 @@ def test_cbi_gallery_cli_with_cache_dir_flag(make_repo, tmp_path):
     assert not (repo_root / ".cbi").exists()
     assert (cache_dir / "cli-cache-repo" / "model.db").is_file()
     assert (out_gallery / "index.html").is_file()
+
+
+def test_gallery_viewer_editor_sanitized(make_repo, tmp_path):
+    """build_repo_viewer builds viewer with editor=none and empty root."""
+    repo_root = make_repo({"src/calc.py": "def add(a, b): return a + b\n"}, name="calc-repo")
+    viewer_dir = tmp_path / "viewer"
+    build_repo_viewer(repo_root, viewer_dir)
+    editor_js = viewer_dir / "data" / "editor.js"
+    assert editor_js.is_file()
+    editor_content = editor_js.read_text(encoding="utf-8")
+    assert '"editor":"none"' in editor_content
+    assert '"root":""' in editor_content
+    assert "/Users/" not in editor_content
+    assert "/home/" not in editor_content
+    assert str(repo_root) not in editor_content
+
+
+def test_build_editor_none_writes_empty_root(make_repo, tmp_path):
+    """build.build with editor='none' writes an empty root string without host paths."""
+    from cbi import build
+    import sqlite3
+
+    repo_root = make_repo({"src/calc.py": "def add(a, b): return a + b\n"}, name="build-calc-repo")
+    model_dir = tmp_path / "model"
+    ensure_repo_scanned(repo_root, model_dir)
+    conn = sqlite3.connect(f"file:{model_dir / 'model.db'}?mode=ro", uri=True)
+    try:
+        out_dir = tmp_path / "build_viewer"
+        build.build(conn, out_dir, root=repo_root, editor="none")
+        editor_js = out_dir / "data" / "editor.js"
+        assert editor_js.is_file()
+        editor_content = editor_js.read_text(encoding="utf-8")
+        assert '"editor":"none"' in editor_content
+        assert '"root":""' in editor_content
+        assert "/Users/" not in editor_content
+        assert "/home/" not in editor_content
+        assert str(repo_root) not in editor_content
+    finally:
+        conn.close()
+
