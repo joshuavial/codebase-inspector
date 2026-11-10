@@ -75,6 +75,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional filter for diagnostics or tasks by kind (e.g. 'cycle', 'unmatched_test', 'unsupported_test_mechanism').",
                 },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' or 'json' (default: text)",
@@ -195,6 +199,10 @@ TOOLS = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of items per section (default: 20).",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
             },
             "required": [],
@@ -343,6 +351,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' or 'json' (default: text)",
@@ -358,6 +370,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' or 'json' (default: text)",
@@ -389,6 +405,10 @@ TOOLS = [
                 "include_tests": {
                     "type": "boolean",
                     "description": "Include imports from test files (default: false).",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
                 "format": {
                     "type": "string",
@@ -1547,7 +1567,8 @@ class MCPServer:
             return "\n".join(lines)
 
     def handle_status(self, args: dict) -> str:
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
         try:
             fmt = args.get("format", "text")
             as_json = fmt == "json"
@@ -1679,7 +1700,8 @@ class MCPServer:
 
     def handle_hotspots(self, args: dict) -> str:
         metric = args.get("metric") or args.get("by") or "fan-in"
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
         try:
             limit = args.get("limit", 20)
             kind = args.get("kind")
@@ -1961,7 +1983,8 @@ class MCPServer:
     def handle_cycles(self, args: dict) -> str:
         fmt = args.get("format", "text")
         as_json = fmt == "json"
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
         try:
             buf = io.StringIO()
             with self._stdout_lock:
@@ -1974,7 +1997,8 @@ class MCPServer:
     def handle_orphans(self, args: dict) -> str:
         fmt = args.get("format", "text")
         as_json = fmt == "json"
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
         try:
             buf = io.StringIO()
             with self._stdout_lock:
@@ -1991,8 +2015,9 @@ class MCPServer:
         include_tests = bool(args.get("include_tests", False))
         fmt = args.get("format", "text")
         as_json = fmt == "json"
+        ref = args.get("ref")
 
-        conn = self._get_connection()
+        conn = self._get_connection(ref=ref)
         try:
             out_buf = io.StringIO()
             err_buf = io.StringIO()
