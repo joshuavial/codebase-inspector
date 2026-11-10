@@ -177,7 +177,11 @@ TOOLS = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of results to return (default: 20).",
+                    "description": "Maximum number of results to return (default: 20, maximum: 100).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Offset into search results for pagination (default: 0).",
                 },
                 "ref": {
                     "type": "string",
@@ -209,7 +213,11 @@ TOOLS = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of items per section (default: 20).",
+                    "description": "Maximum number of items per section (default: 20, maximum: 500).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Offset into hotspot list for pagination (default: 0).",
                 },
                 "ref": {
                     "type": "string",
@@ -336,6 +344,10 @@ TOOLS = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of rows to return (default: 50, maximum: 500).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Offset into result set for pagination (default: 0).",
                 },
                 "ref": {
                     "type": "string",
@@ -1720,10 +1732,25 @@ class MCPServer:
         q = args.get("query") or args.get("text")
         if not q:
             raise ValueError("Missing required argument: 'query'")
+        limit_val = args.get("limit") if args.get("limit") is not None else args.get("max_results", 20)
+        try:
+            limit = int(limit_val)
+        except (ValueError, TypeError) as err:
+            raise ValueError(f"Invalid limit: {limit_val!r}") from err
+        limit = min(max(limit, 1), 100)
+
+        offset_arg = args.get("offset")
+        if offset_arg is not None:
+            try:
+                offset = int(offset_arg)
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid offset: {offset_arg!r}") from err
+            if offset < 0:
+                raise ValueError("offset must be non-negative")
+
         conn = self._get_connection(ref=args.get("ref"))
         try:
             words = q.split() if isinstance(q, str) else list(q)
-            limit = args.get("limit", 20)
             kind = args.get("kind")
             as_json = args.get("format") == "json"
             buf = io.StringIO()
@@ -1737,9 +1764,24 @@ class MCPServer:
     def handle_hotspots(self, args: dict) -> str:
         metric = args.get("metric") or args.get("by") or "fan-in"
         ref = args.get("ref")
+        limit_val = args.get("limit", 20)
+        try:
+            limit = int(limit_val)
+        except (ValueError, TypeError) as err:
+            raise ValueError(f"Invalid limit: {limit_val!r}") from err
+        limit = min(max(limit, 1), 500)
+
+        offset_arg = args.get("offset")
+        if offset_arg is not None:
+            try:
+                offset = int(offset_arg)
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid offset: {offset_arg!r}") from err
+            if offset < 0:
+                raise ValueError("offset must be non-negative")
+
         conn = self._get_connection(ref=ref)
         try:
-            limit = args.get("limit", 20)
             kind = args.get("kind")
             as_json = args.get("format") == "json"
             buf = io.StringIO()
@@ -1808,8 +1850,22 @@ class MCPServer:
                 return tasks.brief_text(b).rstrip()
 
             kind = args.get("kind")
-            limit = args.get("limit", 20)
-            offset = args.get("offset", 0)
+            limit_val = args.get("limit", 20)
+            try:
+                limit = int(limit_val)
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid limit: {limit_val!r}") from err
+            limit = min(max(limit, 1), 500)
+
+            offset_val = args.get("offset", 0)
+            try:
+                offset = int(offset_val)
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid offset: {offset_val!r}") from err
+            if offset < 0:
+                raise ValueError("offset must be non-negative")
+            offset = min(offset, 100_000)
+
             found = tasks.open_tasks(conn, kind, limit, offset)
             if as_json:
                 return json.dumps(found, indent=2)
@@ -1855,18 +1911,53 @@ class MCPServer:
             raise ValueError("Missing required argument: 'sql'")
         # Enforce read-only queries
         first_token = sql.split()[0].upper() if sql.split() else ""
-        if first_token not in ("SELECT", "WITH", "EXPLAIN", "PRAGMA"):
+        if first_token not in ("SELECT", "WITH", "EXPLAIN"):
             raise ValueError(f"Only read-only queries are permitted (got {first_token}).")
 
-        limit = min(max(int(args.get("limit", 50)), 1), 500)
+        limit_val = args.get("limit", 50)
+        try:
+            limit = int(limit_val)
+        except (ValueError, TypeError) as err:
+            raise ValueError(f"Invalid limit: {limit_val!r}") from err
+        limit = min(max(limit, 1), 500)
+
+        offset_val = args.get("offset")
+        offset = 0
+        if offset_val is not None:
+            try:
+                offset = int(offset_val)
+            except (ValueError, TypeError) as err:
+                raise ValueError(f"Invalid offset: {offset_val!r}") from err
+            if offset < 0:
+                raise ValueError("offset must be non-negative")
+            offset = min(offset, 100_000)
+
         fmt = args.get("format", "json")
 
         conn = self._get_connection(ref=args.get("ref"))
         try:
-            cursor = conn.cursor()
-            cursor.execute(sql)
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            rows = cursor.fetchmany(limit)
+            def authorizer(action, arg1, arg2, dbname, source):
+                if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA):
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+
+            conn.set_authorizer(authorizer)
+
+            timer = threading.Timer(5.0, conn.interrupt)
+            timer.start()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql)
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                if offset > 0:
+                    cursor.fetchmany(offset)
+                rows = cursor.fetchmany(limit)
+            except sqlite3.OperationalError as err:
+                if "interrupted" in str(err).lower():
+                    raise ValueError("Query execution exceeded timeout limit (5.0s)") from err
+                raise
+            finally:
+                timer.cancel()
 
             if fmt == "json":
                 results = [dict(zip(columns, row)) for row in rows]

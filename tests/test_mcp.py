@@ -147,6 +147,12 @@ def test_tools_list():
     assert "kind" in tools_by_name["cbi_check"]["inputSchema"]["properties"]
     assert "offset" in tools_by_name["cbi_tasks"]["inputSchema"]["properties"]
     assert tools_by_name["cbi_tasks"]["inputSchema"]["properties"]["offset"]["type"] == "integer"
+    assert "offset" in tools_by_name["cbi_query"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_query"]["inputSchema"]["properties"]["offset"]["type"] == "integer"
+    assert "offset" in tools_by_name["cbi_search"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_search"]["inputSchema"]["properties"]["offset"]["type"] == "integer"
+    assert "offset" in tools_by_name["cbi_hotspots"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_hotspots"]["inputSchema"]["properties"]["offset"]["type"] == "integer"
     assert "base_model" in tools_by_name["cbi_diff"]["inputSchema"]["properties"]
     assert tools_by_name["cbi_diff"]["inputSchema"]["properties"]["base_model"]["type"] == "string"
     assert "head_model" in tools_by_name["cbi_diff"]["inputSchema"]["properties"]
@@ -1546,6 +1552,105 @@ def test_tool_query(repo):
     assert "Only read-only queries are permitted" in resp_drop["content"][0]["text"]
 
 
+def test_tool_query_security_hardening(repo):
+    server = MCPServer(root=repo)
+
+    # 1. PRAGMA is disallowed in first_token
+    resp_pragma = server.execute_tool("cbi_query", {"sql": "PRAGMA database_list"})
+    assert resp_pragma["isError"] is True
+    assert "Only read-only queries are permitted (got PRAGMA)." in resp_pragma["content"][0]["text"]
+
+    resp_pragma_schema = server.execute_tool("cbi_query", {"sql": "PRAGMA table_info(nodes)"})
+    assert resp_pragma_schema["isError"] is True
+    assert "Only read-only queries are permitted (got PRAGMA)." in resp_pragma_schema["content"][0]["text"]
+
+    # 2. SQLite authorizer blocks ATTACH / DETACH / PRAGMA
+    # Direct ATTACH
+    resp_attach = server.execute_tool("cbi_query", {"sql": "ATTACH DATABASE 'foo.db' AS foo"})
+    assert resp_attach["isError"] is True
+    assert "Only read-only queries are permitted (got ATTACH)." in resp_attach["content"][0]["text"]
+
+    # EXPLAIN ATTACH (bypasses first token check, blocked by authorizer)
+    resp_exp_attach = server.execute_tool("cbi_query", {"sql": "EXPLAIN ATTACH DATABASE 'foo.db' AS foo"})
+    assert resp_exp_attach["isError"] is True
+    assert "not authorized" in resp_exp_attach["content"][0]["text"]
+
+    # EXPLAIN PRAGMA (bypasses first token check, blocked by authorizer)
+    resp_exp_pragma = server.execute_tool("cbi_query", {"sql": "EXPLAIN PRAGMA database_list"})
+    assert resp_exp_pragma["isError"] is True
+    assert "not authorized" in resp_exp_pragma["content"][0]["text"]
+
+    # Table-valued function pragma_database_list (bypasses first token check, blocked by authorizer)
+    resp_tvf_pragma = server.execute_tool("cbi_query", {"sql": "SELECT * FROM pragma_database_list()"})
+    assert resp_tvf_pragma["isError"] is True
+    assert "not authorized" in resp_tvf_pragma["content"][0]["text"]
+
+
+def test_tool_query_timeout(repo):
+    server = MCPServer(root=repo)
+
+    # Runaway recursive query hits 5.0s execution timeout
+    resp_timeout = server.execute_tool("cbi_query", {
+        "sql": "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt) SELECT count(*) FROM cnt;"
+    })
+    assert resp_timeout["isError"] is True
+    assert "Query execution exceeded timeout limit (5.0s)" in resp_timeout["content"][0]["text"]
+
+
+def test_mcp_pagination_bounds(repo):
+    server = MCPServer(root=repo)
+
+    # Negative offset rejection across tools
+    res_tasks_neg = server.execute_tool("cbi_tasks", {"offset": -1})
+    assert res_tasks_neg["isError"] is True
+    assert "offset must be non-negative" in res_tasks_neg["content"][0]["text"]
+
+    res_search_neg = server.execute_tool("cbi_search", {"query": "Circle", "offset": -5})
+    assert res_search_neg["isError"] is True
+    assert "offset must be non-negative" in res_search_neg["content"][0]["text"]
+
+    res_hotspots_neg = server.execute_tool("cbi_hotspots", {"offset": -10})
+    assert res_hotspots_neg["isError"] is True
+    assert "offset must be non-negative" in res_hotspots_neg["content"][0]["text"]
+
+    res_query_neg = server.execute_tool("cbi_query", {"sql": "SELECT 1", "offset": -1})
+    assert res_query_neg["isError"] is True
+    assert "offset must be non-negative" in res_query_neg["content"][0]["text"]
+
+    # Clamping excessively large limit and offset
+    # cbi_tasks
+    res_tasks_large = server.execute_tool("cbi_tasks", {"limit": 999999, "offset": 999999, "format": "json"})
+    assert not res_tasks_large["isError"]
+    assert json.loads(res_tasks_large["content"][0]["text"]) == []
+
+    # cbi_search with limit / max_results
+    res_search_large = server.execute_tool("cbi_search", {"query": "Circle", "limit": 999999, "format": "json"})
+    assert not res_search_large["isError"]
+
+    res_search_mr = server.execute_tool("cbi_search", {"query": "Circle", "max_results": 999999, "format": "json"})
+    assert not res_search_mr["isError"]
+
+    # cbi_hotspots with limit
+    res_hotspots_large = server.execute_tool("cbi_hotspots", {"limit": 999999, "format": "json"})
+    assert not res_hotspots_large["isError"]
+
+    # cbi_query with limit and offset
+    res_query_large = server.execute_tool("cbi_query", {"sql": "SELECT 1 AS num", "limit": 999999, "format": "json"})
+    assert not res_query_large["isError"]
+    data_query = json.loads(res_query_large["content"][0]["text"])
+    assert data_query["row_count"] == 1
+
+    res_query_offset = server.execute_tool("cbi_query", {
+        "sql": "SELECT id FROM nodes ORDER BY id",
+        "limit": 2,
+        "offset": 1,
+        "format": "json",
+    })
+    assert not res_query_offset["isError"]
+    data_offset = json.loads(res_query_offset["content"][0]["text"])
+    assert len(data_offset["rows"]) <= 2
+
+
 def test_tool_concepts(repo):
     server = MCPServer(root=repo)
 
@@ -2861,6 +2966,33 @@ end_of_record
     res_empty = server.execute_tool("cbi_ingest", {"files": ["   "]})
     assert res_empty["isError"] is True
     assert "cannot be empty" in res_empty["content"][0]["text"]
+
+
+def test_tool_ingest_enforces_max_file_size(repo, tmp_path, monkeypatch):
+    from cbi import ingest
+
+    server = MCPServer(root=repo)
+
+    # 1. Sparse file exceeding default MAX_INGEST_BYTES (50 MB)
+    huge_file = tmp_path / "huge_coverage.lcov"
+    with open(huge_file, "wb") as f:
+        f.truncate(51 * 1024 * 1024)
+
+    res_huge = server.execute_tool("cbi_ingest", {"files": [str(huge_file)]})
+    assert res_huge["isError"] is True
+    assert "exceeds maximum allowed size" in res_huge["content"][0]["text"]
+    assert "huge_coverage.lcov" in res_huge["content"][0]["text"]
+
+    # 2. Monkeypatched limit triggers on smaller file
+    monkeypatch.setattr(ingest, "MAX_INGEST_BYTES", 20)
+    small_file = tmp_path / "small_coverage.lcov"
+    small_file.write_text("TN:\nSF:src/shapes/circle.ts\nDA:18,1\nend_of_record\n")
+
+    res_small = server.execute_tool("cbi_ingest", {"files": [str(small_file)]})
+    assert res_small["isError"] is True
+    assert "exceeds maximum allowed size" in res_small["content"][0]["text"]
+    assert "small_coverage.lcov" in res_small["content"][0]["text"]
+
 
 
 

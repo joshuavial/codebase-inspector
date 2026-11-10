@@ -7,7 +7,9 @@ diagnostic kinds; it prints whatever the model holds.
 
 import json
 import posixpath
+import sqlite3
 import sys
+import threading
 
 from cbi import store
 
@@ -123,7 +125,7 @@ Example: cbi status --json""",
     "query": """\
 Execute a read-only SQL query against the codebase model (.cbi/model.db).
 
-Only read-only statements (SELECT, WITH, EXPLAIN, PRAGMA) are permitted.
+Only read-only statements (SELECT, WITH, EXPLAIN) are permitted.
 Use --schema to inspect available tables and column definitions.
 Use --json for machine-readable JSON output.
 Use --limit N to set the maximum number of rows returned (default: 50).
@@ -820,19 +822,35 @@ def sql(conn, args):
         return 2
 
     first_token = query_str.split()[0].upper() if query_str.split() else ""
-    if first_token not in ("SELECT", "WITH", "EXPLAIN", "PRAGMA"):
+    if first_token not in ("SELECT", "WITH", "EXPLAIN"):
         print(f"cbi query: only read-only queries are permitted (got {first_token}).", file=sys.stderr)
         return 1
 
     limit = getattr(args, "limit", 50)
-    if limit is not None and limit <= 0:
-        limit = 50
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            limit = 50
+        limit = min(max(limit, 1), 500)
 
     try:
-        cursor = conn.cursor()
-        cursor.execute(query_str)
-        columns = [desc[0] for desc in cursor.description] if cursor.description else []
-        rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
+        def authorizer(action, arg1, arg2, dbname, source):
+            if action in (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA):
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        conn.set_authorizer(authorizer)
+        timer = threading.Timer(5.0, conn.interrupt)
+        timer.start()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query_str)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
+        finally:
+            timer.cancel()
+            conn.set_authorizer(None)
 
         if getattr(args, "json", False):
             results = [dict(zip(columns, row)) for row in rows]
@@ -864,6 +882,12 @@ def sql(conn, args):
             print(" | ".join(r[i].ljust(col_widths[i]) for i in range(len(columns))))
         print(f"({len(rows)} row{'s' if len(rows) != 1 else ''})")
         return 0
+    except sqlite3.OperationalError as err:
+        if "interrupted" in str(err).lower():
+            print("cbi query: query execution exceeded timeout limit (5.0s)", file=sys.stderr)
+            return 1
+        print(f"cbi query: {err}", file=sys.stderr)
+        return 1
     except Exception as err:
         print(f"cbi query: {err}", file=sys.stderr)
         return 1

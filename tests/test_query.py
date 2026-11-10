@@ -227,3 +227,39 @@ def test_help_is_written_for_agents(capsys, command):
         main([command, "--help"])
     out = capsys.readouterr().out
     assert "--json" in out and "Exit codes:" in out and "Example: cbi " + command in out
+
+
+def test_query_rejects_pragma(repo, capsys):
+    code, out, err = run(capsys, "query", "PRAGMA database_list")
+    assert code == 1
+    assert "only read-only queries are permitted (got PRAGMA)" in err
+
+
+def test_query_authorizer_blocks_attach_and_pragma(repo, capsys):
+    # Direct ATTACH
+    code, out, err = run(capsys, "query", "ATTACH DATABASE 'test.db' AS test")
+    assert code == 1
+    assert "only read-only queries are permitted (got ATTACH)" in err
+
+    # EXPLAIN ATTACH (authorizer denies)
+    code, out, err = run(capsys, "query", "EXPLAIN ATTACH DATABASE 'test.db' AS test")
+    assert code == 1
+    assert "not authorized" in err
+
+    # PRAGMA table-valued function (authorizer denies)
+    code, out, err = run(capsys, "query", "SELECT * FROM pragma_database_list()")
+    assert code == 1
+    assert "not authorized" in err
+
+
+def test_query_execution_timeout(repo, capsys):
+    code, out, err = run(capsys, "query", "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt) SELECT count(*) FROM cnt;")
+    assert code == 1
+    assert "timeout limit (5.0s)" in err
+
+
+def test_query_bounds_limit_and_json(repo, capsys):
+    hits = run_json(capsys, "query", "SELECT id FROM nodes", "--limit", "999999")
+    assert hits["row_count"] > 0
+    assert hits["row_count"] <= 500
+

@@ -11,6 +11,8 @@ from pathlib import Path
 
 from cbi import store
 
+MAX_INGEST_BYTES = 50 * 1024 * 1024  # 50 MB
+
 # Commands `cbi prime` prints for a runner named by package.json or pyproject.toml.
 # The service recipe in HELP is one worked example of the node:test shape.
 PYTEST_COMMANDS = (
@@ -457,6 +459,10 @@ def _junit_file(model, case):
 def ingest(conn, repo_root, cwd, artifact):
     """Load one artifact file, replacing rows from an earlier load of the same path. Returns counts."""
     artifact = Path(os.path.realpath(artifact))
+    if artifact.stat().st_size > MAX_INGEST_BYTES:
+        raise ValueError(
+            f"File '{artifact.name}' exceeds maximum allowed size ({artifact.stat().st_size} bytes > {MAX_INGEST_BYTES} bytes)"
+        )
     key = str(artifact)
     text = artifact.read_text(encoding="utf-8")
     fmt = detect(text)
