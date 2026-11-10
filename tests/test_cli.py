@@ -156,3 +156,50 @@ def test_cli_json_flags():
     assert args_check_fmt.format == "json"
 
 
+def test_deps_argument_aliases():
+    parser = cli.build_parser()
+
+    args_from_to = parser.parse_args(["deps", "--from", "src", "--to", "core"])
+    assert args_from_to.start == "src"
+    assert args_from_to.end == "core"
+
+    args_start_end = parser.parse_args(["deps", "--start", "src", "--end", "core"])
+    assert args_start_end.start == "src"
+    assert args_start_end.end == "core"
+
+
+def test_deps_start_end_aliases_match_from_to(make_repo, monkeypatch, capsys):
+    files = {
+        "package.json": json.dumps({"name": "root"}),
+        "src/a.ts": "import { b } from '../lib/b';\nexport const a = b;\n",
+        "lib/b.ts": "export const b = 1;\n",
+    }
+    repo = make_repo(files)
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+
+    # Query with --from and --to
+    assert main(["deps", "--level", "folder", "--from", "src", "--to", "lib", "--json"]) == 0
+    out_from_to = capsys.readouterr().out
+    data_from_to = json.loads(out_from_to)
+
+    # Query with --start and --end aliases
+    assert main(["deps", "--level", "folder", "--start", "src", "--end", "lib", "--json"]) == 0
+    out_start_end = capsys.readouterr().out
+    data_start_end = json.loads(out_start_end)
+
+    assert data_start_end == data_from_to
+    assert len(data_start_end["edges"]) == 1
+    assert data_start_end["edges"][0]["from"] == "src"
+    assert data_start_end["edges"][0]["to"] == "lib"
+
+    # Text mode produces identical output
+    assert main(["deps", "--level", "folder", "--from", "src", "--to", "lib"]) == 0
+    text_from_to = capsys.readouterr().out
+    assert main(["deps", "--level", "folder", "--start", "src", "--end", "lib"]) == 0
+    text_start_end = capsys.readouterr().out
+    assert text_start_end == text_from_to
+
+
+

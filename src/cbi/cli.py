@@ -121,8 +121,8 @@ def build_parser():
     cmds["hotspots"].add_argument("--limit", type=int, default=20, help="most rows per list (default 20)")
     cmds["deps"].add_argument("--level", choices=("package", "folder", "concept", "deployable"), default="package",
                               help="what a row of the matrix is (default package)")
-    cmds["deps"].add_argument("--from", dest="start", help="only dependencies that leave this node")
-    cmds["deps"].add_argument("--to", dest="end", help="only dependencies that enter this node")
+    cmds["deps"].add_argument("--from", "--start", dest="start", help="only dependencies that leave this node")
+    cmds["deps"].add_argument("--to", "--end", dest="end", help="only dependencies that enter this node")
     cmds["deps"].add_argument("--forbid", action="append", default=[], metavar="FROM:TO",
                               help="exit 1 when a production import runs from FROM to TO")
     cmds["deps"].add_argument("--include-tests", action="store_true", help="count imports from test files too")
