@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Isolated out-of-tree model directory cache in `cbi gallery` via `--cache-dir` (default: `<out-dir>/models/<repo_name>/model.db`), guaranteeing external repositories remain strictly read-only without in-tree modifications or untracked `.cbi/` directories (`cbi-5ru.2`).
 - Detected Starlette and FastAPI explicit `Route` and `WebSocketRoute` declarations and Flask `app.add_url_rule` endpoint registrations in Python AST parser (`cbi-5ru.1`).
 - Auto-initialization in `cbi scan` when a custom `--out` directory is clean or missing (`cbi-5ru.3`).
+- `--metric` argument alias in `cbi hotspots` matching MCP parameter name (`cbi-kr7`).
+- `--start` and `--end` argument aliases in `cbi deps` matching MCP parameter names (`cbi-2va.3`).
 
 ### Changed
 
@@ -32,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mermaid ER diagram attribute type formatting for precision/scale types and escaped double quotes.
 - Diff hunk parsing in git_line_stats for content lines starting with --- or +++.
 - Guarded history_points git rev-parse against root merge commits and shallow CI clones.
+- MCP `cbi_tasks` schema declared `offset` integer property for pagination and `cbi_diff` declared `base_model`/`head_model` (`cbi-zfg`).
+- MCP `cbi_tests_for`, `cbi_search`, and `cbi_hotspots` schemas declared `format` property with text/json enum (`cbi-2cj`).
+- Architecture documentation header aligned to cover PRD-01 to PRD-08 (`cbi-2va.2`).
 
 
 ## [0.4.0] - 2026-11-09
