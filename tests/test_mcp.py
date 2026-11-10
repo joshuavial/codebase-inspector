@@ -154,6 +154,11 @@ def test_tools_list():
         "cbi_tables",
         "cbi_query",
         "cbi_concepts",
+        "cbi_deps",
+        "cbi_cycles",
+        "cbi_orphans",
+        "cbi_hotspots",
+        "cbi_status",
     ]
     for name in query_tools_with_ref:
         assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
@@ -2579,6 +2584,95 @@ def test_query_tools_ref_parameter(repo):
     # Empty string ref returns isError: True
     res_empty = server.execute_tool("cbi_query", {"sql": "SELECT 1", "ref": "   "})
     assert res_empty["isError"] is True
+
+
+def test_graph_analysis_tools_ref_parameter(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Scan HEAD into refs/<head_sha>/model.db
+    scan_res = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    assert not scan_res["isError"]
+    scan_data = json.loads(scan_res["content"][0]["text"])
+    head_sha = scan_data["ref"]
+    assert head_sha is not None and len(head_sha) == 40
+
+    # 2. Verify all 5 dependency and graph analysis tools work with ref="HEAD"
+    # cbi_status
+    status_res = server.execute_tool("cbi_status", {"ref": "HEAD", "format": "json"})
+    assert not status_res["isError"]
+    status_data = json.loads(status_res["content"][0]["text"])
+    assert "nodes" in status_data
+    assert "open_tasks" in status_data
+
+    status_txt_res = server.execute_tool("cbi_status", {"ref": "HEAD", "format": "text"})
+    assert not status_txt_res["isError"]
+
+    # cbi_hotspots
+    hotspots_res = server.execute_tool("cbi_hotspots", {"metric": "fan-in", "ref": "HEAD"})
+    assert not hotspots_res["isError"]
+    assert "fan-in" in hotspots_res["content"][0]["text"]
+
+    # cbi_cycles
+    cycles_res = server.execute_tool("cbi_cycles", {"ref": "HEAD", "format": "json"})
+    assert not cycles_res["isError"]
+    cycles_data = json.loads(cycles_res["content"][0]["text"])
+    assert "files" in cycles_data
+
+    cycles_txt_res = server.execute_tool("cbi_cycles", {"ref": "HEAD", "format": "text"})
+    assert not cycles_txt_res["isError"]
+
+    # cbi_orphans
+    orphans_res = server.execute_tool("cbi_orphans", {"ref": "HEAD", "format": "json"})
+    assert not orphans_res["isError"]
+    orphans_data = json.loads(orphans_res["content"][0]["text"])
+    assert "unreferenced" in orphans_data
+
+    orphans_txt_res = server.execute_tool("cbi_orphans", {"ref": "HEAD", "format": "text"})
+    assert not orphans_txt_res["isError"]
+
+    # cbi_deps
+    deps_res = server.execute_tool("cbi_deps", {"level": "folder", "ref": "HEAD", "format": "json"})
+    assert not deps_res["isError"]
+    deps_data = json.loads(deps_res["content"][0]["text"])
+    assert deps_data["level"] == "folder"
+
+    deps_txt_res = server.execute_tool("cbi_deps", {"level": "folder", "ref": "HEAD", "format": "text"})
+    assert not deps_txt_res["isError"]
+
+    # 3. Verify tools work with explicit commit SHA ref
+    status_sha_res = server.execute_tool("cbi_status", {"ref": head_sha, "format": "json"})
+    assert not status_sha_res["isError"]
+
+    hotspots_sha_res = server.execute_tool("cbi_hotspots", {"metric": "fan-in", "ref": head_sha})
+    assert not hotspots_sha_res["isError"]
+
+    cycles_sha_res = server.execute_tool("cbi_cycles", {"ref": head_sha, "format": "json"})
+    assert not cycles_sha_res["isError"]
+
+    orphans_sha_res = server.execute_tool("cbi_orphans", {"ref": head_sha, "format": "json"})
+    assert not orphans_sha_res["isError"]
+
+    deps_sha_res = server.execute_tool("cbi_deps", {"level": "folder", "ref": head_sha, "format": "json"})
+    assert not deps_sha_res["isError"]
+
+    # 4. Verify non-existent ref returns isError: True across all 5 graph analysis tools
+    bad_ref_cases = [
+        ("cbi_status", {"ref": "nonexistent-ref"}),
+        ("cbi_hotspots", {"metric": "fan-in", "ref": "nonexistent-ref"}),
+        ("cbi_cycles", {"ref": "nonexistent-ref"}),
+        ("cbi_orphans", {"ref": "nonexistent-ref"}),
+        ("cbi_deps", {"ref": "nonexistent-ref"}),
+    ]
+    for tool_name, args in bad_ref_cases:
+        res = server.execute_tool(tool_name, args)
+        assert res["isError"] is True, f"Expected {tool_name} with nonexistent ref to return isError=True"
+        assert "No CBI model found for ref" in res["content"][0]["text"]
+
+    # Empty string ref returns isError: True
+    for tool_name in ["cbi_status", "cbi_hotspots", "cbi_cycles", "cbi_orphans", "cbi_deps"]:
+        res_empty = server.execute_tool(tool_name, {"ref": "   "})
+        assert res_empty["isError"] is True, f"Expected {tool_name} with empty ref to return isError=True"
+
 
 
 
