@@ -133,6 +133,71 @@ def test_binary_counts_as_one_changed_file(make_repo, tmp_path):
     assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary file")
 
 
+def test_git_line_stats_diff_hunk_with_dashes_and_pluses(make_repo):
+    base_doc = (
+        "---\n"
+        "title: Old Doc\n"
+        "---\n"
+        "-- old option\n"
+        "---x;\n"
+        "keep this\n"
+        "old footer\n"
+    )
+    head_doc = (
+        "---\n"
+        "title: New Doc\n"
+        "---\n"
+        "++ new option\n"
+        "+++y;\n"
+        "keep this\n"
+        "new footer\n"
+    )
+    base_front = (
+        "# Simple\n"
+        "No frontmatter\n"
+        "-- comment\n"
+        "keep\n"
+    )
+    head_front = (
+        "---\n"
+        "title: Added frontmatter\n"
+        "---\n"
+        "# Simple\n"
+        "No frontmatter\n"
+        "++ comment\n"
+        "keep\n"
+    )
+    root = make_repo({
+        "doc.md": base_doc,
+        "front.md": base_front,
+        "app.ts": "export const x = 1;\n",
+    }, name="diff-hunk-parse")
+    base_sha = sha(root)
+    commit_tree(root, {
+        "doc.md": head_doc,
+        "front.md": head_front,
+        "app.ts": "export const x = 2;\n",
+    })
+    head_sha = sha(root)
+    stats = change_overview.git_line_stats(root, base_sha, head_sha)
+    assert stats["doc.md"]["old_path"] == "doc.md"
+    assert stats["doc.md"]["path"] == "doc.md"
+    assert stats["doc.md"]["additions"] == 4
+    assert stats["doc.md"]["deletions"] == 4
+    assert stats["doc.md"]["added_lines"] == [2, 4, 5, 7]
+    assert stats["doc.md"]["deleted_lines"] == [2, 4, 5, 7]
+
+    assert stats["front.md"]["additions"] == 4
+    assert stats["front.md"]["deletions"] == 1
+    assert stats["front.md"]["added_lines"] == [1, 2, 3, 6]
+    assert stats["front.md"]["deleted_lines"] == [3]
+
+    assert stats["app.ts"]["additions"] == 1
+    assert stats["app.ts"]["deletions"] == 1
+    assert stats["app.ts"]["added_lines"] == [1]
+    assert stats["app.ts"]["deleted_lines"] == [1]
+
+
 def test_nested_index_distinguishes_rollups_and_preserves_evidence_verbs(
         make_repo, monkeypatch, tmp_path, capsys):
     files = {
