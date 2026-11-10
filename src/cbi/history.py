@@ -53,10 +53,15 @@ def history_points(root, since=None, until=None):
     merges = _git(root, "log", "--first-parent", "--merges", "--format=%H", branch).stdout.splitlines()
     before_first_merge = set()
     if merges:
-        first_parent = _git(root, "rev-parse", f"{merges[-1]}^").stdout.strip()
-        before_first_merge = set(
-            _git(root, "rev-list", "--first-parent", first_parent).stdout.splitlines()
+        first_parent = _git(
+            root, "rev-parse", "--verify", "--quiet", f"{merges[-1]}^", check=False
         )
+        if first_parent.returncode == 0 and first_parent.stdout.strip():
+            rev_list = _git(
+                root, "rev-list", "--first-parent", first_parent.stdout.strip(), check=False
+            )
+            if rev_list.returncode == 0:
+                before_first_merge = set(rev_list.stdout.splitlines())
     points = []
     for line in raw.splitlines():
         fields = line.split("\0", 4)

@@ -99,6 +99,50 @@ def test_history_points_includes_squash_merged_prs_after_merges(make_repo):
     assert squash_point_2["pr"] == 3
 
 
+def test_history_points_handles_unresolvable_merge_parent(make_repo, monkeypatch):
+    merged = make_repo({"a.py": "x = 1\n"}, name="unresolvable")
+    git(merged, "checkout", "-q", "-b", "feature")
+    commit(merged, "inside branch", **{"b.py": "y = 2\n"})
+    git(merged, "checkout", "-q", "main")
+    git(merged, "merge", "--no-ff", "-m", "Merge pull request #1 from feature", "feature")
+    merge_sha = git(merged, "rev-parse", "HEAD")
+
+    orig_git = history._git
+
+    class FakeFailure:
+        returncode = 1
+        stdout = ""
+        stderr = "fatal: Needed a single revision"
+
+    # rev-parse failure when resolving merges[-1]^ (e.g. shallow commit or root merge)
+    def fake_git_rev_parse_fail(root, *args, check=True):
+        if args and args[0] == "rev-parse" and f"{merge_sha}^" in args:
+            res = FakeFailure()
+            if check and res.returncode:
+                raise history.HistoryError(res.stderr)
+            return res
+        return orig_git(root, *args, check=check)
+
+    monkeypatch.setattr(history, "_git", fake_git_rev_parse_fail)
+    points = history.history_points(merged, since="2000-01-01")
+    assert points
+    assert any(point["sha"] == merge_sha for point in points)
+
+    # rev-list failure when parent object cannot be traversed (e.g. shallow clone missing parent)
+    def fake_git_rev_list_fail(root, *args, check=True):
+        if args and args[0] == "rev-list":
+            res = FakeFailure()
+            if check and res.returncode:
+                raise history.HistoryError(res.stderr)
+            return res
+        return orig_git(root, *args, check=check)
+
+    monkeypatch.setattr(history, "_git", fake_git_rev_list_fail)
+    points = history.history_points(merged, since="2000-01-01")
+    assert points
+    assert any(point["sha"] == merge_sha for point in points)
+
+
 def test_project_concepts_keeps_move_and_marks_folder_guess(tmp_path):
     current = sqlite3.connect(tmp_path / "current.db")
     point = sqlite3.connect(tmp_path / "point.db")
