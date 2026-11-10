@@ -90,7 +90,10 @@ cbi cycles             # Detect circular import dependencies
 cbi hotspots           # Rank files and folders by coupling (fan-in/fan-out)
 cbi endpoints          # List HTTP routes with handlers, callers, and database tables
 cbi tables             # List database tables, columns, foreign keys, and code references
+cbi diff BASE HEAD     # Compare architecture between two commits, branches, or models
 cbi review BASE..HEAD  # Generate architectural PR review & Mermaid graph
+cbi history            # Architecture evolution and changelog across git history
+cbi render             # Export PNG and SVG diagrams of a concept map or diff
 cbi build              # Export interactive static HTML viewer
 cbi gallery [repos...] # Generate offline multi-repository architecture showcase
 cbi check              # CI gate: fail if committed map drifts from source
@@ -221,11 +224,41 @@ See [`docs/github-action.md`](docs/github-action.md) for complete action configu
 
 The gate reads the working tree and committed answers without calling a model. Commit `.cbi/answers.jsonl`, `concepts.json`, `structure.json`, `screens.json`, `ignore`, `team.toml` and the generated `.gitignore` as appropriate for the repository.
 
+### CI Gatekeeper (`cbi check`)
+
+Run `cbi check` in continuous integration to verify that the committed architecture map and judgements stay synchronized with code changes since the merge base:
+
+```bash
+# Verify changes against the default branch (main/master)
+cbi check
+
+# Compare against a specific base ref (e.g. PR target branch in CI)
+cbi check --base origin/main
+
+# Output GitHub Actions workflow annotations (::error file=...::)
+cbi check --base origin/main --format github
+
+# Filter findings by kind (e.g. naming, cycles, edges, orphans, summary, owner, json, secret)
+cbi check --kind cycles
+cbi check --kind naming
+
+# Structured JSON output for CI pipelines and automation
+cbi check --json
+```
+
+Key CI options:
+* `--base REF`: Compare against the merge base with `REF` (such as `origin/main` or `${{ github.base_ref }}`) instead of the default branch.
+* `--kind KIND`: Filter check findings by kind (e.g. `naming`, `cycles`, `edges`, `orphans`, `summary`, `owner`, `json`, `secret`).
+* `--format {text,github,json}`: Choose output format (`text` default, `github` annotations, or `json`).
+* `--json`: Standardized flag equivalent to `--format json`. Emits `{"passed": bool, "problems": [...], "findings": [...]}` with exit code `0` on success (or warn mode) and `1` on check failure.
+
+---
+
 ## Explain an architectural change
 
 Run `cbi diff BASE HEAD` or `cbi review BASE..HEAD` to open judgement tasks for each changed concept and the whole diff. The tool supplies facts; an agent supplies the explanations.
 
-```
+```bash
 cbi tasks --kind summarise-architecture-change
 cbi task TASK_ID --json
 cbi submit TASK_ID answer.json
@@ -236,6 +269,149 @@ cbi build --compare BASE..HEAD
 The task commands work without `--ref`, including after a fresh `cbi init` followed by a diff: cbi records which comparison head holds that inbox when an ordinary model has not been scanned yet.
 
 Each answer copies the brief's `input_hash`, gives a `narrative` paragraph explaining what changed, why it matters, affected callers/users and risk, and lists `citations` copied from the allowed symbol IDs/file paths. References outside the supplied diff are rejected. Answers are reused across diff, review and viewer builds until either model changes. Unanswered summaries show `Summary pending: run cbi tasks`.
+
+### Architectural PR Reviews (`cbi review`)
+
+Generate a comprehensive architectural code review of changes between two git versions or for a pull request, complete with Mermaid diagrams, changed concepts, and untested changes:
+
+```bash
+# Review a pull request by PR number (fetches metadata via GitHub CLI gh)
+cbi review 123
+
+# Review a branch against main or a specified base
+cbi review feat/new-auth --base origin/main
+
+# Review an explicit commit range
+cbi review v1.2.0..v1.3.0
+
+# Automatically post or update review comment on the GitHub PR
+cbi review 123 --post
+
+# Output machine-readable JSON review
+cbi review 123 --json
+
+# Save review to a custom output directory
+cbi review 123 --out-dir dist/reviews/pr-123
+```
+
+Options:
+* `target`: A pull request number (e.g. `cbi review 123`), branch name, commit SHA, or `BASE..HEAD` revision range.
+* `--base REF`: Base reference when target is a branch or commit, or to override a pull request's base branch.
+* `--format {markdown,json}`: Review output format (`markdown` default with summary, Mermaid flowchart, and concept breakdown; `json` for machine-readable review data).
+* `--json`: Standardized flag equivalent to `--format json`.
+* `--post`: Automatically publish or update the review as a comment on the GitHub pull request using `gh pr comment` (tracks earlier comments using the `<!-- cbi-review -->` marker).
+* `--out-dir DIR`: Directory for `review.md` and diagrams (default: `.cbi/reviews/<base>..<head>`).
+* `--out DIR`: Model directory to scan refs into (default: `.cbi/`).
+
+### Architectural Diff and Drill-Downs (`cbi diff`)
+
+Compare two revisions or models to see structural changes in attention order (integration points, unlinked tests, structure changes, relationships, churn, and symbols):
+
+```bash
+# High-level architectural diff between two refs
+cbi diff main feat/user-profiles
+
+# Drill into changes within a specific concept
+cbi diff main HEAD --concept accounts
+
+# Drill into changes within a specific presentation module
+cbi diff main HEAD --module accounts/views
+
+# Drill into changes for a specific file
+cbi diff main HEAD --file src/auth/jwt.py
+
+# Drill into changes for a specific function or class
+cbi diff main HEAD --symbol Authenticator
+
+# Print exhaustive structural change list instead of overview
+cbi diff main HEAD --detail
+
+# Output diff as Markdown or structured JSON
+cbi diff main HEAD --format markdown
+cbi diff main HEAD --json
+```
+
+Options:
+* `base`, `head`: Git refs to compare (e.g. `cbi diff main feat`). Alternatively pass `--base-model PATH` and `--head-model PATH` to compare standalone model databases.
+* `--concept ID`: Drill into changes within a specific concept by ID.
+* `--module ID`: Drill into changes within a specific presentation module by ID.
+* `--file PATH`: Drill into changes within a specific file by path or node ID.
+* `--symbol ID`: Drill into changes within a specific function or class by name or symbol ID.
+* `--detail`: Print the exhaustive structural list of every changed node and edge instead of the high-level attention overview.
+* `--format {text,markdown,json}`: Format of the diff output (`text` default, `markdown` with headings, or `json`).
+* `--json`: Standardized JSON output flag.
+
+### Architecture History (`cbi history`)
+
+Track the evolution of your architecture across git history on the default branch:
+
+```bash
+# View architecture changelog for the default branch (default: last 6 months)
+cbi history
+
+# Filter history by date range
+cbi history --since 2026-01-01 --until 2026-06-30
+
+# Filter changes involving a specific concept
+cbi history --concept payments --limit 10
+
+# Write and incrementally maintain .cbi/CHANGELOG-ARCHITECTURE.md
+cbi history --write
+
+# Open an interactive summarise-change task to explain a historical commit
+cbi history --narrate 7a3b4c1
+
+# Output history as Markdown or JSON
+cbi history --format markdown
+cbi history --json
+```
+
+Options:
+* `--since DATE`: Include entries on or after this ISO date (e.g. `2026-01-01`; defaults to six months ago).
+* `--until DATE`: Include entries on or before this ISO date.
+* `--concept ID`: Filter changelog entries to changes involving this concept ID.
+* `--limit N`: Limit to the N most recent entries (newest first).
+* `--write`: Write and update `.cbi/CHANGELOG-ARCHITECTURE.md` (read by `cbi prime` and agents).
+* `--narrate SHA`: Open a `summarise-change` task to supply an agent narrative for one historical commit.
+* `--format {text,markdown,json}`: Output format (`text` default, `markdown`, or `json`).
+* `--json`: Standardized JSON output flag.
+
+### Visual Diagram Rendering (`cbi render`)
+
+Export standalone SVG vector graphics and PNG raster images of concept maps or comparison views using headless Chrome:
+
+```bash
+# Render top-level concept map to PNG and SVG
+cbi render --view top --png architecture.png --svg architecture.svg
+
+# Render change overview diagram comparing two revisions
+cbi render --view overview --compare v1.0.0..HEAD --png diff.png --svg diff.svg
+
+# Render a specific concept map
+cbi render --view accounts --png accounts.png --svg accounts.svg
+
+# Select comparison side (head: added/changed, base: removed/changed)
+cbi render --view top --compare origin/main..HEAD --side head --png pr-changes.png --svg pr-changes.svg
+```
+
+Options:
+* `--view top|overview|ID`: View to render: `top` (top-level concept map), `overview` (level-0 change overview), or a concept `ID` (sub-map for that concept). Required.
+* `--compare BASE..HEAD`: Compare two git refs and highlight architectural additions, modifications, and removals.
+* `--side {base,head}`: When comparing, `head` (default) draws added and changed elements; `base` draws removed and changed elements.
+* `--png PATH`: Path where the rendered PNG image will be written. Required.
+* `--svg PATH`: Path where the rendered SVG vector graphic will be written. Required.
+* `--out DIR`: Model directory to read (default `.cbi/`).
+
+### Standardized JSON Output (`--json`)
+
+For seamless automation, CI pipelines, and AI agent tool chains, CBI commands support a standardized `--json` flag:
+
+* `cbi check --json`: Returns `{ "passed": boolean, "problems": string[], "findings": object[] }` with exit code `0` on clean pass or warn mode, and `1` on check failure.
+* `cbi diff ... --json`: Returns structured diff metrics, concept overview, and drill-down records.
+* `cbi review ... --json`: Returns structural PR comparison, changed concepts, and test coverage gaps as JSON.
+* `cbi history ... --json`: Returns default-branch architecture changelog entries and diff summaries as JSON.
+
+This uniform flag complements existing JSON-enabled query and inspection commands (`cbi query --json`, `cbi endpoints --json`, `cbi tables --json`, `cbi status --json`, `cbi search --json`, `cbi show --json`, `cbi tests-for --json`, `cbi hotspots --json`, `cbi cycles --json`, `cbi orphans --json`, `cbi deps --json`, `cbi tasks --json`, `cbi task --json`).
 
 ## Desktop App
 
