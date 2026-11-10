@@ -171,6 +171,12 @@ def test_tools_list():
         assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
         assert tools_by_name[name]["inputSchema"]["properties"]["ref"]["type"] == "string"
 
+    for name in ("cbi_tests_for", "cbi_search", "cbi_hotspots"):
+        props = tools_by_name[name]["inputSchema"]["properties"]
+        assert "format" in props
+        assert props["format"]["type"] == "string"
+        assert props["format"]["enum"] == ["text", "json"]
+
 
 def test_resources_list():
     server = MCPServer()
@@ -866,6 +872,21 @@ def test_tools_call_tests_for(repo):
     text = resp["result"]["content"][0]["text"]
     assert "circle.test.ts" in text or "measures the area" in text
 
+    # JSON format
+    req_json = {
+        "jsonrpc": "2.0",
+        "id": 32,
+        "method": "tools/call",
+        "params": {"name": "cbi_tests_for", "arguments": {"target": "src/shapes/circle.ts", "format": "json"}},
+    }
+    resp_json = server.handle_request(req_json)
+    assert resp_json["id"] == 32
+    assert not resp_json["result"]["isError"]
+    data = json.loads(resp_json["result"]["content"][0]["text"])
+    assert "node" in data
+    assert "tests" in data
+    assert any("circle.test.ts" in t["path"] or "measures the area" in t["name"] for t in data["tests"])
+
     # Missing target argument
     req_missing = {
         "jsonrpc": "2.0",
@@ -892,6 +913,20 @@ def test_tools_call_search(repo):
     text = resp["result"]["content"][0]["text"]
     assert "Circle" in text
 
+    # JSON format
+    req_json = {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "tools/call",
+        "params": {"name": "cbi_search", "arguments": {"query": "Circle", "format": "json"}},
+    }
+    resp_json = server.handle_request(req_json)
+    assert resp_json["id"] == 42
+    assert not resp_json["result"]["isError"]
+    data = json.loads(resp_json["result"]["content"][0]["text"])
+    assert isinstance(data, list)
+    assert any("Circle" in item["name"] for item in data)
+
     # Missing query argument
     req_missing = {
         "jsonrpc": "2.0",
@@ -917,6 +952,20 @@ def test_tools_call_hotspots(repo):
     assert not resp["result"]["isError"]
     text = resp["result"]["content"][0]["text"]
     assert "by fan-in" in text or "fan-in" in text
+
+    # JSON format
+    req_json = {
+        "jsonrpc": "2.0",
+        "id": 51,
+        "method": "tools/call",
+        "params": {"name": "cbi_hotspots", "arguments": {"metric": "fan-in", "format": "json"}},
+    }
+    resp_json = server.handle_request(req_json)
+    assert resp_json["id"] == 51
+    assert not resp_json["result"]["isError"]
+    data = json.loads(resp_json["result"]["content"][0]["text"])
+    assert data["by"] == "fan-in"
+    assert "files" in data
 
 
 def test_unknown_method_and_unknown_tool():

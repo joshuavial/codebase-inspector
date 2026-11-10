@@ -151,6 +151,11 @@ TOOLS = [
                     "type": "string",
                     "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
+                },
             },
             "required": ["target"],
         },
@@ -176,6 +181,11 @@ TOOLS = [
                 "ref": {
                     "type": "string",
                     "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
                 },
             },
             "required": ["query"],
@@ -203,6 +213,11 @@ TOOLS = [
                 "ref": {
                     "type": "string",
                     "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format: 'text' (default) or 'json'.",
+                    "enum": ["text", "json"],
                 },
             },
             "required": [],
