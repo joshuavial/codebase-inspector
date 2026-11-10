@@ -198,6 +198,15 @@ def test_git_line_stats_diff_hunk_with_dashes_and_pluses(make_repo):
     assert stats["app.ts"]["deleted_lines"] == [1]
 
 
+def test_git_line_stats_prevents_option_injection(make_repo, tmp_path):
+    root = make_repo({"a.ts": "export const a = 1\n"}, name="injection")
+    target = tmp_path / "injected.txt"
+    head = sha(root)
+    with pytest.raises(subprocess.CalledProcessError):
+        change_overview.git_line_stats(root, f"--output={target}", head)
+    assert not target.exists()
+
+
 def test_nested_index_distinguishes_rollups_and_preserves_evidence_verbs(
         make_repo, monkeypatch, tmp_path, capsys):
     files = {

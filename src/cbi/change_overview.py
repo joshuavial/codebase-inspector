@@ -28,7 +28,7 @@ def git_line_stats(root, base, head):
     """Return exact numstat and changed line numbers without touching the tree."""
     command = ["git", "-c", "core.quotePath=false", "diff", "--no-ext-diff", "-M"]
     raw = subprocess.run(
-        [*command, "--numstat", "-z", base, head, "--"], cwd=root, check=True,
+        [*command, "--numstat", "-z", "--end-of-options", base, head, "--"], cwd=root, check=True,
         capture_output=True,
     ).stdout
     parts = raw.split(b"\0")
@@ -58,7 +58,7 @@ def git_line_stats(root, base, head):
         stats[new_path or old_path] = row
 
     patch = subprocess.run(
-        [*command, "--no-color", "--unified=0", "--no-prefix", base, head, "--"],
+        [*command, "--no-color", "--unified=0", "--no-prefix", "--end-of-options", base, head, "--"],
         cwd=root, check=True, capture_output=True, text=True, errors="replace",
     ).stdout
     current = None
