@@ -93,7 +93,11 @@ TOOLS = [
                 "node": {
                     "type": "string",
                     "description": "A node ID, repo-relative path, path#symbol, symbol name, or 'system' (omit or pass 'system' for system architecture overview).",
-                }
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
             },
             "required": [],
         },
@@ -116,6 +120,10 @@ TOOLS = [
                     "type": "boolean",
                     "description": "Do not cap relationships or tests at 10 (default: false).",
                 },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' (default) or 'json'.",
@@ -134,7 +142,11 @@ TOOLS = [
                 "target": {
                     "type": "string",
                     "description": "A node ID, repo-relative path, path#symbol, or symbol name to find tests for.",
-                }
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
             },
             "required": ["target"],
         },
@@ -156,6 +168,10 @@ TOOLS = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 20).",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
             },
             "required": ["query"],
@@ -285,6 +301,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Maximum number of rows to return (default: 50, maximum: 500).",
                 },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'json' (default) or 'text'.",
@@ -303,6 +323,10 @@ TOOLS = [
                 "concept_id": {
                     "type": "string",
                     "description": "Optional concept ID to inspect (if omitted, lists all concepts).",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
                 "format": {
                     "type": "string",
@@ -397,6 +421,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional filter: database table name read or written by the endpoint.",
                 },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'json' (default), 'text', or 'markdown'.",
@@ -415,6 +443,10 @@ TOOLS = [
                 "table": {
                     "type": "string",
                     "description": "Optional filter: table name or id substring.",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
                 },
                 "format": {
                     "type": "string",
@@ -943,15 +975,32 @@ class MCPServer:
         self._stdout_lock = threading.Lock()
         self._scan_lock = threading.Lock()
 
-    def _get_connection(self):
-        if not self.model_path.is_file():
-            raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
-        conn = store.read_only(self.model_path)
+    def _get_connection(self, ref=None):
+        if ref is not None:
+            ref_str = str(ref).strip()
+            if not ref_str:
+                raise ValueError("ref parameter cannot be empty")
+            candidate = self.out / "refs" / ref_str / "model.db"
+            if not candidate.is_file():
+                try:
+                    sha = files.resolve_commit(self.root, ref_str)
+                    candidate = self.out / "refs" / sha / "model.db"
+                except Exception:
+                    pass
+            if not candidate.is_file():
+                raise ValueError(f"No CBI model found for ref '{ref}' at {self.out / 'refs' / ref / 'model.db'}")
+            model_file = candidate
+        else:
+            model_file = self.model_path
+            if not model_file.is_file():
+                raise FileNotFoundError(f"No CBI model found at {model_file}. Run `cbi scan` first.")
+
+        conn = store.read_only(model_file)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != store.SCHEMA_VERSION:
             conn.close()
             raise sqlite3.DatabaseError(
-                f"{self.model_path} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
+                f"{model_file} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
             )
         tasks.attach_cache(conn, readonly=True)
         return conn
@@ -1512,20 +1561,21 @@ class MCPServer:
             conn.close()
 
     def handle_context(self, args: dict) -> str:
-        node = args.get("node") or args.get("target")
-        place = context.Place(
-            repo=self.root,
-            model_root=self.out,
-            model_db=self.model_path,
-            branch=context.current_branch(self.root),
-        )
-        if not node or node == "system":
-            if not self.model_path.is_file():
-                raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
-            return context.render_system(self.model_path, place).rstrip()
-
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
         try:
+            db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+            place = context.Place(
+                repo=self.root,
+                model_root=self.out,
+                model_db=Path(db_path) if db_path else self.model_path,
+                branch=None if ref else context.current_branch(self.root),
+                ref=ref,
+            )
+            node = args.get("node") or args.get("target")
+            if not node or node == "system":
+                return context.render_system(conn, place).rstrip()
+
             found = query.resolve(conn, node)
             if not found:
                 raise ValueError(f"No node matches {node!r}")
@@ -1560,7 +1610,7 @@ class MCPServer:
             fmt = "text"
         as_json = fmt == "json"
 
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             err_buf = io.StringIO()
             with self._stdout_lock:
@@ -1593,7 +1643,7 @@ class MCPServer:
         target = args.get("target") or args.get("node")
         if not target:
             raise ValueError("Missing required argument: 'target'")
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             as_json = args.get("format") == "json"
             out_buf = io.StringIO()
@@ -1613,7 +1663,7 @@ class MCPServer:
         q = args.get("query") or args.get("text")
         if not q:
             raise ValueError("Missing required argument: 'query'")
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             words = q.split() if isinstance(q, str) else list(q)
             limit = args.get("limit", 20)
@@ -1753,7 +1803,7 @@ class MCPServer:
         limit = min(max(int(args.get("limit", 50)), 1), 500)
         fmt = args.get("format", "json")
 
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -1792,7 +1842,7 @@ class MCPServer:
         fmt = args.get("format", "text")
         as_json = fmt == "json"
 
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             if concept_id:
                 row = conn.execute(
@@ -1968,7 +2018,7 @@ class MCPServer:
             conn.close()
 
     def handle_endpoints(self, args: dict) -> str:
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             view = system_views.endpoint_view(conn)
             endpoints = system_views.filter_endpoints(
@@ -1988,7 +2038,7 @@ class MCPServer:
             conn.close()
 
     def handle_tables(self, args: dict) -> str:
-        conn = self._get_connection()
+        conn = self._get_connection(ref=args.get("ref"))
         try:
             view = system_views.database_view(conn)
             tables, rels = system_views.filter_tables(

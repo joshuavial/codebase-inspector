@@ -145,6 +145,20 @@ def test_tools_list():
     assert "kind" in tools_by_name["cbi_status"]["inputSchema"]["properties"]
     assert "kind" in tools_by_name["cbi_check"]["inputSchema"]["properties"]
 
+    query_tools_with_ref = [
+        "cbi_show",
+        "cbi_context",
+        "cbi_search",
+        "cbi_tests_for",
+        "cbi_endpoints",
+        "cbi_tables",
+        "cbi_query",
+        "cbi_concepts",
+    ]
+    for name in query_tools_with_ref:
+        assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
+        assert tools_by_name[name]["inputSchema"]["properties"]["ref"]["type"] == "string"
+
 
 def test_resources_list():
     server = MCPServer()
@@ -2479,6 +2493,93 @@ def test_install_client_config(tmp_path, monkeypatch):
     corrupt_file.write_text(json.dumps({"mcpServers": {}}))
     assert main(["mcp", "--install", "cursor"]) == 0
     assert main(["mcp", "--install"]) == 0
+
+
+def test_query_tools_ref_parameter(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Scan HEAD into refs/<head_sha>/model.db
+    scan_res = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    assert not scan_res["isError"]
+    scan_data = json.loads(scan_res["content"][0]["text"])
+    head_sha = scan_data["ref"]
+    assert head_sha is not None and len(head_sha) == 40
+
+    circle_node = "src/shapes/circle.ts"
+
+    # 2. Verify all 8 query tools work with ref="HEAD"
+    # cbi_context (with node)
+    ctx_res = server.execute_tool("cbi_context", {"node": circle_node, "ref": "HEAD"})
+    assert not ctx_res["isError"]
+    assert "# circle.ts" in ctx_res["content"][0]["text"]
+    assert "--ref HEAD" in ctx_res["content"][0]["text"]
+
+    # cbi_context (system overview when node omitted)
+    ctx_sys_res = server.execute_tool("cbi_context", {"ref": "HEAD"})
+    assert not ctx_sys_res["isError"]
+    assert "Architecture Overview" in ctx_sys_res["content"][0]["text"]
+
+    # cbi_show
+    show_res = server.execute_tool("cbi_show", {"node": circle_node, "ref": "HEAD"})
+    assert not show_res["isError"]
+    assert "Circle" in show_res["content"][0]["text"]
+
+    # cbi_search
+    search_res = server.execute_tool("cbi_search", {"query": "Circle", "ref": "HEAD"})
+    assert not search_res["isError"]
+    assert "Circle" in search_res["content"][0]["text"]
+
+    # cbi_tests_for
+    tests_res = server.execute_tool("cbi_tests_for", {"target": circle_node, "ref": "HEAD"})
+    assert not tests_res["isError"]
+
+    # cbi_endpoints
+    ep_res = server.execute_tool("cbi_endpoints", {"ref": "HEAD"})
+    assert not ep_res["isError"]
+
+    # cbi_tables
+    tables_res = server.execute_tool("cbi_tables", {"ref": "HEAD"})
+    assert not tables_res["isError"]
+
+    # cbi_query
+    query_res = server.execute_tool("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": "HEAD"})
+    assert not query_res["isError"]
+    query_data = json.loads(query_res["content"][0]["text"])
+    assert query_data["row_count"] == 1
+
+    # cbi_concepts
+    concepts_res = server.execute_tool("cbi_concepts", {"ref": "HEAD"})
+    assert not concepts_res["isError"]
+
+    # 3. Verify tools work with explicit commit SHA ref
+    show_sha_res = server.execute_tool("cbi_show", {"node": circle_node, "ref": head_sha})
+    assert not show_sha_res["isError"]
+    assert "Circle" in show_sha_res["content"][0]["text"]
+
+    query_sha_res = server.execute_tool("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": head_sha})
+    assert not query_sha_res["isError"]
+
+    # 4. Verify non-existent ref returns isError: True across all 8 query tools
+    bad_ref_cases = [
+        ("cbi_show", {"node": circle_node, "ref": "nonexistent-ref"}),
+        ("cbi_context", {"node": circle_node, "ref": "nonexistent-ref"}),
+        ("cbi_context", {"ref": "nonexistent-ref"}),
+        ("cbi_search", {"query": "Circle", "ref": "nonexistent-ref"}),
+        ("cbi_tests_for", {"target": circle_node, "ref": "nonexistent-ref"}),
+        ("cbi_endpoints", {"ref": "nonexistent-ref"}),
+        ("cbi_tables", {"ref": "nonexistent-ref"}),
+        ("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": "nonexistent-ref"}),
+        ("cbi_concepts", {"ref": "nonexistent-ref"}),
+    ]
+    for tool_name, args in bad_ref_cases:
+        res = server.execute_tool(tool_name, args)
+        assert res["isError"] is True, f"Expected {tool_name} with nonexistent ref to return isError=True"
+        assert "No CBI model found for ref" in res["content"][0]["text"]
+
+    # Empty string ref returns isError: True
+    res_empty = server.execute_tool("cbi_query", {"sql": "SELECT 1", "ref": "   "})
+    assert res_empty["isError"] is True
+
 
 
 
