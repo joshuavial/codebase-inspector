@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `cbi render`: headless Chrome diagram rendering (--view top|overview|ID, --compare, --png, --svg).
+- `cbi history`: default-branch architecture history tracking (--since, --until, --concept, --limit, --write, --narrate, --json).
+- Historical `ref` parameter across MCP inspection and graph analysis tools (cbi_show, cbi_context, cbi_deps, cbi_cycles, cbi_orphans, cbi_hotspots, cbi_status, etc.).
+- Standardized `--json` flag across review, diff, history, and check CLI commands.
+- CI flags for `cbi check` (--base, --kind, --format {text,github,json}, and --json).
 - Isolated out-of-tree model directory cache in `cbi gallery` via `--cache-dir` (default: `<out-dir>/models/<repo_name>/model.db`), guaranteeing external repositories remain strictly read-only without in-tree modifications or untracked `.cbi/` directories (`cbi-5ru.2`).
 - Detected Starlette and FastAPI explicit `Route` and `WebSocketRoute` declarations and Flask `app.add_url_rule` endpoint registrations in Python AST parser (`cbi-5ru.1`).
 - Auto-initialization in `cbi scan` when a custom `--out` directory is clean or missing (`cbi-5ru.3`).
@@ -18,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cbi scan` takes the git index blob id of tracked files that `git diff-files` sees as unchanged instead of reading them from disk, cutting the hash phase on large repos several-fold. Files with filters, working-tree encodings, assume-unchanged or skip-worktree flags are still read, and line-ending conversions are checked against the blob size, so hashes stay identical to raw-bytes hashing (`cbi-4dx.1`).
 - Concurrent AST symbol parsing in `_parse_changed` using a `ThreadPoolExecutor` worker pool across CPU cores (capped or overridden by `CBI_PARSE_WORKERS`), maintaining deterministic model insertion and transaction rollback on error (`cbi-4dx.2`).
 - Concurrent Markdown document reading and mention extraction in `docs.py` using a `ThreadPoolExecutor`, speeding up doc indexing across repositories with extensive documentation while preserving doc ordering (`cbi-4dx.3`).
+
+### Fixed
+
+- Attention ranking in change overview for concept-renamed and integration-removed.
+- Recognition of squash-merged pull requests as architecture history points.
+- MCP domain error propagation with isError: True instead of plain text.
+- Mermaid ER diagram attribute type formatting for precision/scale types and escaped double quotes.
+- Diff hunk parsing in git_line_stats for content lines starting with --- or +++.
+- Guarded history_points git rev-parse against root merge commits and shallow CI clones.
 
 
 ## [0.4.0] - 2026-11-09
