@@ -62,29 +62,34 @@ def git_line_stats(root, base, head):
         cwd=root, check=True, capture_output=True, text=True, errors="replace",
     ).stdout
     current = None
+    in_hunk = False
     old_line = new_line = 0
     for line in patch.splitlines():
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            in_hunk = False
+            current = None
+        elif not in_hunk and line.startswith("--- "):
             old_path = line[4:].split("\t", 1)[0]
             if old_path == "/dev/null":
                 old_path = ""
             current = next((r for r in stats.values() if r["old_path"] == old_path), None)
-        elif line.startswith("+++ "):
+        elif not in_hunk and line.startswith("+++ "):
             new_path = line[4:].split("\t", 1)[0]
             if new_path == "/dev/null":
                 new_path = ""
             current = stats.get(new_path) or current
         elif line.startswith("@@"):
+            in_hunk = True
             match = re.search(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
             if match:
                 old_line, new_line = map(int, match.groups())
-        elif current is not None and line.startswith("+"):
+        elif in_hunk and current is not None and line.startswith("+"):
             current["added_lines"].append(new_line)
             new_line += 1
-        elif current is not None and line.startswith("-"):
+        elif in_hunk and current is not None and line.startswith("-"):
             current["deleted_lines"].append(old_line)
             old_line += 1
-        elif current is not None and line.startswith(" "):
+        elif in_hunk and current is not None and line.startswith(" "):
             old_line += 1
             new_line += 1
     return stats
