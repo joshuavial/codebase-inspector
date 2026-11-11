@@ -264,9 +264,9 @@ def test_review_step_resolution_pr_event(tmp_path):
     assert "falling back to parent commit 'HEAD~1'" not in res.stdout
 
 
-def extract_action_inputs(action_path: Path) -> dict[str, dict[str, str]]:
+def extract_action_inputs(action_yaml: str) -> dict[str, dict[str, str]]:
     """Parse inputs section from action.yml into a dictionary."""
-    lines = action_path.read_text(encoding="utf-8").splitlines()
+    lines = action_yaml.splitlines()
     inputs = {}
     in_inputs = False
     current_input = None
@@ -287,9 +287,9 @@ def extract_action_inputs(action_path: Path) -> dict[str, dict[str, str]]:
     return inputs
 
 
-def extract_step_definition(action_path: Path, step_id: str) -> dict[str, str]:
+def extract_step_definition(action_yaml: str, step_id: str) -> dict[str, str]:
     """Extract step metadata and full run script for a step by step_id."""
-    lines = action_path.read_text(encoding="utf-8").splitlines()
+    lines = action_yaml.splitlines()
     step_info = {"id": step_id, "run": ""}
     capturing = False
     in_run_block = False
@@ -332,8 +332,11 @@ def extract_step_definition(action_path: Path, step_id: str) -> dict[str, str]:
 
 def test_action_verification_inputs_contract():
     """Verify fail-on-cycles, fail-on-orphans, forbid, and level inputs are defined."""
-    for path in (ACTION_YML, CBI_CHECK_ACTION_YML):
-        inputs = extract_action_inputs(path)
+    for action_yaml in (
+        ACTION_YML.read_text(encoding="utf-8"),
+        CBI_CHECK_ACTION_YML.read_text(encoding="utf-8"),
+    ):
+        inputs = extract_action_inputs(action_yaml)
         assert "fail-on-cycles" in inputs
         assert inputs["fail-on-cycles"]["default"] == "false"
         assert inputs["fail-on-cycles"]["required"] == "false"
@@ -357,23 +360,28 @@ def test_action_verification_inputs_contract():
 
 def test_action_verification_steps_contract():
     """Verify cycles, orphans, and forbid steps exist with expected conditions and commands."""
-    for path in (ACTION_YML, CBI_CHECK_ACTION_YML):
-        cycles = extract_step_definition(path, "cycles-step")
+    for action_yaml in (
+        ACTION_YML.read_text(encoding="utf-8"),
+        CBI_CHECK_ACTION_YML.read_text(encoding="utf-8"),
+    ):
+        cycles = extract_step_definition(action_yaml, "cycles-step")
         assert cycles.get("if") == "inputs.fail-on-cycles == 'true'"
         assert "cbi cycles --fail" in cycles["run"]
 
-        orphans = extract_step_definition(path, "orphans-step")
+        orphans = extract_step_definition(action_yaml, "orphans-step")
         assert orphans.get("if") == "inputs.fail-on-orphans == 'true'"
         assert "cbi orphans --fail" in orphans["run"]
 
-        forbid = extract_step_definition(path, "forbid-step")
+        forbid = extract_step_definition(action_yaml, "forbid-step")
         assert forbid.get("if") == "inputs.forbid != ''"
         assert "cbi deps --level" in forbid["run"]
 
 
 def test_forbid_step_script_execution(tmp_path):
     """Verify forbid-step bash script parses single, newline, and comma-separated rules."""
-    step = extract_step_definition(CBI_CHECK_ACTION_YML, "forbid-step")
+    step = extract_step_definition(
+        CBI_CHECK_ACTION_YML.read_text(encoding="utf-8"), "forbid-step"
+    )
     raw_script = step["run"]
 
     # Create a mock bin dir with mock 'cbi' recording its arguments
@@ -437,8 +445,9 @@ exit 0
 
 def test_cycles_and_orphans_step_script_execution(tmp_path):
     """Verify cycles-step and orphans-step scripts execute cbi with --fail."""
-    cycles_step = extract_step_definition(CBI_CHECK_ACTION_YML, "cycles-step")
-    orphans_step = extract_step_definition(CBI_CHECK_ACTION_YML, "orphans-step")
+    action_yaml = CBI_CHECK_ACTION_YML.read_text(encoding="utf-8")
+    cycles_step = extract_step_definition(action_yaml, "cycles-step")
+    orphans_step = extract_step_definition(action_yaml, "orphans-step")
 
     bin_dir = tmp_path / "mock_bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
