@@ -270,7 +270,7 @@ Run `cbi team init` to opt the repository into committed judgement. Add the prin
   - run: cbi check
 ```
 
-Or use our reusable GitHub Action to run architecture checks and generate visual PR reviews:
+Or use our reusable GitHub Action to run architecture checks, detect cycles, enforce layering boundaries, and generate visual PR reviews:
 
 ```yaml
   - uses: actions/checkout@v4
@@ -279,7 +279,19 @@ Or use our reusable GitHub Action to run architecture checks and generate visual
   - uses: joshuavial/codebase-inspector@v0.5.0
     with:
       base-ref: ${{ github.base_ref || 'main' }}
+      fail-on-cycles: true
+      fail-on-orphans: false
+      forbid: "codebase-inspector:codebase-inspector-app"
+      level: "package"
 ```
+
+Action inputs:
+* `fail-on-cycles`: Fail CI if circular dependencies are detected between files, folders, or packages (default: `false`).
+* `fail-on-orphans`: Fail CI if unreferenced production code is detected (default: `false`).
+* `forbid`: Forbidden dependency rules (`FROM:TO` or `FROM->TO`), newline or comma separated (default: `""`).
+* `level`: Container level for forbid checks (`file`, `folder`, `package`; default: `package`).
+* `fail-on-problems`: Fail CI if `cbi check` discovers unowned files or missing summaries (default: `true`).
+* `review`: Generate architectural PR review Markdown and Mermaid diagrams (default: `true`).
 
 See [`docs/github-action.md`](docs/github-action.md) for complete action configuration, outputs, and PR commenting workflows.
 

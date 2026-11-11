@@ -14,6 +14,22 @@ inputs:
     description: "Whether to fail CI if cbi check discovers unowned files or missing summaries"
     required: false
     default: "true"
+  fail-on-cycles:
+    description: "Fail if circular dependencies are detected between files, folders, or packages"
+    required: false
+    default: "false"
+  fail-on-orphans:
+    description: "Fail if unreferenced production code is detected"
+    required: false
+    default: "false"
+  forbid:
+    description: "Forbidden dependency rules (FROM:TO or FROM->TO), newline or comma separated"
+    required: false
+    default: ""
+  level:
+    description: "Container level for forbid checks (file, folder, package)"
+    required: false
+    default: "package"
   review:
     description: "Whether to generate cbi review markdown output for PR comments and job step summary"
     required: false
@@ -144,6 +160,42 @@ runs:
           else
             echo "::warning::cbi check discovered problems, but fail-on-problems is false. Continuing workflow."
           fi
+        fi
+
+    - name: Run cbi cycles
+      id: cycles-step
+      if: inputs.fail-on-cycles == 'true'
+      shell: bash
+      run: |
+        echo "Running cbi cycles --fail..."
+        cbi cycles --fail
+
+    - name: Run cbi orphans
+      id: orphans-step
+      if: inputs.fail-on-orphans == 'true'
+      shell: bash
+      run: |
+        echo "Running cbi orphans --fail..."
+        cbi orphans --fail
+
+    - name: Run cbi deps forbid
+      id: forbid-step
+      if: inputs.forbid != ''
+      shell: bash
+      run: |
+        LEVEL="${{ inputs.level }}"
+        LEVEL="${LEVEL:-package}"
+        FORBID_RULES=()
+        while IFS= read -r rule || [ -n "$rule" ]; do
+          rule=$(echo "$rule" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          if [ -n "$rule" ] && [ "${rule#\#}" = "$rule" ]; then
+            FORBID_RULES+=("--forbid" "$rule")
+          fi
+        done <<< "$(echo "${{ inputs.forbid }}" | tr ',' '\n')"
+
+        if [ ${#FORBID_RULES[@]} -gt 0 ]; then
+          echo "Running cbi deps --level $LEVEL ${FORBID_RULES[*]}..."
+          cbi deps --level "$LEVEL" "${FORBID_RULES[@]}"
         fi
 
     - name: Run cbi review

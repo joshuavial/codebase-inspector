@@ -14,7 +14,12 @@ It runs 100% locally in your GitHub Actions runner using AST parsing and graph a
    - Emits native GitHub Actions annotations (`::error` and `::warning`) pointing directly to files needing attention.
    - Fails CI if unowned files or unreviewed changes are detected (configurable).
 
-2. **PR Architectural Review & Diagram (`cbi review`):**
+2. **Architecture Verification (`cbi cycles`, `cbi orphans`, `cbi deps`):**
+   - Detects circular dependencies at file, folder, and package levels (`fail-on-cycles: true`).
+   - Detects dead or unreferenced production code (`fail-on-orphans: true`).
+   - Enforces package or folder boundary layering rules via forbidden imports (`forbid: "pkgA:pkgB"`, `level: package`).
+
+3. **PR Architectural Review & Diagram (`cbi review`):**
    - Compares the pull request against the base branch (`base-ref` or `github.base_ref`).
    - Generates a structural change overview, untested change analysis, and a visual **Mermaid flowchart** of modified components and relationships.
    - Automatically publishes the full Markdown review to the GitHub Actions **Job Summary** tab.
@@ -110,6 +115,10 @@ jobs:
 |---|---|---|---|---|
 | `base-ref` | Target branch or commit SHA to compare changes against. For pull requests, use `${{ github.base_ref }}`. Requires full history (`fetch-depth: 0`). | string | `main` | No |
 | `fail-on-problems` | Whether to fail the workflow if `cbi check` discovers unowned files, missing summaries, or schema inconsistencies. | boolean | `true` | No |
+| `fail-on-cycles` | Fail if circular dependencies are detected between files, folders, or packages (`cbi cycles --fail`). | boolean | `false` | No |
+| `fail-on-orphans` | Fail if unreferenced production code is detected (`cbi orphans --fail`). | boolean | `false` | No |
+| `forbid` | Forbidden dependency rules (`FROM:TO` or `FROM->TO`), newline or comma separated (`cbi deps --forbid`). | string | `""` | No |
+| `level` | Container level for forbid checks (`file`, `folder`, `package`). | string | `package` | No |
 | `review` | Whether to generate the structural architectural review and Mermaid diff diagram for pull requests. | boolean | `true` | No |
 | `python-version` | Python runtime version for `uv` environment setup. | string | `3.13` | No |
 

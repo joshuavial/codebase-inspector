@@ -262,3 +262,220 @@ def test_review_step_resolution_pr_event(tmp_path):
     assert res.returncode == 0, f"Script failed: {res.stderr}\n{res.stdout}"
     assert "OUTPUT_RESOLVED_BASE_REF=main" in res.stdout
     assert "falling back to parent commit 'HEAD~1'" not in res.stdout
+
+
+def extract_action_inputs(action_path: Path) -> dict[str, dict[str, str]]:
+    """Parse inputs section from action.yml into a dictionary."""
+    lines = action_path.read_text(encoding="utf-8").splitlines()
+    inputs = {}
+    in_inputs = False
+    current_input = None
+    for line in lines:
+        if line.strip() == "inputs:":
+            in_inputs = True
+            continue
+        if in_inputs:
+            if line and not line.startswith(" ") and not line.startswith("\t"):
+                break
+            if line.startswith("  ") and not line.startswith("    ") and line.strip().endswith(":"):
+                current_input = line.strip()[:-1]
+                inputs[current_input] = {}
+            elif current_input and line.startswith("    ") and ":" in line:
+                key, val = line.strip().split(":", 1)
+                val = val.strip().strip('"').strip("'")
+                inputs[current_input][key] = val
+    return inputs
+
+
+def extract_step_definition(action_path: Path, step_id: str) -> dict[str, str]:
+    """Extract step metadata and full run script for a step by step_id."""
+    lines = action_path.read_text(encoding="utf-8").splitlines()
+    step_info = {"id": step_id, "run": ""}
+    capturing = False
+    in_run_block = False
+    script_lines = []
+
+    for i, line in enumerate(lines):
+        if f"id: {step_id}" in line:
+            capturing = True
+            for back in range(max(0, i - 4), i):
+                prev = lines[back].strip()
+                if prev.startswith("- name:"):
+                    step_info["name"] = prev.split(":", 1)[1].strip().strip('"').strip("'")
+                elif prev.startswith("if:"):
+                    step_info["if"] = prev.split(":", 1)[1].strip()
+            continue
+
+        if capturing:
+            stripped = line.strip()
+            if not in_run_block:
+                if stripped.startswith("if:"):
+                    step_info["if"] = stripped.split(":", 1)[1].strip()
+                elif stripped.startswith("shell:"):
+                    step_info["shell"] = stripped.split(":", 1)[1].strip()
+                elif stripped.startswith("run: |"):
+                    in_run_block = True
+                continue
+
+            if stripped.startswith("- name:"):
+                break
+            if line.startswith("        "):
+                script_lines.append(line[8:])
+            elif line.startswith("      "):
+                script_lines.append(line[6:])
+            else:
+                script_lines.append(line)
+
+    step_info["run"] = "\n".join(script_lines)
+    return step_info
+
+
+def test_action_verification_inputs_contract():
+    """Verify fail-on-cycles, fail-on-orphans, forbid, and level inputs are defined."""
+    for path in (ACTION_YML, CBI_CHECK_ACTION_YML):
+        inputs = extract_action_inputs(path)
+        assert "fail-on-cycles" in inputs
+        assert inputs["fail-on-cycles"]["default"] == "false"
+        assert inputs["fail-on-cycles"]["required"] == "false"
+        assert "circular dependencies" in inputs["fail-on-cycles"]["description"].lower()
+
+        assert "fail-on-orphans" in inputs
+        assert inputs["fail-on-orphans"]["default"] == "false"
+        assert inputs["fail-on-orphans"]["required"] == "false"
+        assert "unreferenced production code" in inputs["fail-on-orphans"]["description"].lower()
+
+        assert "forbid" in inputs
+        assert inputs["forbid"]["default"] == ""
+        assert inputs["forbid"]["required"] == "false"
+        assert "forbidden dependency rules" in inputs["forbid"]["description"].lower()
+
+        assert "level" in inputs
+        assert inputs["level"]["default"] == "package"
+        assert inputs["level"]["required"] == "false"
+        assert "container level" in inputs["level"]["description"].lower()
+
+
+def test_action_verification_steps_contract():
+    """Verify cycles, orphans, and forbid steps exist with expected conditions and commands."""
+    for path in (ACTION_YML, CBI_CHECK_ACTION_YML):
+        cycles = extract_step_definition(path, "cycles-step")
+        assert cycles.get("if") == "inputs.fail-on-cycles == 'true'"
+        assert "cbi cycles --fail" in cycles["run"]
+
+        orphans = extract_step_definition(path, "orphans-step")
+        assert orphans.get("if") == "inputs.fail-on-orphans == 'true'"
+        assert "cbi orphans --fail" in orphans["run"]
+
+        forbid = extract_step_definition(path, "forbid-step")
+        assert forbid.get("if") == "inputs.forbid != ''"
+        assert "cbi deps --level" in forbid["run"]
+
+
+def test_forbid_step_script_execution(tmp_path):
+    """Verify forbid-step bash script parses single, newline, and comma-separated rules."""
+    step = extract_step_definition(CBI_CHECK_ACTION_YML, "forbid-step")
+    raw_script = step["run"]
+
+    # Create a mock bin dir with mock 'cbi' recording its arguments
+    bin_dir = tmp_path / "mock_bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    cbi_mock = bin_dir / "cbi"
+    cbi_log = tmp_path / "cbi_log.txt"
+    cbi_mock.write_text(f"""#!/bin/bash
+echo "$@" >> "{cbi_log}"
+exit 0
+""")
+    cbi_mock.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    def run_forbid_script(forbid_val: str, level_val: str = "package") -> subprocess.CompletedProcess:
+        cbi_log.unlink(missing_ok=True)
+        substituted = raw_script.replace("${{ inputs.forbid }}", forbid_val)
+        substituted = substituted.replace("${{ inputs.level }}", level_val)
+        full_script = f"set -e\n{substituted}\n"
+        return run_command(
+            ["bash", "-c", full_script],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    # 1. Single rule
+    res1 = run_forbid_script("codebase-inspector:codebase-inspector-app", "package")
+    assert res1.returncode == 0
+    assert cbi_log.is_file()
+    assert (
+        cbi_log.read_text().strip()
+        == "deps --level package --forbid codebase-inspector:codebase-inspector-app"
+    )
+
+    # 2. Comma-separated rules
+    res2 = run_forbid_script("pkgA:pkgB, pkgC->pkgD", "package")
+    assert res2.returncode == 0
+    assert (
+        cbi_log.read_text().strip()
+        == "deps --level package --forbid pkgA:pkgB --forbid pkgC->pkgD"
+    )
+
+    # 3. Newline-separated rules with custom level
+    newline_rules = "pkg1:pkg2\n  pkg3->pkg4\n"
+    res3 = run_forbid_script(newline_rules, "folder")
+    assert res3.returncode == 0
+    assert (
+        cbi_log.read_text().strip()
+        == "deps --level folder --forbid pkg1:pkg2 --forbid pkg3->pkg4"
+    )
+
+    # 4. Empty rules (should not invoke cbi deps)
+    res4 = run_forbid_script("", "package")
+    assert res4.returncode == 0
+    assert not cbi_log.is_file()
+
+
+def test_cycles_and_orphans_step_script_execution(tmp_path):
+    """Verify cycles-step and orphans-step scripts execute cbi with --fail."""
+    cycles_step = extract_step_definition(CBI_CHECK_ACTION_YML, "cycles-step")
+    orphans_step = extract_step_definition(CBI_CHECK_ACTION_YML, "orphans-step")
+
+    bin_dir = tmp_path / "mock_bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    cbi_mock = bin_dir / "cbi"
+    cbi_log = tmp_path / "cbi_log.txt"
+    cbi_mock.write_text(f"""#!/bin/bash
+echo "$@" >> "{cbi_log}"
+exit 0
+""")
+    cbi_mock.chmod(0o755)
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+    # Cycles
+    cbi_log.unlink(missing_ok=True)
+    res_cycles = run_command(
+        ["bash", "-c", f"set -e\n{cycles_step['run']}\n"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert res_cycles.returncode == 0
+    assert cbi_log.is_file()
+    assert cbi_log.read_text().strip() == "cycles --fail"
+
+    # Orphans
+    cbi_log.unlink(missing_ok=True)
+    res_orphans = run_command(
+        ["bash", "-c", f"set -e\n{orphans_step['run']}\n"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert res_orphans.returncode == 0
+    assert cbi_log.is_file()
+    assert cbi_log.read_text().strip() == "orphans --fail"
+
