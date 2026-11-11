@@ -136,6 +136,9 @@ def test_missing_model_error_mentions_scan_and_preserves_out(make_repo, monkeypa
 def test_cli_json_flags():
     parser = cli.build_parser()
 
+    args_scan = parser.parse_args(["scan", "--json"])
+    assert args_scan.json is True
+
     args_diff = parser.parse_args(["diff", "--json"])
     assert args_diff.json is True
 
@@ -239,6 +242,61 @@ def test_hotspots_metric_alias_matches_by(make_repo, monkeypatch, capsys):
 
     assert text_metric == text_by
     assert "by loc" in text_metric
+
+
+def test_scan_json_output(make_repo, monkeypatch, capsys):
+    files = {
+        "a.py": "def foo(): pass\n",
+        "b.py": "class Bar:\n    pass\n",
+    }
+    repo = make_repo(files)
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0
+    capsys.readouterr()
+
+    # 1. cbi scan --json produces valid JSON parseable by json.loads with required fields
+    assert main(["scan", "--json"]) == 0
+    out_json = capsys.readouterr().out
+    data = json.loads(out_json)
+    assert data["ref"] is None
+    assert data["shortcut"] is False
+    assert isinstance(data["counts"], dict)
+    assert "source file" in data["counts"]
+    assert "open_tasks" in data and isinstance(data["open_tasks"], int)
+    assert "blocked_tasks" in data and isinstance(data["blocked_tasks"], int)
+    assert "elapsed_seconds" in data and isinstance(data["elapsed_seconds"], float)
+    assert "excluded_executables" in data and isinstance(data["excluded_executables"], int)
+
+    # Subsequent scan should hit shortcut
+    assert main(["scan", "--json"]) == 0
+    data_shortcut = json.loads(capsys.readouterr().out)
+    assert data_shortcut["shortcut"] is True
+    assert data_shortcut["ref"] is None
+
+    # 2. cbi scan --ref HEAD --json emits resolved SHA and counts
+    assert main(["scan", "--ref", "HEAD", "--json"]) == 0
+    out_ref = capsys.readouterr().out
+    data_ref = json.loads(out_ref)
+    assert data_ref["ref"] is not None and len(data_ref["ref"]) == 40
+    assert isinstance(data_ref["shortcut"], bool)
+    assert isinstance(data_ref["counts"], dict)
+    assert "source file" in data_ref["counts"]
+    assert "open_tasks" in data_ref and isinstance(data_ref["open_tasks"], int)
+    assert "blocked_tasks" in data_ref and isinstance(data_ref["blocked_tasks"], int)
+    assert "elapsed_seconds" in data_ref and isinstance(data_ref["elapsed_seconds"], float)
+
+    # 3. cbi scan without --json preserves existing human-readable text output
+    assert main(["scan"]) == 0
+    out_text = capsys.readouterr().out
+    assert "Excluded tracked executable files:" in out_text
+    assert ("scanned in" in out_text) or ("no changes since the last scan in" in out_text)
+    assert "judgement tasks" in out_text
+
+    assert main(["scan", "--ref", "HEAD"]) == 0
+    out_ref_text = capsys.readouterr().out
+    assert len(out_ref_text.splitlines()[0]) == 40
+    assert "judgement tasks" in out_ref_text
+
 
 
 

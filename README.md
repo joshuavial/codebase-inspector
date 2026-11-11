@@ -79,6 +79,7 @@ From any repository root:
 ```bash
 cbi prime              # Orientation guide for your agent
 cbi scan               # Map repository into .cbi/model.db (auto-initializes .cbi/)
+cbi scan --json        # Emit scan summary and task metrics as structured JSON
 cbi init               # Explicitly create .cbi/ to edit ignore rules before scanning
 cbi context [node]     # Architecture overview or node context for AI agents
 cbi mcp                # Run stdio Model Context Protocol server for coding agents
@@ -490,6 +491,7 @@ Options:
 
 For seamless automation, CI pipelines, and AI agent tool chains, CBI commands support a standardized `--json` flag:
 
+* `cbi scan --json`: Returns `{ "ref": string|null, "shortcut": boolean, "counts": object, "open_tasks": number, "blocked_tasks": number, "elapsed_seconds": number, "excluded_executables": number }` with scan timing, shortcut status, and node and task metrics.
 * `cbi check --json`: Returns `{ "passed": boolean, "problems": string[], "findings": object[] }` with exit code `0` on clean pass or warn mode, and `1` on check failure.
 * `cbi diff ... --json`: Returns structured diff metrics, concept overview, and drill-down records.
 * `cbi review ... --json`: Returns structured review data (`{ "base", "head", "spec", "result", "diagram", "mermaid", "review_file" }`) including structural PR comparison, changed concepts, Mermaid change graph, and test coverage gaps as JSON.
