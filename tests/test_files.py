@@ -366,3 +366,103 @@ def test_submodule_files_and_symlinks_hash_like_disk(make_repo, monkeypatch, tmp
     assert states["link.md"][4] is True
     assert states["link.md"][2] == files.blob_id(b"target.md")
     assert [os.path.relpath(p, root).replace("\\", "/") for p in reads] == ["vendor/lib/edit.py"]
+
+
+def test_commit_tree_concurrent_reads(make_repo):
+    import random
+    from concurrent.futures import ThreadPoolExecutor
+    from cbi import files
+
+    test_files = {
+        f"docs/doc_{i}.md": f"# Document {i}\n" + f"Paragraph content for doc {i}.\n" * (i * 10 + 1)
+        for i in range(20)
+    }
+    test_files.update({
+        f"src/module_{i}.py": f"def func_{i}():\n    return {i}\n" + f"# padding line\n" * (i * 5 + 2)
+        for i in range(20)
+    })
+    root = make_repo(test_files, name="concurrent_repo")
+    sha = files.resolve_commit(root, "HEAD")
+    tree = files.CommitTree(root, sha)
+
+    try:
+        def read_worker(seed):
+            rng = random.Random(seed)
+            keys = list(test_files.keys())
+            rng.shuffle(keys)
+            for path in keys:
+                op = rng.choice(["read", "read_bytes", "read_text", "read_prefix", "path_prefix"])
+                expected_bytes = test_files[path].encode("utf-8")
+                if op == "read":
+                    data = tree.read(path)
+                    assert data == expected_bytes
+                elif op == "read_bytes":
+                    data = (tree / path).read_bytes()
+                    assert data == expected_bytes
+                elif op == "read_text":
+                    text = (tree / path).read_text()
+                    assert text == test_files[path]
+                elif op == "read_prefix":
+                    limit = rng.randint(5, 200)
+                    prefix = tree.read_prefix(path, limit)
+                    assert prefix == expected_bytes[:limit]
+                elif op == "path_prefix":
+                    limit = rng.randint(5, 200)
+                    prefix = (tree / path).read_prefix(limit)
+                    assert prefix == expected_bytes[:limit]
+            return len(keys)
+
+        workers = 10
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(read_worker, i) for i in range(workers)]
+            counts = [f.result() for f in futures]
+
+        assert counts == [len(test_files)] * workers
+    finally:
+        tree.close()
+
+
+def test_batch_concurrent_get_and_prefix(make_repo):
+    from concurrent.futures import ThreadPoolExecutor
+    from cbi import files
+
+    test_files = {
+        f"file_{i}.txt": f"Payload {i}: " + ("abc" * (i * 200 + 50))
+        for i in range(15)
+    }
+    root = make_repo(test_files, name="batch_concurrent_repo")
+    git_dir = files._abs_git(root, "rev-parse", "--git-dir")
+    batch = files._Batch(git_dir)
+
+    try:
+        shas = {
+            path: files._git(root, "rev-parse", f"HEAD:{path}").decode().strip()
+            for path in test_files
+        }
+        missing_sha = "0" * 40
+
+        def worker(thread_idx):
+            for i, (path, sha) in enumerate(shas.items()):
+                expected = test_files[path].encode("utf-8")
+                mode = (thread_idx + i) % 4
+                if mode == 0:
+                    data = batch.get(sha)
+                    assert data == expected
+                elif mode == 1:
+                    limit = 32
+                    prefix = batch.get_prefix(sha, limit)
+                    assert prefix == expected[:limit]
+                elif mode == 2:
+                    assert batch.get(missing_sha) is None
+                elif mode == 3:
+                    assert batch.get_prefix(missing_sha, 32) is None
+            return True
+
+        workers = 10
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(worker, t) for t in range(workers)]
+            results = [f.result() for f in futures]
+
+        assert all(results)
+    finally:
+        batch.close()

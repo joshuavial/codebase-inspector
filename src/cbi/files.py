@@ -11,6 +11,7 @@ import posixpath
 import re
 import stat
 import subprocess
+import threading
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -875,23 +876,27 @@ class _Batch:
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         )
         self.cache = {}
+        self.lock = threading.Lock()
 
     def get(self, oid):
-        if oid not in self.cache:
-            self.proc.stdin.write(f"{oid}\n".encode())
-            self.proc.stdin.flush()
-            header = self.proc.stdout.readline()
-            if not header:
-                raise OSError(f"git cat-file closed while reading {oid}")
-            parts = header.split()
-            if len(parts) < 3 or parts[1] == b"missing":
-                self.cache[oid] = None
-            else:
-                size = int(parts[2])
-                data = self.proc.stdout.read(size)
-                self.proc.stdout.read(1)  # the newline cat-file writes after the body
-                self.cache[oid] = data
-        return self.cache[oid]
+        if oid in self.cache:
+            return self.cache[oid]
+        with self.lock:
+            if oid not in self.cache:
+                self.proc.stdin.write(f"{oid}\n".encode())
+                self.proc.stdin.flush()
+                header = self.proc.stdout.readline()
+                if not header:
+                    raise OSError(f"git cat-file closed while reading {oid}")
+                parts = header.split()
+                if len(parts) < 3 or parts[1] == b"missing":
+                    self.cache[oid] = None
+                else:
+                    size = int(parts[2])
+                    data = self.proc.stdout.read(size)
+                    self.proc.stdout.read(1)  # the newline cat-file writes after the body
+                    self.cache[oid] = data
+            return self.cache[oid]
 
     def get_prefix(self, oid, limit):
         """Keep a prefix; drain the batch remainder in bounded, uncached chunks."""
@@ -900,29 +905,34 @@ class _Batch:
         if oid in self.cache:
             data = self.cache[oid]
             return data[:limit] if data is not None else None
-        self.proc.stdin.write(f"{oid}\n".encode())
-        self.proc.stdin.flush()
-        header = self.proc.stdout.readline()
-        if not header:
-            raise OSError(f"git cat-file closed while reading {oid}")
-        parts = header.split()
-        if len(parts) < 3 or parts[1] == b"missing":
-            return None
-        size = int(parts[2])
-        prefix = self.proc.stdout.read(min(limit, size))
-        remaining = size - len(prefix)
-        while remaining:
-            chunk = self.proc.stdout.read(min(65536, remaining))
-            if not chunk:
+        with self.lock:
+            if oid in self.cache:
+                data = self.cache[oid]
+                return data[:limit] if data is not None else None
+            self.proc.stdin.write(f"{oid}\n".encode())
+            self.proc.stdin.flush()
+            header = self.proc.stdout.readline()
+            if not header:
                 raise OSError(f"git cat-file closed while reading {oid}")
-            remaining -= len(chunk)
-        self.proc.stdout.read(1)
-        return prefix
+            parts = header.split()
+            if len(parts) < 3 or parts[1] == b"missing":
+                return None
+            size = int(parts[2])
+            prefix = self.proc.stdout.read(min(limit, size))
+            remaining = size - len(prefix)
+            while remaining:
+                chunk = self.proc.stdout.read(min(65536, remaining))
+                if not chunk:
+                    raise OSError(f"git cat-file closed while reading {oid}")
+                remaining -= len(chunk)
+            self.proc.stdout.read(1)
+            return prefix
 
     def close(self):
-        if self.proc.poll() is None:
-            self.proc.stdin.close()
-            self.proc.wait()
+        with self.lock:
+            if self.proc.poll() is None:
+                self.proc.stdin.close()
+                self.proc.wait()
 
 
 class GitPath:
