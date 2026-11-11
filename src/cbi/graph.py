@@ -55,13 +55,16 @@ top-level folders that are not themselves a package, that contain source
 and no test file. A package or folder with test cases outside it names
 that count.
 
---json: {entries, unreferenced, test_only_symbols, unreachable, untested}.
+--fail: Exit with code 1 if unreferenced production code is found.
+
+--json: {passed, entries, unreferenced, test_only_symbols, unreachable, untested}.
 entries is false when nothing has a resolved entry point. untested items
 are {id, kind, name, path, outside_tests}.
 
-Exit codes: 0 done, 1 no model (run `cbi scan`).
+Exit codes: 0 done (or no unreferenced code with --fail), 1 unreferenced
+production code found with --fail, or no model (run `cbi scan`).
 
-Example: cbi orphans --json""",
+Example: cbi orphans --fail""",
     "cycles": """\
 List strongly connected components (SCCs) of production file imports and
 of imports projected onto folders and packages. Projected SCCs can exist
@@ -515,7 +518,9 @@ def orphans(conn, args):
     def listed(rows):
         return [{"id": r["id"], "path": r["path"]} for r in sorted(rows, key=lambda r: (r["path"], r["id"]))]
 
+    has_orphans = bool(unreferenced)
     body = {
+        "passed": not has_orphans,
         "entries": bool(entry_ids),
         "unreferenced": listed(unreferenced),
         "test_only_symbols": sorted(test_only, key=lambda r: (r["path"] or "", r["name"], r["id"])),
@@ -525,7 +530,7 @@ def orphans(conn, args):
     }
     if args.json:
         _print_json(body)
-        return 0
+        return 1 if (getattr(args, "fail", False) and has_orphans) else 0
     _print_orphan("production code with no production importer or caller", [r["path"] for r in body["unreferenced"]])
     _print_orphan("exported symbols with only test callers",
                   [f"{r['path']}#{r['name']}" for r in body["test_only_symbols"]])
@@ -540,7 +545,7 @@ def orphans(conn, args):
     for node in body["untested"]:
         extra = f", {node['outside_tests']} test cases outside" if node["outside_tests"] else ""
         print(f"  {node['path'] or node['name']}  0 test files{extra}")
-    return 0
+    return 1 if (getattr(args, "fail", False) and has_orphans) else 0
 
 
 def _has_production(member):

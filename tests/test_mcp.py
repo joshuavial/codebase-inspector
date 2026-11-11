@@ -1792,10 +1792,17 @@ def test_tools_call_orphans(repo):
     resp_json = server.execute_tool("cbi_orphans", {"format": "json"})
     assert not resp_json["isError"]
     data = json.loads(resp_json["content"][0]["text"])
+    assert "passed" in data
     assert "unreferenced" in data
     assert "test_only_symbols" in data
     assert "untested" in data
     assert isinstance(data["unreferenced"], list)
+
+    # With fail parameter
+    resp_fail = server.execute_tool("cbi_orphans", {"fail": True, "format": "json"})
+    assert not resp_fail["isError"]
+    data_fail = json.loads(resp_fail["content"][0]["text"])
+    assert "passed" in data_fail
 
 
 def test_tools_call_deps(repo):

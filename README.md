@@ -312,13 +312,16 @@ Key CI options:
 * `--format {text,github,json}`: Choose output format (`text` default, `github` annotations, or `json`).
 * `--json`: Standardized flag equivalent to `--format json`. Emits `{"passed": bool, "problems": [...], "findings": [...]}` with exit code `0` on success (or warn mode) and `1` on check failure.
 
-### Architecture Verification (`cbi deps --forbid` and `cbi cycles`)
+### Architecture Verification (`cbi deps --forbid`, `cbi cycles`, and `cbi orphans`)
 
-Enforce layering rules, container boundaries, and cycle freedom in CI:
+Enforce layering rules, container boundaries, cycle freedom, and dead code elimination in CI:
 
 ```bash
 # Detect circular dependencies between files, folders, or packages (exits 1 on cycles)
 cbi cycles --fail
+
+# Detect unreferenced production code (exits 1 on unreferenced files)
+cbi orphans --fail
 
 # Enforce layering rules: exit 1 when forbidden imports run between containers
 cbi deps --level package --forbid "viewer:cli"
@@ -329,6 +332,10 @@ cbi deps --forbid "web:db" --forbid "services->legacy"
 `cbi cycles` verification options:
 * `--fail`: Exit with code `1` if circular dependencies are detected (defaults to `0` for exploratory inspection).
 * `--json`: Emit structured JSON `{"passed": bool, "files": [...], "folders": [...], "packages": [...]}` for CI pipelines and automated verification gates.
+
+`cbi orphans` verification options:
+* `--fail`: Exit with code `1` if unreferenced production code is found (defaults to `0` for exploratory inspection).
+* `--json`: Emit structured JSON `{"passed": bool, "entries": bool, "unreferenced": [...], "test_only_symbols": [...], "unreachable": [...], "untested": [...]}` for CI pipelines and automated verification gates.
 
 The `--forbid` option accepts `FROM:TO` or `FROM->TO` syntax:
 * Specify container names, node IDs, or paths corresponding to `--level` (`package` default, or `folder`, `concept`, `deployable`).

@@ -287,3 +287,60 @@ def test_cycles_fail_json_violation_detected(tmp_path, capsys):
     assert "file-import SCCs: 1 (2 memberships)" in out_compat
 
 
+def test_orphans_fail_json_clean_codebase(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    _edge(conn, FILE_LEFT, FILE_RIGHT, "imports")
+    _node(conn, id=f"{WS}:app", kind="deployable", display_kind="deployable", name="app",
+          attrs={"entry_points": ["call.ts"]})
+    conn.commit()
+    conn.close()
+
+    code = main(["orphans", "--out", str(tmp_path), "--fail", "--json"])
+    assert code == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["passed"] is True
+    assert data["unreferenced"] == []
+
+    code_text = main(["orphans", "--out", str(tmp_path), "--fail"])
+    assert code_text == 0
+    out_text = capsys.readouterr().out
+    assert "production code with no production importer or caller:\n  none" in out_text
+
+
+def test_orphans_fail_json_violation_detected(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    conn.commit()
+    conn.close()
+
+    # With --fail: exits 1 with passed: false
+    code = main(["orphans", "--out", str(tmp_path), "--fail", "--json"])
+    assert code == 1
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["passed"] is False
+    assert len(data["unreferenced"]) > 0
+
+    # Standard cbi orphans without --fail: returns 0 for backwards compatibility
+    code_compat = main(["orphans", "--out", str(tmp_path), "--json"])
+    assert code_compat == 0
+    data_compat = json.loads(capsys.readouterr().out)
+    assert data_compat["passed"] is False
+    assert len(data_compat["unreferenced"]) > 0
+
+    # Text mode with --fail exits 1
+    code_text_fail = main(["orphans", "--out", str(tmp_path), "--fail"])
+    assert code_text_fail == 1
+    out_text = capsys.readouterr().out
+    assert "production code with no production importer or caller:" in out_text
+
+    # Text mode without --fail exits 0
+    code_text_compat = main(["orphans", "--out", str(tmp_path)])
+    assert code_text_compat == 0
+    out_compat = capsys.readouterr().out
+    assert "production code with no production importer or caller:" in out_compat
+
+
+

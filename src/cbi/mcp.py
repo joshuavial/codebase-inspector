@@ -418,6 +418,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "fail": {
+                    "type": "boolean",
+                    "description": "Exit with code 1 if unreferenced production code is found (default: false).",
+                },
                 "ref": {
                     "type": "string",
                     "description": "Git branch, tag, or commit SHA of a historical model database to query.",
@@ -2194,13 +2198,14 @@ class MCPServer:
     def handle_orphans(self, args: dict) -> str:
         fmt = args.get("format", "text")
         as_json = fmt == "json"
+        fail = bool(args.get("fail", False))
         ref = args.get("ref")
         conn = self._get_connection(ref=ref)
         try:
             buf = io.StringIO()
             with self._stdout_lock:
                 with contextlib.redirect_stdout(buf):
-                    graph.orphans(conn, argparse.Namespace(json=as_json))
+                    graph.orphans(conn, argparse.Namespace(json=as_json, fail=fail))
             return buf.getvalue().rstrip()
         finally:
             conn.close()
