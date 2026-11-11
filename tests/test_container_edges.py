@@ -228,3 +228,62 @@ def test_deps_forbid_json_violation_detected(tmp_path, capsys):
     assert data["rules"][0]["passed"] is False
     assert data["rules"][0]["violations"] == [{"from": "call.ts", "to": "left.ts"}]
 
+
+def test_cycles_fail_json_clean_codebase(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    conn.commit()
+    conn.close()
+
+    code = main(["cycles", "--out", str(tmp_path), "--fail", "--json"])
+    assert code == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["passed"] is True
+    assert data["files"] == []
+    assert data["folders"] == []
+    assert data["packages"] == []
+
+    code_text = main(["cycles", "--out", str(tmp_path), "--fail"])
+    assert code_text == 0
+    out_text = capsys.readouterr().out
+    assert "file-import SCCs: 0 (0 memberships)" in out_text
+
+
+def test_cycles_fail_json_violation_detected(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    _edge(conn, FILE_LEFT, FILE_RIGHT, "imports")
+    _edge(conn, FILE_RIGHT, FILE_LEFT, "imports")
+    conn.commit()
+    conn.close()
+
+    # With --fail: exits 1 with passed: false
+    code = main(["cycles", "--out", str(tmp_path), "--fail", "--json"])
+    assert code == 1
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["passed"] is False
+    assert len(data["files"]) == 1
+    assert data["files"][0]["detail"] == "left.ts → right.ts → left.ts"
+
+    # Standard cbi cycles without --fail: returns 0 for backwards compatibility
+    code_compat = main(["cycles", "--out", str(tmp_path), "--json"])
+    assert code_compat == 0
+    data_compat = json.loads(capsys.readouterr().out)
+    assert data_compat["passed"] is False
+    assert len(data_compat["files"]) == 1
+
+    # Text mode with --fail exits 1
+    code_text_fail = main(["cycles", "--out", str(tmp_path), "--fail"])
+    assert code_text_fail == 1
+    out_text = capsys.readouterr().out
+    assert "file-import SCCs: 1 (2 memberships)" in out_text
+
+    # Text mode without --fail exits 0
+    code_text_compat = main(["cycles", "--out", str(tmp_path)])
+    assert code_text_compat == 0
+    out_compat = capsys.readouterr().out
+    assert "file-import SCCs: 1 (2 memberships)" in out_compat
+
+

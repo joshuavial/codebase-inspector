@@ -69,12 +69,15 @@ without any file-import SCC. Each component has one `cycle` diagnostic
 per member; `cbi status` separates SCC counts from these memberships.
 Imports inside one folder or package do not create projected cycles.
 
---json: {files, folders, packages}, each a list of {detail, members:
+--fail: Exit with code 1 if cycles are found.
+
+--json: {passed, files, folders, packages}, each a list of {detail, members:
 [{id, name, path}]}.
 
-Exit codes: 0 done, 1 no model (run `cbi scan`).
+Exit codes: 0 done (or no cycles with --fail), 1 cycles found with --fail,
+or no model (run `cbi scan`).
 
-Example: cbi cycles""",
+Example: cbi cycles --fail""",
     "deps": """\
 Direction-aware dependency matrix. --level is package (default), folder,
 concept or deployable. Folder cells are the immediate parent folder of each
@@ -737,16 +740,22 @@ def cycle_summary(conn):
 
 def cycles(conn, args):
     found = collect_cycles(conn)
+    has_cycles = any(bool(comps) for comps in found.values())
     if args.json:
-        _print_json(found)
-        return 0
+        _print_json({
+            "passed": not has_cycles,
+            "files": found.get("files", []),
+            "folders": found.get("folders", []),
+            "packages": found.get("packages", []),
+        })
+        return 1 if (getattr(args, "fail", False) and has_cycles) else 0
     for key in ("files", "folders", "packages"):
         comps = found[key]
         memberships = sum(len(comp["members"]) for comp in comps)
         print(f"{CYCLE_LABELS[key]}: {len(comps)} ({memberships} memberships)")
         for comp in comps:
             print(f"  {comp['detail']}")
-    return 0
+    return 1 if (getattr(args, "fail", False) and has_cycles) else 0
 
 
 # --- deps -----------------------------------------------------------------------

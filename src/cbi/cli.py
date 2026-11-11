@@ -122,6 +122,7 @@ def build_parser():
     cmds["hotspots"].add_argument("--kind", metavar="K", help="only this display kind or kind")
     cmds["hotspots"].add_argument("--limit", type=int, default=20, help="most rows per list (default 20)")
     cmds["hotspots"].add_argument("--offset", type=int, default=0, help="skip the first N items")
+    cmds["cycles"].add_argument("--fail", action="store_true", help="Exit with code 1 if cycles are found")
     cmds["deps"].add_argument("--level", choices=("package", "folder", "concept", "deployable"), default="package",
                               help="what a row of the matrix is (default package)")
     cmds["deps"].add_argument("--from", "--start", dest="start", help="only dependencies that leave this node")

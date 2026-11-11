@@ -318,13 +318,17 @@ Enforce layering rules, container boundaries, and cycle freedom in CI:
 
 ```bash
 # Detect circular dependencies between files, folders, or packages (exits 1 on cycles)
-cbi cycles
+cbi cycles --fail
 
 # Enforce layering rules: exit 1 when forbidden imports run between containers
 cbi deps --level package --forbid "viewer:cli"
 cbi deps --level folder --forbid "api->db"
 cbi deps --forbid "web:db" --forbid "services->legacy"
 ```
+
+`cbi cycles` verification options:
+* `--fail`: Exit with code `1` if circular dependencies are detected (defaults to `0` for exploratory inspection).
+* `--json`: Emit structured JSON `{"passed": bool, "files": [...], "folders": [...], "packages": [...]}` for CI pipelines and automated verification gates.
 
 The `--forbid` option accepts `FROM:TO` or `FROM->TO` syntax:
 * Specify container names, node IDs, or paths corresponding to `--level` (`package` default, or `folder`, `concept`, `deployable`).
