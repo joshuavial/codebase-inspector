@@ -6,6 +6,7 @@ import time
 
 from cbi import context, data, history, parse, store
 from cbi.cli import main
+from cbi.files import resolve_commit
 from cbi.parse import python
 
 
@@ -83,7 +84,7 @@ def test_test_counts_use_an_index(tmp_path):
 def test_diff_parses_only_changed_files_for_the_head(make_repo, monkeypatch, capsys):
     root = make_repo({f"m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(6)})
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
-    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    base = resolve_commit(root, "HEAD")
     (root / "m0.py").write_text("def f0():\n    return 10\n")
     subprocess.run([*git, "commit", "-qam", "change"], cwd=root, check=True)
     monkeypatch.chdir(root)
@@ -101,7 +102,7 @@ def test_ref_scans_reuse_table_work_for_unchanged_files(make_repo, monkeypatch, 
              "app.py": 'def f(db):\n    return db.execute("SELECT * FROM users")\n',
              "other.py": "def g():\n    return 1\n"}
     root = make_repo(files)
-    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    base = resolve_commit(root, "HEAD")
     (root / "other.py").write_text("def g():\n    return 2\n")
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     subprocess.run([*git, "commit", "-qam", "change"], cwd=root, check=True)
@@ -161,7 +162,7 @@ def test_history_parses_each_file_version_once(make_repo, monkeypatch, capsys):
     assert len(parsed) == 8
     assert (root / ".cbi" / "refs" / "parse.db").is_file()
     # A full model per point cost 50 to 350 MB on the sample repos; only the newest stays.
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+    head = resolve_commit(root, "HEAD")
     assert [p.parent.name for p in (root / ".cbi" / "refs").glob("*/model.db")] == [head]
     scans = []
     import cbi.cli

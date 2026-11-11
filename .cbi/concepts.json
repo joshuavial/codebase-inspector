@@ -143,6 +143,7 @@
             "scripts/profile-scan.py",
             "scripts/smoke_all.py",
             "src/cbi/__init__.py",
+            "src/cbi/__main__.py",
             "src/cbi/bug_report.py",
             "src/cbi/check.py",
             "src/cbi/cli.py",

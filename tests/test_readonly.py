@@ -4,12 +4,11 @@ import json
 import os
 import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import pytest
 
-from cbi import store, tasks
+from cbi import files, store, tasks
 from cbi.cli import main
 
 FILES = {"src/app.ts": "export function hello() { return 1; }\n"}
@@ -91,7 +90,7 @@ def test_read_commands_work_on_a_chmod_copy(make_repo, monkeypatch, capsys, tmp_
     monkeypatch.chdir(root)
     assert main(["init"]) == 0 and main(["scan"]) == 0
     assert main(["scan", "--ref", "HEAD"]) == 0
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    sha = files.resolve_commit(root, "HEAD")
     copy = tmp_path / "model"
     copy.mkdir()
     dest = copy / "model.db"

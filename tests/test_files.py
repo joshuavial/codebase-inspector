@@ -150,12 +150,11 @@ def test_shebang_classification_reads_only_bounded_prefixes(make_repo, monkeypat
 
 
 def test_shebang_classification_streams_git_prefix_without_caching_blob(make_repo, monkeypatch):
-    import subprocess
     from cbi import files
 
     root = make_repo({"asset.bin": "x" * (2 * 1024 * 1024),
                       "launch": "#!/bin/sh\n" + "# padding\n" * 100000})
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    sha = files.resolve_commit(root, "HEAD")
     tree = files.CommitTree(root, sha)
 
     def no_whole_blob(*args):

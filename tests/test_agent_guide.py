@@ -104,9 +104,7 @@ def _closed_stdout(argv, cwd):
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     proc = subprocess.Popen(
-        [sys.executable, "-c",
-         "import sys; from cbi.cli import main; raise SystemExit(main(sys.argv[1:]))",
-         *argv],
+        [sys.executable, "-m", "cbi.cli", *argv],
         cwd=cwd, env=env, stdout=write_fd, stderr=subprocess.PIPE,
     )
     os.close(write_fd)

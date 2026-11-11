@@ -6,7 +6,8 @@ import subprocess
 import pytest
 
 from cbi import change_overview, diff
-from test_diff import _concept, _concepts, commit_tree, run, scan_into
+from cbi.files import resolve_commit
+from test_diff import _concept, _concepts, commit_tree, git, run, scan_into
 
 CALLER = 'import { helper } from "./helper";\nexport function runA() {\n  return helper(1);\n}\n'
 HELPER = "export function helper(n: number) {\n  return n + 1;\n}\n"
@@ -19,8 +20,7 @@ def chain(name, nxt):
 
 
 def sha(root):
-    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
-                          capture_output=True, text=True).stdout.strip()
+    return resolve_commit(root, "HEAD")
 
 
 def test_context_modules_and_levels(make_repo, monkeypatch, tmp_path, capsys):
@@ -126,8 +126,8 @@ def test_binary_counts_as_one_changed_file(make_repo, tmp_path):
     root = make_repo({"a.ts": "export const a = 1\n"}, name="binary")
     base = sha(root)
     (root / "logo.bin").write_bytes(b"\x00\x01")
-    subprocess.run(["git", "add", "logo.bin"], cwd=root, check=True)
-    subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "binary"], cwd=root, check=True)
+    git(root, "add", "logo.bin")
+    git(root, "commit", "-q", "-m", "binary")
     stats = change_overview.git_line_stats(root, base, sha(root))
     measure = change_overview._measure(binary=1 if stats["logo.bin"]["binary"] else 0)
     assert measure["churn"] == 1 and change_overview._measure_line(measure).endswith("1 binary file")
@@ -422,8 +422,8 @@ def test_structural_zero_and_binary_line_availability(make_repo, monkeypatch, tm
     assert "+0 -0" not in diff.render(unknown)
     assert "+0 -0" in diff.render(zero)
     (root / "image.dat").write_bytes(b"\x00\x01")
-    subprocess.run(["git", "add", "image.dat"], cwd=root, check=True)
-    subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "binary"], cwd=root, check=True)
+    git(root, "add", "image.dat")
+    git(root, "commit", "-qm", "binary")
     scan_into(capsys, tmp_path / "binary-head", after)
     base, head = diff.open_model(tmp_path / "base"), diff.open_model(tmp_path / "binary-head")
     try:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cbi import change_overview, diff, store
+from cbi import change_overview, diff, files, store
 from cbi.cli import main
 from cbi.parse import symbol_nodes
 
@@ -350,7 +350,7 @@ def test_overview_ranks_attention_and_supports_every_cli_level(make_repo, monkey
     }
     root = make_repo(base_files, name="overview")
     monkeypatch.chdir(root)
-    base_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    base_sha = files.resolve_commit(root, "HEAD")
     base_doc = _concepts(
         [_concept("integration", "Integration", ["integration/a.ts"]),
          _concept("bulk", "Bulk refactor", ["bulk/b.ts"])],
@@ -369,7 +369,7 @@ def test_overview_ranks_attention_and_supports_every_cli_level(make_repo, monkey
         "integration/a.ts": fn("connect", "return 2;"),
         "bulk/b.ts": f"export function refactor() {{\n{bulk}\n  return 2;\n}}\n",
     })
-    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    head_sha = files.resolve_commit(root, "HEAD")
     scan_into(capsys, head_out, head_doc)
     base, head = diff.open_model(base_out), diff.open_model(head_out)
     try:
@@ -397,12 +397,12 @@ def test_overview_ranks_attention_and_supports_every_cli_level(make_repo, monkey
 
 def test_git_line_stats_handles_binary_and_an_unchanged_move(make_repo, tmp_path):
     root = make_repo({"old.ts": "export const old = 1\n"}, name="line-stats")
-    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    base = files.resolve_commit(root, "HEAD")
     git(root, "mv", "old.ts", "new.ts")
     (root / "image.bin").write_bytes(b"\x00\x01\x02")
     git(root, "add", "image.bin")
     git(root, "commit", "-q", "-m", "move and binary")
-    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+    head = files.resolve_commit(root, "HEAD")
     stats = change_overview.git_line_stats(root, base, head)
     assert stats["new.ts"]["old_path"] == "old.ts"
     assert stats["new.ts"]["additions"] == stats["new.ts"]["deletions"] == 0
