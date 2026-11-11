@@ -1,7 +1,8 @@
 """Relationships that end on a container are drawn beside it, matching the drawer."""
 
 import json
-import subprocess
+
+from conftest import run_playwright
 
 from cbi import build, store
 
@@ -153,9 +154,8 @@ def test_container_relationships_match_the_drawer(tmp_path, playwright_runner, c
     index = build.build(_model(tmp_path), tmp_path / "viewer")
     script = tmp_path / "check_view.py"
     script.write_text(_CHECK)
-    proc = subprocess.run(
-        playwright_runner + [str(script), str(index), BOX],
-        capture_output=True, text=True, timeout=180,
+    proc = run_playwright(
+        playwright_runner, script, index, BOX, timeout=180,
     )
     check_playwright(proc)
     info = json.loads(proc.stdout)

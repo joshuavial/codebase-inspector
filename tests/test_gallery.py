@@ -216,7 +216,7 @@ def test_generate_gallery_without_review(make_repo, tmp_path):
     assert not (repo_root / ".cbi").exists()
     assert (out_gallery / "models" / "single-commit" / "model.db").is_file()
     assert res["index_path"].is_file()
-    content = res["index_path"].read_text(encoding="utf-8")
+    content = (out_gallery / "index.html").read_text(encoding="utf-8")
     assert "single-commit" in content
     assert "./repos/single-commit/viewer/index.html" in content
     # Should not have link to PR review

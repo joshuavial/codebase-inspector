@@ -116,6 +116,16 @@ def _git(cwd, *args):
     return files._git(cwd, *args)
 
 
+def run_command(argv, *args, **kwargs):
+    """Run a subprocess command using the unmocked subprocess runner."""
+    return _REAL_RUN(argv, *args, **kwargs)
+
+
+def popen_command(argv, *args, **kwargs):
+    """Spawn a subprocess using the unmocked subprocess runner."""
+    return _REAL_POPEN(argv, *args, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 def subprocess_defaults(monkeypatch):
     """Bound every subprocess.run in a test, and let Windows stand-ins be real programs."""
@@ -307,4 +317,13 @@ def playwright_runner():
 def check_playwright():
     """Pytest fixture providing check_playwright_proc."""
     return check_playwright_proc
+
+
+def run_playwright(runner, script, *args, timeout=60, **kwargs):
+    """Run a playwright script using the runner prefix and capture output."""
+    cmd = list(runner) + [str(script), *[str(a) for a in args]]
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("text", True)
+    kwargs.setdefault("timeout", timeout)
+    return _REAL_RUN(cmd, **kwargs)
 

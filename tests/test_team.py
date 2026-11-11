@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cbi import concepts, parts, store, tasks, team
+from cbi import concepts, files, parts, store, tasks, team
 from cbi.cli import main
 
 MAP = {
@@ -38,11 +38,21 @@ def submit(capsys, tmp_path, task_id, value):
 
 
 def git(root, *args, check=True):
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
-         "-c", "commit.gpgsign=false", *args],
-        cwd=root, check=check, capture_output=True, text=True,
-    )
+    try:
+        out = files._git(
+            root, "-c", "user.name=test", "-c", "user.email=test@example.com",
+            "-c", "commit.gpgsign=false", *args,
+        )
+        return subprocess.CompletedProcess(args, 0, stdout=out.decode(), stderr="")
+    except subprocess.CalledProcessError as exc:
+        if check:
+            raise
+        return subprocess.CompletedProcess(
+            args,
+            exc.returncode,
+            stdout=exc.stdout.decode() if exc.stdout else "",
+            stderr=exc.stderr.decode() if exc.stderr else "",
+        )
 
 
 def answer_files(capsys, tmp_path):

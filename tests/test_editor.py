@@ -460,7 +460,7 @@ def test_open_file_ref_writes_a_snapshot_and_leaves_the_repo(make_repo, monkeypa
     assert "not checked out locally." in err
     assert len(launched) == 1
     goto = launched[0][-1]
-    snap = Path(goto.rsplit(":", 1)[0])
+    snap = tmp_path / "snapshots" / Path(goto.rsplit(":", 1)[0]).relative_to(tmp_path / "snapshots")
     assert snap.read_text() == side_text
     assert stat.S_IMODE(snap.stat().st_mode) == 0o444
     assert "src/app.py" in out.replace("\\", "/")

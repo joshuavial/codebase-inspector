@@ -14,7 +14,7 @@ import pytest
 
 from cbi import render, store
 from cbi.cli import main
-from conftest import write_standin
+from conftest import popen_command, run_command, write_standin
 
 APP = "c:app"
 UI = "c:ui"
@@ -497,7 +497,7 @@ def _poll_process_group(
 )
 def test_kill_group_reaps_the_leader_and_its_child(tmp_path):
     script = _script(tmp_path / "run.sh", "#!/bin/sh\nsleep 30 &\nwait\n")
-    proc = subprocess.Popen([str(script)], start_new_session=True)
+    proc = popen_command([str(script)], start_new_session=True)
     time.sleep(0.2)
     render._kill_group(proc)
     assert proc.wait(timeout=2) is not None
@@ -619,7 +619,7 @@ time.sleep(30)
     if sys.platform == "win32":
         assert _pid_dead(int(pidfile.read_text(encoding="utf-8")))
     else:
-        left = subprocess.run(["pgrep", "-f", str(script)], capture_output=True, text=True)
+        left = run_command(["pgrep", "-f", str(script)], capture_output=True, text=True)
         assert left.stdout.strip() == ""
 
 

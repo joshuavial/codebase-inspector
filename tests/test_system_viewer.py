@@ -3,7 +3,6 @@
 import json
 import shutil
 import sqlite3
-import subprocess
 import sys
 from pathlib import Path
 
@@ -11,6 +10,7 @@ import pytest
 
 from cbi import build, render
 from cbi.cli import main
+from conftest import run_playwright
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "data" / "system"
@@ -241,7 +241,7 @@ def test_database_tab_pan_zoom_drawer_and_two_way_jump(make_repo, monkeypatch, c
     script.write_text(DRIVER)
     png = tmp_path / "database.png"
     endpoint_png = tmp_path / "endpoints.png"
-    proc = subprocess.run(playwright_runner + [str(script), str(viewer), str(png), str(endpoint_png)], capture_output=True, text=True, timeout=60)
+    proc = run_playwright(playwright_runner, script, viewer, png, endpoint_png, timeout=60)
     check_playwright(proc)
     assert png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert endpoint_png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
@@ -251,7 +251,7 @@ def test_history_replay_and_comparison_survive_system_tab_navigation(make_repo, 
     viewer, _root = _viewer(make_repo, monkeypatch, capsys, with_history=True)
     script = tmp_path / "drive_history_tabs.py"
     script.write_text(HISTORY_DRIVER)
-    proc = subprocess.run(playwright_runner + [str(script), str(viewer)], capture_output=True, text=True, timeout=60)
+    proc = run_playwright(playwright_runner, script, viewer, timeout=60)
     check_playwright(proc)
 
 
@@ -281,7 +281,7 @@ def test_large_database_groups_and_keeps_table_names_legible(make_repo, monkeypa
     viewer = Path(capsys.readouterr().out.strip())
     script = tmp_path / "drive_large_database.py"
     script.write_text(LARGE_DRIVER)
-    proc = subprocess.run(playwright_runner + [str(script), str(viewer)], capture_output=True, text=True, timeout=90)
+    proc = run_playwright(playwright_runner, script, viewer, timeout=90)
     check_playwright(proc)
 
 

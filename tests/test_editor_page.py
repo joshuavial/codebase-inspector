@@ -2,13 +2,13 @@
 
 import importlib.util
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from cbi import build
+from conftest import run_playwright
 
 
 def _viewer():
@@ -131,9 +131,9 @@ def test_double_click_opens_a_function_and_a_concept_drills(tmp_path, playwright
     viewer = build.build(conn, tmp_path / "viewer", project=project)
     script = tmp_path / "drive_editor.py"
     script.write_text(DRIVER)
-    proc = subprocess.run(
-        playwright_runner + [str(script), str(viewer), FN, APP, API, UI, str(project)],
-        capture_output=True, text=True, timeout=60,
+    proc = run_playwright(
+        playwright_runner, script, viewer, FN, APP, API, UI, project,
+        timeout=60,
     )
     check_playwright(proc)
     assert "ok" in proc.stdout
@@ -196,9 +196,9 @@ def test_ref_view_copies_the_git_show_command(tmp_path, playwright_runner, check
     viewer = build.build(conn, tmp_path / "viewer", project=project, ref_sha=sha)
     script = tmp_path / "drive_ref.py"
     script.write_text(REF_DRIVER)
-    proc = subprocess.run(
-        playwright_runner + [str(script), str(viewer), FN, API, sha],
-        capture_output=True, text=True, timeout=60,
+    proc = run_playwright(
+        playwright_runner, script, viewer, FN, API, sha,
+        timeout=60,
     )
     check_playwright(proc)
     assert "ok" in proc.stdout

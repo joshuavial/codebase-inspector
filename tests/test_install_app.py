@@ -2,9 +2,10 @@
 
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
+
+from conftest import run_command
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "install-app.sh"
@@ -67,4 +68,4 @@ def test_install_script_contract():
     env = os.environ.copy()
     if sys.platform == "win32":
         env["MSYS_NO_PATHCONV"] = "1"
-    subprocess.run([bash, "-n", _bash_script(SCRIPT)], check=True, env=env)
+    run_command([bash, "-n", _bash_script(SCRIPT)], check=True, env=env)
