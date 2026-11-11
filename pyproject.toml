@@ -21,7 +21,6 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -46,7 +45,7 @@ cbi = "cbi.cli:main"
 dev = ["pytest"]
 
 [build-system]
-requires = ["uv_build>=0.12,<0.13"]
+requires = ["uv_build>=0.12,<1.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]

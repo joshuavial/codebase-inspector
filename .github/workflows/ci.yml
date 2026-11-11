@@ -52,6 +52,19 @@ jobs:
           review: "true"
           python-version: "3.13"
 
+  packaging:
+    name: Packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv build
+      - run: uv tool install dist/*.whl --force
+      - run: cbi --version
+
   app:
     name: Desktop app
     runs-on: ubuntu-latest
