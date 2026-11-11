@@ -3024,10 +3024,15 @@ def test_get_connection_prevents_path_traversal(repo):
         "/tmp/evil",
         "refs/../../evil",
         r"..\..\evil",
+        r"..\win",
     ]
     for ref in traversal_refs:
         with pytest.raises(ValueError, match="path traversal outside refs directory is forbidden"):
+            server._resolve_model_path(ref=ref)
+        with pytest.raises(ValueError, match="path traversal outside refs directory is forbidden"):
             server._get_connection(ref=ref)
+        with pytest.raises(ValueError, match="path traversal outside refs directory is forbidden"):
+            server._source(ref=ref)
 
     # 2. Query tools with traversal ref return isError=True with clear message
     res_query = server.execute_tool("cbi_query", {"sql": "SELECT 1", "ref": "../../outside"})
@@ -3269,6 +3274,97 @@ def test_task_tools_change_task_ref_resolution(repo):
         sub_res = server.execute_tool("cbi_submit", {"task_id": sac["id"], "answer": answer, "ref": "HEAD"})
         assert not sub_res["isError"]
         assert "accepted" in sub_res["content"][0]["text"]
+
+
+def test_resolve_model_path_git_branch_refs_with_slashes(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Create a branch with slashes: 'feature/test-branch'
+    files._git(repo, "checkout", "-b", "feature/test-branch")
+    branch_sha = files.resolve_commit(repo, "feature/test-branch")
+
+    # Scan the branch ref into .cbi/refs/<branch_sha>/model.db
+    scan_res = server.execute_tool("cbi_scan", {"ref": "feature/test-branch", "format": "json"})
+    assert not scan_res["isError"], scan_res["content"][0]["text"]
+    assert json.loads(scan_res["content"][0]["text"])["ref"] == branch_sha
+
+    # 2. _resolve_model_path resolves 'feature/test-branch' directly
+    resolved = server._resolve_model_path("feature/test-branch")
+    assert resolved == (repo / ".cbi" / "refs" / branch_sha / "model.db").resolve()
+
+    # 3. _get_connection resolves 'feature/test-branch'
+    conn = server._get_connection(ref="feature/test-branch")
+    assert conn is not None
+    conn.close()
+
+    # 4. MCP tools resolve 'feature/test-branch'
+    res_status = server.execute_tool("cbi_status", {"ref": "feature/test-branch"})
+    assert not res_status["isError"]
+
+    res_show = server.execute_tool("cbi_show", {"node": "Circle", "ref": "feature/test-branch"})
+    assert not res_show["isError"]
+
+    res_query = server.execute_tool("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": "feature/test-branch"})
+    assert not res_query["isError"]
+
+    # 5. Remote-style branch ref with slash: 'origin/main'
+    files._git(repo, "branch", "origin/main", branch_sha)
+    resolved_origin = server._resolve_model_path("origin/main")
+    assert resolved_origin == (repo / ".cbi" / "refs" / branch_sha / "model.db").resolve()
+
+    res_origin_status = server.execute_tool("cbi_status", {"ref": "origin/main"})
+    assert not res_origin_status["isError"]
+
+    # 6. _source resolves branch with slash
+    source = server._source(ref="feature/test-branch")
+    assert source is not None
+    source.close()
+
+
+def test_cbi_diff_resolves_default_base_branch_without_main(tmp_path, monkeypatch):
+    # Create a repo whose default branch is 'master' (not 'main')
+    root = tmp_path / "repo_master"
+    root.mkdir()
+    files._git(root, "init", "-q", "-b", "master")
+    files._git(root, "config", "core.autocrlf", "false")
+    files._git(root, "config", "user.name", "test")
+    files._git(root, "config", "user.email", "test@example.com")
+    files._git(root, "config", "commit.gpgsign", "false")
+
+    code_file = root / "calculator.py"
+    code_file.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    files._git(root, "add", "-A")
+    files._git(root, "commit", "-q", "-m", "initial commit on master")
+
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+
+    # Create a feature branch with changes
+    files._git(root, "checkout", "-b", "feature/multiply")
+    code_file.write_text(
+        "def add(a, b):\n    return a + b\n\ndef multiply(a, b):\n    return a * b\n",
+        encoding="utf-8",
+    )
+    files._git(root, "add", "-A")
+    files._git(root, "commit", "-q", "-m", "add multiply")
+
+    # Confirm that 'main' does NOT exist in this repo
+    with pytest.raises(files.BadRef):
+        files.resolve_commit(root, "main")
+
+    server = MCPServer(root=root)
+
+    # Call cbi_diff with no base specified (resolves 'master' dynamically via history.default_branch)
+    res_diff = server.execute_tool("cbi_diff", {})
+    assert not res_diff["isError"], f"Expected cbi_diff to succeed on master repo, but got error: {res_diff}"
+    diff_text = res_diff["content"][0]["text"]
+    assert "calculator.py" in diff_text or "multiply" in diff_text or "add" in diff_text
+
+    # Call cbi_diff with empty base
+    res_diff_empty = server.execute_tool("cbi_diff", {"base": ""})
+    assert not res_diff_empty["isError"]
+
 
 
 
