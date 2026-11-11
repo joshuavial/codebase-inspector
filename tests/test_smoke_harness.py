@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+from cbi import cli
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -49,6 +51,12 @@ def test_smoke_core_cli_workflow(tmp_path):
 
     for r in results:
         assert r.passed, f"Step {r.name} failed: {r.error}"
+
+    # Verify that the smoke harness exercised commands registered in cbi.cli
+    for step in step_names:
+        if step.startswith("cli."):
+            cmd = step.split(".", 1)[1].replace("_", "-")
+            assert cmd in cli.COMMANDS
 
 
 def test_smoke_mcp_server_workflow(tmp_path):
