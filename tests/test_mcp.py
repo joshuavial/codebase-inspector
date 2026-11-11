@@ -160,6 +160,8 @@ def test_tools_list():
     assert "forbid" in tools_by_name["cbi_deps"]["inputSchema"]["properties"]
     assert tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["type"] == "array"
     assert tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["items"]["type"] == "string"
+    assert "FROM:TO" in tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["description"]
+    assert "FROM->TO" in tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["description"]
 
     query_tools_with_ref = [
         "cbi_show",
@@ -1894,8 +1896,13 @@ def test_tools_call_deps_forbid(repo):
     })
     assert not resp_pass_json["isError"]
     data_pass = json.loads(resp_pass_json["content"][0]["text"])
+    assert data_pass["level"] == "folder"
+    assert data_pass["include_tests"] is False
     assert data_pass["passed"] is True
-    assert data_pass["violations"] == []
+    assert len(data_pass["rules"]) == 1
+    assert data_pass["rules"][0]["spec"] == "src/shapes->src/other"
+    assert data_pass["rules"][0]["passed"] is True
+    assert data_pass["rules"][0]["violations"] == []
 
     # 2. Failing case: create an import between folders that violates forbidden constraint
     (repo / "src/other/area.ts").write_text("import { Circle } from '../shapes/circle';\nexport function area() { return 0; }\n")
@@ -1926,7 +1933,36 @@ def test_tools_call_deps_forbid(repo):
     assert resp_fail_colon["isError"] is True
     assert "src/other/area.ts → src/shapes/circle.ts" in resp_fail_colon["content"][0]["text"]
 
-    # JSON-RPC handle_request call for forbid violation
+    # Failing case with format=json returns structured report without raising ValueError (isError: False)
+    resp_fail_json = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/other->src/shapes"],
+        "format": "json",
+    })
+    assert not resp_fail_json["isError"]
+    data_fail = json.loads(resp_fail_json["content"][0]["text"])
+    assert data_fail["level"] == "folder"
+    assert data_fail["include_tests"] is False
+    assert data_fail["passed"] is False
+    assert len(data_fail["rules"]) == 1
+    assert data_fail["rules"][0]["spec"] == "src/other->src/shapes"
+    assert data_fail["rules"][0]["passed"] is False
+    assert data_fail["rules"][0]["violations"] == [{"from": "src/other/area.ts", "to": "src/shapes/circle.ts"}]
+
+    # Failing case with colon syntax and format=json
+    resp_fail_colon_json = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/other:src/shapes"],
+        "format": "json",
+    })
+    assert not resp_fail_colon_json["isError"]
+    data_fail_colon = json.loads(resp_fail_colon_json["content"][0]["text"])
+    assert data_fail_colon["passed"] is False
+    assert data_fail_colon["rules"][0]["spec"] == "src/other:src/shapes"
+    assert data_fail_colon["rules"][0]["passed"] is False
+    assert data_fail_colon["rules"][0]["violations"] == [{"from": "src/other/area.ts", "to": "src/shapes/circle.ts"}]
+
+    # JSON-RPC handle_request call for forbid violation with text format returns isError: True
     req = {
         "jsonrpc": "2.0",
         "id": 42,
@@ -1943,13 +1979,51 @@ def test_tools_call_deps_forbid(repo):
     assert resp_rpc["result"]["isError"] is True
     assert "src/other/area.ts → src/shapes/circle.ts" in resp_rpc["result"]["content"][0]["text"]
 
-    # Invalid forbid syntax returns error
+    # JSON-RPC handle_request call for forbid violation with format=json returns isError: False and structured JSON
+    req_json = {
+        "jsonrpc": "2.0",
+        "id": 43,
+        "method": "tools/call",
+        "params": {
+            "name": "cbi_deps",
+            "arguments": {
+                "level": "folder",
+                "forbid": ["src/other->src/shapes"],
+                "format": "json",
+            },
+        },
+    }
+    resp_rpc_json = server.handle_request(req_json)
+    assert not resp_rpc_json["result"]["isError"]
+    rpc_data = json.loads(resp_rpc_json["result"]["content"][0]["text"])
+    assert rpc_data["passed"] is False
+    assert rpc_data["rules"][0]["violations"] == [{"from": "src/other/area.ts", "to": "src/shapes/circle.ts"}]
+
+    # Invalid forbid syntax returns error in text and json format
     resp_bad_syntax = server.execute_tool("cbi_deps", {
         "level": "folder",
         "forbid": ["nocolon"],
     })
     assert resp_bad_syntax["isError"] is True
     assert "FROM:TO" in resp_bad_syntax["content"][0]["text"]
+
+    resp_bad_json = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["nocolon"],
+        "format": "json",
+    })
+    assert resp_bad_json["isError"] is True
+    assert "FROM:TO" in resp_bad_json["content"][0]["text"]
+
+
+    # Missing model error (e.g. no packages in repo model) raises ValueError in json format
+    resp_no_nodes = server.execute_tool("cbi_deps", {
+        "level": "package",
+        "forbid": ["pkgA:pkgB"],
+        "format": "json",
+    })
+    assert resp_no_nodes["isError"] is True
+    assert "no packages in the model" in resp_no_nodes["content"][0]["text"]
 
 
 def test_concurrent_requests_stress(repo):

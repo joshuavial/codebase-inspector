@@ -52,6 +52,8 @@ When a violation occurs:
 * `violations` contains a list of `{"from": "<source_file>", "to": "<target_file>"}` pairs.
 * The command exits with code `1` (or `0` when all forbid rules pass).
 
+The MCP server tool `cbi_deps` adheres to this exact contract: when `format="json"` is requested with `forbid`, violations return the structured JSON report with `isError: false` (`code == 1` maps to a valid JSON tool response) rather than raising an unparseable error, enabling agent clients to inspect and resolve architectural boundary infractions programmatically. Text format queries continue to raise formatted violation errors.
+
 ---
 
 ## 3. What Requires Agent Enrichment (Judgement Tasks)
