@@ -321,11 +321,11 @@ cbi check --json
 
 Key CI options:
 * `--base REF`: Compare against the merge base with `REF` (such as `origin/main` or `${{ github.base_ref }}`) instead of the default branch.
-* `--kind KIND`: Filter check findings by kind (`summary`, `owner`, `json`, `stale`, `secret`, `ignore`). Architectural cycle verification and forbid constraints belong to `cbi cycles` and `cbi deps --forbid`.
+* `--kind KIND`: Filter check findings by kind (`summary`, `owner`, `json`, `stale`, `secret`, `ignore`). Architectural cycle verification and forbid constraints belong to `cbi cycles` and `cbi deps --forbid` (or `cbi layers --forbid`).
 * `--format {text,github,json}`: Choose output format (`text` default, `github` annotations, or `json`).
 * `--json`: Standardized flag equivalent to `--format json`. Emits `{"passed": bool, "problems": [...], "findings": [...]}` with exit code `0` on success (or warn mode) and `1` on check failure.
 
-### Architecture Verification (`cbi deps --forbid`, `cbi cycles`, and `cbi orphans`)
+### Architecture Verification (`cbi deps --forbid` / `cbi layers`, `cbi cycles`, and `cbi orphans` / `cbi dead`)
 
 Enforce layering rules, container boundaries, cycle freedom, and dead code elimination in CI:
 
@@ -333,11 +333,13 @@ Enforce layering rules, container boundaries, cycle freedom, and dead code elimi
 # Detect circular dependencies between files, folders, or packages (exits 1 on cycles)
 cbi cycles --fail
 
-# Detect unreferenced production code (exits 1 on unreferenced files)
+# Detect unreferenced production code (exits 1 on unreferenced files; 'cbi dead' is an alias for 'cbi orphans')
 cbi orphans --fail
+cbi dead --fail
 
-# Enforce layering rules: exit 1 when forbidden imports run between containers
+# Enforce layering rules: exit 1 when forbidden imports run between containers ('cbi layers' is an alias for 'cbi deps')
 cbi deps --level package --forbid "viewer:cli"
+cbi layers --level package --forbid "viewer:cli"
 cbi deps --level folder --forbid "api->db"
 cbi deps --forbid "web:db" --forbid "services->legacy"
 ```
@@ -346,11 +348,11 @@ cbi deps --forbid "web:db" --forbid "services->legacy"
 * `--fail`: Exit with code `1` if circular dependencies are detected (defaults to `0` for exploratory inspection).
 * `--json`: Emit structured JSON `{"passed": bool, "files": [...], "folders": [...], "packages": [...]}` for CI pipelines and automated verification gates.
 
-`cbi orphans` verification options:
+`cbi orphans` (and `cbi dead`) verification options:
 * `--fail`: Exit with code `1` if unreferenced production code is found (defaults to `0` for exploratory inspection).
 * `--json`: Emit structured JSON `{"passed": bool, "entries": bool, "unreferenced": [...], "test_only_symbols": [...], "unreachable": [...], "untested": [...]}` for CI pipelines and automated verification gates.
 
-The `--forbid` option accepts `FROM:TO` or `FROM->TO` syntax:
+The `--forbid` option (`cbi deps` / `cbi layers`) accepts `FROM:TO` or `FROM->TO` syntax:
 * Specify container names, node IDs, or paths corresponding to `--level` (`package` default, or `folder`, `concept`, `deployable`).
 * Pass multiple `--forbid` options to verify several boundary constraints in a single run.
 * Exits `0` when no forbidden imports exist, `1` when a forbidden dependency is found, or `2` on invalid argument syntax or unknown node names.
@@ -516,7 +518,7 @@ For seamless automation, CI pipelines, and AI agent tool chains, CBI commands su
 * `cbi review ... --json`: Returns structured review data (`{ "base", "head", "spec", "result", "diagram", "mermaid", "review_file" }`) including structural PR comparison, changed concepts, Mermaid change graph, and test coverage gaps as JSON.
 * `cbi history ... --json`: Returns default-branch architecture changelog entries and diff summaries as JSON.
 
-This uniform flag complements existing JSON-enabled query and inspection commands (`cbi query --json`, `cbi endpoints --json`, `cbi tables --json`, `cbi status --json`, `cbi search --json`, `cbi show --json`, `cbi tests-for --json`, `cbi hotspots --json`, `cbi cycles --json`, `cbi orphans --json`, `cbi deps --json`, `cbi tasks --json`, `cbi task --json`).
+This uniform flag complements existing JSON-enabled query and inspection commands (`cbi query --json`, `cbi endpoints --json`, `cbi tables --json`, `cbi status --json`, `cbi search --json`, `cbi show --json`, `cbi tests-for --json`, `cbi hotspots --json`, `cbi cycles --json`, `cbi orphans --json`, `cbi dead --json`, `cbi deps --json`, `cbi layers --json`, `cbi tasks --json`, `cbi task --json`).
 
 ## Desktop App
 
