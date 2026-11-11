@@ -552,3 +552,139 @@ def test_review_surfaces_database_schema_and_api_route_changes(tmp_path):
     assert "- endpoint-changed  GET /api/users  handler get_users modified" in rendered
     assert "src/api.py  get_users" in rendered
 
+
+def _git_cmd(cwd, *args):
+    from cbi import files
+    return files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args,
+    ).decode().strip()
+
+
+def _commit_files(root, files_map, message="commit"):
+    for rel, content in files_map.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    _git_cmd(root, "add", "-A")
+    _git_cmd(root, "commit", "-q", "-m", message)
+
+
+def test_resolve_target_merge_base_range(make_repo):
+    from cbi import review
+    root = make_repo({"a.txt": "v1\n"})
+    initial_sha = _git_cmd(root, "rev-parse", "HEAD")
+
+    # Create feature branch with a commit
+    _git_cmd(root, "checkout", "-q", "-b", "feat")
+    _commit_files(root, {"feat.txt": "feature\n"}, "feat commit")
+
+    # Switch back to main and add another commit
+    _git_cmd(root, "checkout", "-q", "main")
+    _commit_files(root, {"main.txt": "main line\n"}, "main commit")
+
+    # 1. main...feat resolves merge-base as base
+    spec1 = review.resolve_target(root, "main...feat", None)
+    assert spec1["base"] == initial_sha
+    assert spec1["head"] == "feat"
+
+    # 2. feat...main resolves merge-base as base
+    spec2 = review.resolve_target(root, "feat...main", None)
+    assert spec2["base"] == initial_sha
+    assert spec2["head"] == "main"
+
+    # 3. Two-dot notation preserves left as base
+    spec_two_dot = review.resolve_target(root, "main..feat", None)
+    assert spec_two_dot["base"] == "main"
+    assert spec_two_dot["head"] == "feat"
+
+    # 4. Error if both range and --base passed
+    with pytest.raises(review.ReviewError, match="pass a range or --base, not both"):
+        review.resolve_target(root, "main...feat", base="HEAD~1")
+
+    # 5. Missing ends or extra dots raise range format error
+    for invalid in ("...feat", "main...", "...", "....", "main....feat", "main...mid...feat"):
+        with pytest.raises(review.ReviewError, match="a range needs both ends"):
+            review.resolve_target(root, invalid, None)
+
+
+def test_resolve_target_equals_default_base(make_repo):
+    from cbi import review
+    root = make_repo({"a.txt": "v1\n"})
+    main_sha = _git_cmd(root, "rev-parse", "HEAD")
+
+    # Target explicitly equal to default base resolves gracefully to itself
+    spec = review.resolve_target(root, "main", None)
+    assert spec["base"] == main_sha
+    assert spec["head"] == "main"
+
+    # Target HEAD on main resolves gracefully
+    spec_head = review.resolve_target(root, "HEAD", None)
+    assert spec_head["base"] == main_sha
+    assert spec_head["head"] == "HEAD"
+
+
+def test_review_json_structured_output(make_repo, monkeypatch, capsys, tmp_path):
+    from cbi import review
+    monkeypatch.setattr(
+        "cbi.render.render_images",
+        lambda *args, **kwargs: {"skipped": "skipped"},
+    )
+    root = make_repo({"app/b.ts": "export function b() { return 1; }\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+
+    base = _git_cmd(root, "rev-parse", "HEAD")
+    _git_cmd(root, "checkout", "-q", "-b", "feat")
+    _commit_files(root, {"app/b.ts": "export function b() { return 2; }\nexport function c() { return 3; }\n"})
+    head = _git_cmd(root, "rev-parse", "HEAD")
+
+    # Test via CLI with --json
+    code, out, err = run(capsys, "review", "main...feat", "--json", "--out-dir", str(tmp_path / "out_json"))
+    assert code == 0, err
+    data = json.loads(out)
+
+    assert "review_file" in data
+    assert data["review_file"].endswith("review.md")
+    assert (tmp_path / "out_json" / "review.md").exists()
+    assert "report" in data
+    assert "base" in data and data["base"] == base
+    assert "head" in data and data["head"] == head
+    assert "spec" in data and data["spec"]["base"] == base and data["spec"]["head"] == "feat"
+    assert "result" in data
+    assert "overview" in data["result"]
+    assert "groups" in data["result"]
+    assert "diagram" in data
+    assert "nodes" in data["diagram"]
+    assert "edges" in data["diagram"]
+    assert "mermaid" in data
+    assert "flowchart LR" in data["mermaid"]
+
+    # Test review_data Python API directly
+    direct_data = review.review_data(root, "main...feat", out_dir=tmp_path / "out_direct")
+    assert isinstance(direct_data, dict)
+    assert direct_data["base"] == base
+    assert direct_data["head"] == head
+    assert direct_data["review_file"].endswith("review.md")
+
+    # Test review(..., format="json")
+    json_str = review.review(root, "main...feat", out_dir=tmp_path / "out_direct_str", format="json")
+    loaded = json.loads(json_str)
+    assert loaded["base"] == base
+    assert loaded["head"] == head
+
+
+def test_review_target_equals_default_base_cli(make_repo, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(
+        "cbi.render.render_images",
+        lambda *args, **kwargs: {"skipped": "skipped"},
+    )
+    root = make_repo({"app/b.ts": "export function b() { return 1; }\n"})
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+
+    code, out, err = run(capsys, "review", "main", "--json", "--out-dir", str(tmp_path / "out_same"))
+    assert code == 0, err
+    data = json.loads(out)
+    assert data["base"] == data["head"]
+    assert (tmp_path / "out_same" / "review.md").exists()
+

@@ -940,15 +940,9 @@ def cmd_render(args):
 def cmd_review(args):
     root, out = _paths(args)
     try:
-        report = review.review(root, args.target, base=args.base, model=out, out_dir=args.out_dir, post=args.post)
         fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
-        if fmt == "json":
-            lines = report.splitlines()
-            review_file = lines[0] if lines else ""
-            payload = {"review_file": review_file, "report": report}
-            print(json.dumps(payload, indent=2))
-        else:
-            print(report)
+        output = review.review(root, args.target, base=args.base, model=out, out_dir=args.out_dir, post=args.post, format=fmt)
+        print(output)
     except review.ReviewError as err:
         print(err, file=sys.stderr)
         return err.code
