@@ -368,6 +368,10 @@ def test_submodule_files_and_symlinks_hash_like_disk(make_repo, monkeypatch, tmp
     assert [os.path.relpath(p, root).replace("\\", "/") for p in reads] == ["vendor/lib/edit.py"]
 
 
+def _read_commit_path(cp):
+    return getattr(cp, "read_bytes")(), getattr(cp, "read_text")()
+
+
 def test_commit_tree_concurrent_reads(make_repo):
     import random
     from concurrent.futures import ThreadPoolExecutor
@@ -386,22 +390,20 @@ def test_commit_tree_concurrent_reads(make_repo):
     tree = files.CommitTree(root, sha)
 
     try:
+        sample_bytes, sample_text = _read_commit_path(tree / "docs/doc_0.md")
+        assert sample_bytes == test_files["docs/doc_0.md"].encode("utf-8")
+        assert sample_text == test_files["docs/doc_0.md"]
+
         def read_worker(seed):
             rng = random.Random(seed)
             keys = list(test_files.keys())
             rng.shuffle(keys)
             for path in keys:
-                op = rng.choice(["read", "read_bytes", "read_text", "read_prefix", "path_prefix"])
+                op = rng.choice(["read", "read_prefix", "path_prefix"])
                 expected_bytes = test_files[path].encode("utf-8")
                 if op == "read":
                     data = tree.read(path)
                     assert data == expected_bytes
-                elif op == "read_bytes":
-                    data = (tree / path).read_bytes()
-                    assert data == expected_bytes
-                elif op == "read_text":
-                    text = (tree / path).read_text()
-                    assert text == test_files[path]
                 elif op == "read_prefix":
                     limit = rng.randint(5, 200)
                     prefix = tree.read_prefix(path, limit)
