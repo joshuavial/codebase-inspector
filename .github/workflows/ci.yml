@@ -49,6 +49,8 @@ jobs:
         with:
           base-ref: ${{ github.base_ref || 'main' }}
           fail-on-problems: "true"
+          fail-on-cycles: 'true'
+          forbid: 'codebase-inspector:codebase-inspector-app'
           review: "true"
           python-version: "3.13"
 
