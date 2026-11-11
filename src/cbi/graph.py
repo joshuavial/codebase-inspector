@@ -793,7 +793,7 @@ def _find_endpoint(nodes, level, text):
 
 def _members(files, level, node, file_pkg, file_deps, owns):
     if level == "folder":
-        return {f["id"] for f in files if f["wid"] == node["wid"] and _under(f["path"], node["path"])}
+        return {f["id"] for f in files if f["wid"] == node["wid"] and posixpath.dirname(f["path"]) == node["path"]}
     if level == "package":
         return {fid for fid, pid in file_pkg.items() if pid == node["id"]}
     if level == "deployable":
