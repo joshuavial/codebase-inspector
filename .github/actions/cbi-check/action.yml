@@ -95,6 +95,24 @@ runs:
           exit 1
         fi
 
+        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        BASE_SHA=$(git rev-parse --verify --quiet "${RESOLVED_BASE_REF}^{commit}" 2>/dev/null || echo "")
+        if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" = "$HEAD_SHA" ]; then
+          if git rev-parse --verify --quiet "HEAD~1^{commit}" >/dev/null 2>&1; then
+            echo "Base ref '$BASE_REF' matches HEAD ($HEAD_SHA); falling back to parent commit 'HEAD~1' for push event verification."
+            RESOLVED_BASE_REF="HEAD~1"
+          elif [ "$IS_SHALLOW" = "true" ] || [ -f ".git/shallow" ]; then
+            echo "::error::Base ref '${BASE_REF}' matches HEAD ($HEAD_SHA), but parent commit 'HEAD~1' is not resolvable because the repository checkout is shallow. Please configure actions/checkout with 'fetch-depth: 0' to enable merge-base resolution."
+            if [ -n "$GITHUB_OUTPUT" ]; then
+              echo "status=failed" >> "$GITHUB_OUTPUT"
+              echo "problems=1" >> "$GITHUB_OUTPUT"
+            fi
+            exit 1
+          else
+            echo "Notice: Base ref '$BASE_REF' matches HEAD ($HEAD_SHA) and HEAD has no parent commit (root commit). Evaluating root commit."
+          fi
+        fi
+
         echo "Running cbi check against base ref: $RESOLVED_BASE_REF..."
         CHECK_OUTPUT_FILE="${RUNNER_TEMP:-/tmp}/cbi-check-output.txt"
         
@@ -142,6 +160,21 @@ runs:
           RESOLVED_BASE_REF="origin/${BASE_REF}"
         else
           RESOLVED_BASE_REF="${BASE_REF}"
+        fi
+
+        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        BASE_SHA=""
+        if [ -n "$RESOLVED_BASE_REF" ]; then
+          BASE_SHA=$(git rev-parse --verify --quiet "${RESOLVED_BASE_REF}^{commit}" 2>/dev/null || echo "")
+        fi
+
+        if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" = "$HEAD_SHA" ]; then
+          if git rev-parse --verify --quiet "HEAD~1^{commit}" >/dev/null 2>&1; then
+            echo "Base ref '$BASE_REF' matches HEAD ($HEAD_SHA); falling back to parent commit 'HEAD~1' for push event verification."
+            RESOLVED_BASE_REF="HEAD~1"
+          else
+            echo "Notice: Base ref '$BASE_REF' matches HEAD ($HEAD_SHA) and HEAD has no parent commit (root commit)."
+          fi
         fi
 
         echo "Generating architectural review against base ref: $RESOLVED_BASE_REF..."
