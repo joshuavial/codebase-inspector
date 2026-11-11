@@ -1,6 +1,9 @@
 """Relationships that end on a container are drawn beside it, matching the drawer."""
 
 import json
+from pathlib import Path
+
+import pytest
 
 from conftest import run_playwright
 
@@ -20,6 +23,11 @@ FILE_CALL = f"{WS}:call.ts"
 ALPHA = f"{FILE_LEFT}#alpha"
 BETA = f"{FILE_RIGHT}#beta"
 GO = f"{FILE_CALL}#go"
+FOLDER_CBI = f"{WS}:group:src/cbi"
+FOLDER_PARSE = f"{WS}:group:src/cbi/parse"
+FILE_INIT = f"{WS}:src/cbi/parse/__init__.py"
+FILE_CSHARP = f"{WS}:src/cbi/parse/csharp.py"
+FILE_GRAPH = f"{WS}:src/cbi/graph.py"
 
 # Playwright is not a project dependency. The checker runs under uvx, same as scripts/smoke_viewer.py.
 _CHECK = r"""
@@ -147,6 +155,22 @@ def _model(tmp_path):
     _edge(conn, CALLER, BOX, "relates", {"label": "watches"}, ordinal=1)
     _edge(conn, NEIGHBOUR, BOX, "relates", {"label": "states a link"})
     _edge(conn, BOX, SINK, "relates", {"label": "publishes"})
+    conn.commit()
+    return conn
+
+
+def _folder_model(tmp_path):
+    conn = store.open_db(tmp_path / "model.db")
+    _node(conn, id=WS, kind="workspace", display_kind="workspace", name="fixture", parent_id=None, workspace_id=None)
+    _node(conn, id=FOLDER_CBI, parent_id=WS, kind="group", display_kind="folder", name="cbi", path="src/cbi")
+    _node(conn, id=FOLDER_PARSE, parent_id=FOLDER_CBI, kind="group", display_kind="folder", name="parse", path="src/cbi/parse")
+    _node(conn, id=FILE_INIT, parent_id=FOLDER_PARSE, kind="file", display_kind="source file",
+          name="__init__.py", path="src/cbi/parse/__init__.py", attrs={"role": "code"})
+    _node(conn, id=FILE_CSHARP, parent_id=FOLDER_PARSE, kind="file", display_kind="source file",
+          name="csharp.py", path="src/cbi/parse/csharp.py", attrs={"role": "code"})
+    _node(conn, id=FILE_GRAPH, parent_id=FOLDER_CBI, kind="file", display_kind="source file",
+          name="graph.py", path="src/cbi/graph.py", attrs={"role": "code"})
+    _edge(conn, FILE_INIT, FILE_CSHARP, "imports")
     conn.commit()
     return conn
 
@@ -341,6 +365,73 @@ def test_orphans_fail_json_violation_detected(tmp_path, capsys):
     assert code_text_compat == 0
     out_compat = capsys.readouterr().out
     assert "production code with no production importer or caller:" in out_compat
+
+
+def test_deps_forbid_folder_child_internal_imports_not_flagged(tmp_path, capsys):
+    conn = _folder_model(tmp_path)
+    conn.close()
+
+    # Clean case: internal child import (src/cbi/parse/__init__.py -> src/cbi/parse/csharp.py)
+    # must not be classified as an import to the parent folder src/cbi.
+    code = main(["deps", "--out", str(tmp_path), "--level", "folder", "--forbid", "src/cbi/parse:src/cbi", "--json"])
+    assert code == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["level"] == "folder"
+    assert data["passed"] is True
+    assert len(data["rules"]) == 1
+    assert data["rules"][0]["spec"] == "src/cbi/parse:src/cbi"
+    assert data["rules"][0]["passed"] is True
+    assert data["rules"][0]["violations"] == []
+
+    # Text output reports 0 violations and exits 0
+    code_text = main(["deps", "--out", str(tmp_path), "--level", "folder", "--forbid", "src/cbi/parse:src/cbi"])
+    assert code_text == 0
+    out_text = capsys.readouterr().out
+    assert "no production imports from src/cbi/parse to src/cbi" in out_text
+
+
+def test_deps_forbid_folder_true_violation_detected(tmp_path, capsys):
+    conn = _folder_model(tmp_path)
+    # Add a true cross-folder import: file in child folder imports file in parent folder
+    _edge(conn, FILE_CSHARP, FILE_GRAPH, "imports")
+    conn.commit()
+    conn.close()
+
+    # JSON output reports passed: false with the offending edge
+    code = main(["deps", "--out", str(tmp_path), "--level", "folder", "--forbid", "src/cbi/parse:src/cbi", "--json"])
+    assert code == 1
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["level"] == "folder"
+    assert data["passed"] is False
+    assert len(data["rules"]) == 1
+    assert data["rules"][0]["spec"] == "src/cbi/parse:src/cbi"
+    assert data["rules"][0]["passed"] is False
+    assert data["rules"][0]["violations"] == [{"from": "src/cbi/parse/csharp.py", "to": "src/cbi/graph.py"}]
+
+    # Text mode exits 1 and reports offending edge
+    code_text = main(["deps", "--out", str(tmp_path), "--level", "folder", "--forbid", "src/cbi/parse:src/cbi"])
+    assert code_text == 1
+    out_text = capsys.readouterr().out
+    assert "src/cbi/parse/csharp.py → src/cbi/graph.py" in out_text
+
+
+def test_deps_forbid_folder_clean_codebase_repo(capsys):
+    if not Path(".cbi/model.db").is_file():
+        pytest.skip(".cbi/model.db not present")
+    code = main(["deps", "--level", "folder", "--forbid", "src/cbi/parse:src/cbi", "--json"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["passed"] is True
+    assert data["rules"][0]["passed"] is True
+    assert data["rules"][0]["violations"] == []
+
+    code_text = main(["deps", "--level", "folder", "--forbid", "src/cbi/parse:src/cbi"])
+    assert code_text == 0
+    out_text = capsys.readouterr().out
+    assert "no production imports from src/cbi/parse to src/cbi" in out_text
+
 
 
 

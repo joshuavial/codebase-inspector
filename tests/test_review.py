@@ -275,7 +275,9 @@ def test_deps_matrix_and_forbid(repo, capsys):
     assert ("service/server.test.ts", "service/server.ts") in {(f["from"], f["to"]) for f in service["files"]}
 
     code, out, _ = run(capsys, "deps", "--level", "folder", "--forbid", "src:core")
-    assert code == 1 and "src/ui.ts → core/a.ts" in out and "src/mobile/widget.ts → core/a.ts" in out
+    assert code == 1 and "src/ui.ts → core/a.ts" in out and "src/mobile/widget.ts → core/a.ts" not in out
+    code, out, _ = run(capsys, "deps", "--level", "folder", "--forbid", "src/mobile:core")
+    assert code == 1 and "src/mobile/widget.ts → core/a.ts" in out
     code, out, _ = run(capsys, "deps", "--level", "folder", "--forbid", "service:src")
     assert code == 0 and "no production imports from service to src" in out
     code, out, _ = run(capsys, "deps", "--level", "folder", "--forbid", "service:core")
