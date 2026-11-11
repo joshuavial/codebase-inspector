@@ -1058,21 +1058,31 @@ class MCPServer:
             if not ref_str:
                 raise ValueError("ref parameter cannot be empty")
             refs_dir = (self.out / "refs").resolve()
-            candidate = (self.out / "refs" / ref_str / "model.db").resolve()
-            if ".." in ref_str or "/" in ref_str or "\\" in ref_str or not candidate.is_relative_to(refs_dir):
+            if ".." in ref_str or ref_str.startswith("/") or ref_str.startswith("\\") or "\0" in ref_str:
                 raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
-            if not candidate.is_file():
+
+            candidate = None
+            if self.root:
                 try:
                     sha = files.resolve_commit(self.root, ref_str)
                     sha_candidate = (self.out / "refs" / sha / "model.db").resolve()
                     if not sha_candidate.is_relative_to(refs_dir):
                         raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
-                    candidate = sha_candidate
+                    if sha_candidate.is_file():
+                        candidate = sha_candidate
                 except ValueError:
                     raise
                 except Exception:
                     pass
-            if not candidate.is_file():
+
+            if candidate is None:
+                direct_candidate = (self.out / "refs" / ref_str / "model.db").resolve()
+                if not direct_candidate.is_relative_to(refs_dir):
+                    raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
+                if direct_candidate.is_file():
+                    candidate = direct_candidate
+
+            if candidate is None or not candidate.is_file():
                 raise ValueError(f"No CBI model found for ref '{ref}' at {self.out / 'refs' / ref / 'model.db'}")
             return candidate
         else:
@@ -1112,13 +1122,15 @@ class MCPServer:
         if not ref_str:
             return None
         refs_dir = (self.out / "refs").resolve()
-        candidate = (self.out / "refs" / ref_str / "model.db").resolve()
-        if ".." in ref_str or "/" in ref_str or "\\" in ref_str or not candidate.is_relative_to(refs_dir):
+        if ".." in ref_str or ref_str.startswith("/") or ref_str.startswith("\\") or "\0" in ref_str:
             raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
         try:
             sha = files.resolve_commit(self.root, ref_str)
         except Exception:
             sha = ref_str
+        candidate = (self.out / "refs" / sha / "model.db").resolve()
+        if not candidate.is_relative_to(refs_dir):
+            raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
         return files.CommitTree(self.root, sha, files.Ignore(""))
 
     def handle_request(self, request: dict) -> dict | None:
@@ -1516,7 +1528,12 @@ class MCPServer:
             }
 
         if name == "cbi_review_pr":
-            base = args.get("base") or "main"
+            base = args.get("base")
+            if not base:
+                try:
+                    base = history.default_branch(self.root) if self.root else "main"
+                except Exception:
+                    base = "main"
             head = args.get("head") or "HEAD"
             description = "Perform an architectural code review of changes between git base and head."
             text_lines = [
@@ -1844,11 +1861,12 @@ class MCPServer:
         fmt = args.get("format", "text")
         detail = bool(args.get("detail", False))
 
-        if not base_model and not head_model and not base and not head:
-            base = "main"
-            head = "HEAD"
-        elif not base_model and not head_model:
-            base = base or "main"
+        if not base_model and not head_model:
+            if not base:
+                try:
+                    base = history.default_branch(self.root) if self.root else "main"
+                except Exception:
+                    base = "main"
             head = head or "HEAD"
 
         try:
