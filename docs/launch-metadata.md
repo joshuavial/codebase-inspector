@@ -1,6 +1,6 @@
-# Launch Metadata Draft: Topics, Homepage, and v0.4.0 Highlights
+# Launch Metadata Draft: Topics, Homepage, and v0.5.0 Highlights
 
-Prepared for JV approval (cbi-6pq.6, updated for v0.4.0 launch in cbi-ecw.6).
+Prepared for JV approval (cbi-6pq.6, updated for v0.4.0 launch in cbi-ecw.6, aligned for v0.5.0 in cbi-n0m).
 Per hard limits: **Do not apply to GitHub repo until JV confirms.**
 
 ---
@@ -10,12 +10,12 @@ Per hard limits: **Do not apply to GitHub repo until JV confirms.**
 ### Option A (Recommended based on demand evidence): Agent Codebase Map
 * **Description:** Fast, deterministic codebase map for AI coding agents. 100% local, links tests to code, eliminates grep loops, zero LLM tokens.
 * **Homepage URL:** https://github.com/joshuavial/codebase-inspector (or dedicated docs site once published)
-* **v0.4.0 Feature References:** 25 native MCP tools and 3 prompts over stdio JSON-RPC (`cbi mcp`), `cbi mcp --install` automated configuration generator for Claude Code, Cursor, Windsurf, Antigravity, and VS Code, deterministic symbol resolution, and instant test linkage (`cbi tests-for`).
+* **v0.5.0 Feature References:** 25 native MCP tools and 3 prompts over stdio JSON-RPC (`cbi mcp`), first-class offset pagination (`--offset`), hardened sandbox boundaries (read-only SQLite authorizer, 5.0s query timeout, strict path traversal confinement), automated credential exclusion (`BASE_IGNORE`), `cbi mcp --install` automated configuration generator for Claude Code, Cursor, Windsurf, Antigravity, and VS Code, deterministic symbol resolution, and instant test linkage (`cbi tests-for`).
 
 ### Option B (Alternative): Architecture PR Review
 * **Description:** Deterministic architecture review for pull requests and CI. Structural diffs, Mermaid graphs, and boundary checks with no model inside.
 * **Homepage URL:** https://github.com/joshuavial/codebase-inspector
-* **v0.4.0 Feature References:** Automated PR architecture reviews (`cbi review`), database schema migration and HTTP route impact analysis with Mermaid visualization, visual ERD generation (`cbi tables --format mermaid`), reusable GitHub Action, and multi-repo showcase compilation (`cbi gallery`).
+* **v0.5.0 Feature References:** Automated PR architecture reviews (`cbi review`), database schema migration and HTTP route impact analysis with Mermaid visualization, visual ERD generation (`cbi tables --format mermaid`), reusable GitHub Action (`@v0.5.0`), and multi-repo showcase compilation (`cbi gallery`).
 
 ---
 
@@ -53,13 +53,23 @@ Script for creating `docs/images/cbi-demo.gif`:
 3. **Scene 3 (0:14 - 0:22) — Cycle & Boundary Auditing:**
    - Run `cbi cycles`.
    - Instantly outputs exact multi-hop import cycles in yellow/green terminal text.
-4. **Scene 4 (0:22 - 0:30) — PR Architecture Review (v0.4.0):**
+4. **Scene 4 (0:22 - 0:30) — PR Architecture Review (v0.5.0):**
    - Run `cbi review HEAD~1..HEAD`.
    - Generates Mermaid diagram and structural change overview, surfacing database migration and HTTP endpoint impacts.
 
 ---
 
-## 4. v0.4.0 Release Highlights
+## 4. v0.5.0 Release Highlights
+
+CBI v0.5.0 delivers Wave 6 security hardening, first-class offset pagination across CLI and MCP interfaces, and CI packaging integrity verification.
+
+* **Wave 6 Security Hardening**: Strict path traversal confinement and root-relative path resolution (`cbi-089`); SQLite connection timeouts (5.0s) and authorizer-enforced read-only security on ad-hoc SQL queries (`cbi-e8n`); automated credential pattern exclusions in `BASE_IGNORE` (`.env*`, `*.pem`, `*.key`, `id_rsa*`) (`cbi-lha`); host-path neutralization and sanitized relative paths in `cbi gallery` (`cbi-523`).
+* **CLI & MCP Offset Pagination**: First-class `--offset` support across `search`, `hotspots`, and `query` CLI subcommands and equivalent MCP tools (`cbi-g7c`, `cbi-nyi`).
+* **CI & Packaging Integrity**: Automated wheel packaging verification and PEP 639 license classifier cleanup (`cbi-ay6`); subprocess test boundary diagnostic resolution (`cbi-oxt`).
+
+---
+
+## 5. Prior Release Highlights (v0.4.0)
 
 CBI v0.4.0 brings significant enhancements across user-facing architecture views and agent-facing MCP capabilities.
 

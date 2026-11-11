@@ -431,7 +431,7 @@ body {{
     </div>
     <div class="footer-bar">
         <span>Scene {scene_num} of 4</span>
-        <span>Codebase Inspector v0.3.0</span>
+        <span>Codebase Inspector v0.5.0</span>
     </div>
 </div>
 </body>

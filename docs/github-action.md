@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0 # Full history needed to resolve merge base
 
       - name: Run Codebase Inspector
-        uses: joshuavial/codebase-inspector@v0.3.0
+        uses: joshuavial/codebase-inspector@v0.5.0
         with:
           base-ref: ${{ github.base_ref || 'main' }}
           fail-on-problems: true
@@ -85,7 +85,7 @@ jobs:
 
       - name: Run Codebase Inspector Check & Review
         id: cbi
-        uses: joshuavial/codebase-inspector@v0.3.0
+        uses: joshuavial/codebase-inspector@v0.5.0
         with:
           base-ref: ${{ github.base_ref }}
           fail-on-problems: true
