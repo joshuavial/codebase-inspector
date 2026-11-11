@@ -89,7 +89,7 @@ def build_parser():
             cmd.add_argument("--out", metavar="DIR", type=Path,
                              help="model directory to use instead of .cbi/ in the repo root")
         if name in (
-            "search", "show", "tests-for", "tasks", "task", "hotspots",
+            "scan", "search", "show", "tests-for", "tasks", "task", "hotspots",
             "orphans", "cycles", "deps", "query", "endpoints", "tables",
             "diff", "history", "review", "check",
         ):
@@ -362,6 +362,10 @@ cache before opening tasks.
 Prints node counts by kind, the time taken and whether the no-change
 shortcut applied.
 
+--json prints {ref, shortcut, counts, open_tasks, blocked_tasks,
+elapsed_seconds} (and excluded_executables for working tree scans) as one
+JSON object.
+
 --ref REF maps that branch, tag or commit from git objects (`git ls-tree`
 and one `git cat-file --batch` per object database, including submodule
 gitlinks) and stores the model at refs/<commit>/model.db inside the model
@@ -583,17 +587,36 @@ def cmd_scan(args):
     start = time.perf_counter()
     if args.ref:
         sha, reused, counts, task_counts = scan_ref(root, out, args.ref)
+        shortcut = reused
+    else:
+        shortcut, counts, task_counts = scan(root, out)
+        sha = None
+    elapsed = time.perf_counter() - start
+    open_n, blocked_n = task_counts
+    if getattr(args, "json", False):
+        payload = {
+            "ref": sha,
+            "shortcut": shortcut,
+            "counts": counts,
+            "open_tasks": open_n,
+            "blocked_tasks": blocked_n,
+            "elapsed_seconds": round(elapsed, 2),
+        }
+        if not args.ref:
+            excluded = files.excluded_source_files(root, files.Ignore(_read(out / "ignore") or ""))
+            payload["excluded_executables"] = len(excluded)
+        _print_json(payload)
+        return 0
+
+    if args.ref:
         print(sha)
         status = "reused" if reused else "scanned"
     else:
-        shortcut, counts, task_counts = scan(root, out)
         files.report_excluded_source(root, _read(out / "ignore"))
         status = "no changes since the last scan" if shortcut else "scanned"
-    elapsed = time.perf_counter() - start
     print(f"{status} in {elapsed:.1f} s")
     for kind, count in counts.items():
         print(f"  {kind}: {count}")
-    open_n, _blocked_n = task_counts
     line = tasks.task_headline(*task_counts)
     print(line + ("; run `cbi tasks`" if open_n else ""))
     return 0
