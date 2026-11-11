@@ -298,6 +298,182 @@ def test_scan_json_output(make_repo, monkeypatch, capsys):
     assert "judgement tasks" in out_ref_text
 
 
+def test_layers_and_dead_help(capsys):
+    parser = cli.build_parser()
+    subparsers_action = [a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction"][0]
+
+    # Verify options parity between layers and deps
+    deps_sub = subparsers_action.choices["deps"]
+    layers_sub = subparsers_action.choices["layers"]
+    deps_opts = {opt for a in deps_sub._actions for opt in a.option_strings}
+    layers_opts = {opt for a in layers_sub._actions for opt in a.option_strings}
+    assert layers_opts == deps_opts
+    for expected in ("--level", "--from", "--start", "--to", "--end", "--forbid", "--include-tests", "--out", "--ref", "--json"):
+        assert expected in layers_opts
+
+    # Verify options parity between dead and orphans
+    orphans_sub = subparsers_action.choices["orphans"]
+    dead_sub = subparsers_action.choices["dead"]
+    orphans_opts = {opt for a in orphans_sub._actions for opt in a.option_strings}
+    dead_opts = {opt for a in dead_sub._actions for opt in a.option_strings}
+    assert dead_opts == orphans_opts
+    for expected in ("--fail", "--out", "--ref", "--json"):
+        assert expected in dead_opts
+
+    # Test --help execution for layers and deps
+    with pytest.raises(SystemExit) as exc_layers:
+        main(["layers", "--help"])
+    assert exc_layers.value.code == 0
+    out_layers = capsys.readouterr().out
+    assert "--level" in out_layers and "--forbid" in out_layers and "--json" in out_layers
+
+    with pytest.raises(SystemExit) as exc_deps:
+        main(["deps", "--help"])
+    assert exc_deps.value.code == 0
+    out_deps = capsys.readouterr().out
+    assert "--level" in out_deps and "--forbid" in out_deps and "--json" in out_deps
+
+    # Test --help execution for dead and orphans
+    with pytest.raises(SystemExit) as exc_dead:
+        main(["dead", "--help"])
+    assert exc_dead.value.code == 0
+    out_dead = capsys.readouterr().out
+    assert "--fail" in out_dead and "--json" in out_dead
+
+    with pytest.raises(SystemExit) as exc_orphans:
+        main(["orphans", "--help"])
+    assert exc_orphans.value.code == 0
+    out_orphans = capsys.readouterr().out
+    assert "--fail" in out_orphans and "--json" in out_orphans
+
+
+def test_layers_matches_deps_json_and_forbid(make_repo, monkeypatch, capsys):
+    files = {
+        "package.json": json.dumps({"name": "root"}),
+        "src/a.ts": "import { b } from '../lib/b';\nexport const a = b;\n",
+        "lib/b.ts": "export const b = 1;\n",
+    }
+    repo = make_repo(files)
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+
+    # 1. cbi layers --json matches cbi deps --json
+    assert main(["layers", "--json"]) == 0
+    out_layers_json = capsys.readouterr().out
+    assert main(["deps", "--json"]) == 0
+    out_deps_json = capsys.readouterr().out
+    assert json.loads(out_layers_json) == json.loads(out_deps_json)
+
+    # 2. --level folder with --json matches
+    assert main(["layers", "--level", "folder", "--json"]) == 0
+    out_layers_folder = capsys.readouterr().out
+    assert main(["deps", "--level", "folder", "--json"]) == 0
+    out_deps_folder = capsys.readouterr().out
+    assert json.loads(out_layers_folder) == json.loads(out_deps_folder)
+
+    # 3. Text output matches
+    assert main(["layers", "--level", "folder"]) == 0
+    text_layers = capsys.readouterr().out
+    assert main(["deps", "--level", "folder"]) == 0
+    text_deps = capsys.readouterr().out
+    assert text_layers == text_deps
+
+    # 4. --forbid passes when no forbidden imports exist
+    assert main(["layers", "--level", "folder", "--forbid", "lib:src"]) == 0
+    out_layers_ok = capsys.readouterr().out
+    assert main(["deps", "--level", "folder", "--forbid", "lib:src"]) == 0
+    out_deps_ok = capsys.readouterr().out
+    assert out_layers_ok == out_deps_ok
+
+    # 5. --forbid fails (exits 1) identically when forbidden imports exist
+    assert main(["layers", "--level", "folder", "--forbid", "src:lib"]) == 1
+    out_layers_fail = capsys.readouterr().out
+    assert main(["deps", "--level", "folder", "--forbid", "src:lib"]) == 1
+    out_deps_fail = capsys.readouterr().out
+    assert out_layers_fail == out_deps_fail
+    assert "src/a.ts → lib/b.ts" in out_layers_fail
+
+    # 6. --forbid with --json fails identically
+    assert main(["layers", "--level", "folder", "--forbid", "src:lib", "--json"]) == 1
+    out_layers_fail_json = capsys.readouterr().out
+    assert main(["deps", "--level", "folder", "--forbid", "src:lib", "--json"]) == 1
+    out_deps_fail_json = capsys.readouterr().out
+    assert json.loads(out_layers_fail_json) == json.loads(out_deps_fail_json)
+
+
+def test_dead_matches_orphans_json_and_fail(make_repo, monkeypatch, capsys):
+    repo_files = {
+        "package.json": json.dumps({"name": "app", "main": "src/main.ts"}),
+        "src/main.ts": "import { helper } from './helper';\nexport const x = helper;\n",
+        "src/helper.ts": "export const helper = 42;\n",
+    }
+    repo = make_repo(repo_files)
+    monkeypatch.chdir(repo)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    capsys.readouterr()
+
+    # 1. cbi dead --json matches cbi orphans --json on clean code
+    assert main(["dead", "--json"]) == 0
+    out_dead_json = capsys.readouterr().out
+    assert main(["orphans", "--json"]) == 0
+    out_orphans_json = capsys.readouterr().out
+    assert json.loads(out_dead_json) == json.loads(out_orphans_json)
+    assert json.loads(out_dead_json)["passed"] is True
+
+    # 2. Text output matches on clean code
+    assert main(["dead"]) == 0
+    text_dead = capsys.readouterr().out
+    assert main(["orphans"]) == 0
+    text_orphans = capsys.readouterr().out
+    assert text_dead == text_orphans
+
+    # 3. cbi dead --fail exits 0 on clean code
+    assert main(["dead", "--fail"]) == 0
+    out_dead_fail = capsys.readouterr().out
+    assert main(["orphans", "--fail"]) == 0
+    out_orphans_fail = capsys.readouterr().out
+    assert out_dead_fail == out_orphans_fail
+    assert "production code with no production importer or caller:\n  none" in out_dead_fail
+
+    assert main(["dead", "--fail", "--json"]) == 0
+    out_dead_fail_json = capsys.readouterr().out
+    assert main(["orphans", "--fail", "--json"]) == 0
+    out_orphans_fail_json = capsys.readouterr().out
+    assert json.loads(out_dead_fail_json) == json.loads(out_orphans_fail_json)
+
+    # 4. Introduce an orphaned production file
+    (repo / "src" / "orphan.ts").write_text("export const unused = 100;\n")
+    files._git(repo, "add", "-A")
+    assert main(["scan"]) == 0
+    capsys.readouterr()
+
+    # 5. cbi dead --fail exits 1 on orphans
+    assert main(["dead", "--fail"]) == 1
+    err_dead = capsys.readouterr().out
+    assert main(["orphans", "--fail"]) == 1
+    err_orphans = capsys.readouterr().out
+    assert err_dead == err_orphans
+    assert "src/orphan.ts" in err_dead
+
+    # 6. cbi dead --fail --json exits 1 on orphans and emits identical JSON
+    assert main(["dead", "--fail", "--json"]) == 1
+    err_dead_json = capsys.readouterr().out
+    assert main(["orphans", "--fail", "--json"]) == 1
+    err_orphans_json = capsys.readouterr().out
+    assert json.loads(err_dead_json) == json.loads(err_orphans_json)
+    data = json.loads(err_dead_json)
+    assert data["passed"] is False
+    assert any(item["path"] == "src/orphan.ts" for item in data["unreferenced"])
+
+    # 7. Without --fail, exits 0 for backwards compatibility
+    assert main(["dead", "--json"]) == 0
+    capsys.readouterr()
+    assert main(["orphans", "--json"]) == 0
+    capsys.readouterr()
+
+
+
 
 
 

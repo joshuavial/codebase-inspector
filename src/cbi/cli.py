@@ -45,6 +45,8 @@ COMMANDS = {
     "orphans": "List production code nothing in production reaches, and code no deployable reaches.",
     "cycles": "List import cycles between files, folders and packages.",
     "deps": "Show a dependency matrix, or fail when a layering rule is broken.",
+    "layers": "Show a dependency matrix, or fail when a layering rule is broken (alias for deps).",
+    "dead": "List production code nothing in production reaches, and code no deployable reaches (alias for orphans).",
     "tasks": "List open judgement tasks.",
     "task": "Print the brief for one task, with the answer's JSON shape.",
     "submit": "Validate and store the answer to a task.",
@@ -90,7 +92,7 @@ def build_parser():
                              help="model directory to use instead of .cbi/ in the repo root")
         if name in (
             "scan", "search", "show", "tests-for", "tasks", "task", "hotspots",
-            "orphans", "cycles", "deps", "query", "endpoints", "tables",
+            "orphans", "cycles", "deps", "layers", "dead", "query", "endpoints", "tables",
             "diff", "history", "review", "check",
         ):
             cmd.add_argument("--json", action="store_true", help="print JSON instead of text")
@@ -123,14 +125,16 @@ def build_parser():
     cmds["hotspots"].add_argument("--limit", type=int, default=20, help="most rows per list (default 20)")
     cmds["hotspots"].add_argument("--offset", type=int, default=0, help="skip the first N items")
     cmds["orphans"].add_argument("--fail", action="store_true", help="Exit with code 1 if unreferenced production code is found")
+    cmds["dead"].add_argument("--fail", action="store_true", help="Exit with code 1 if unreferenced production code is found")
     cmds["cycles"].add_argument("--fail", action="store_true", help="Exit with code 1 if cycles are found")
-    cmds["deps"].add_argument("--level", choices=("package", "folder", "concept", "deployable"), default="package",
-                              help="what a row of the matrix is (default package)")
-    cmds["deps"].add_argument("--from", "--start", dest="start", help="only dependencies that leave this node")
-    cmds["deps"].add_argument("--to", "--end", dest="end", help="only dependencies that enter this node")
-    cmds["deps"].add_argument("--forbid", action="append", default=[], metavar="FROM:TO",
-                              help="exit 1 when a production import runs from FROM to TO")
-    cmds["deps"].add_argument("--include-tests", action="store_true", help="count imports from test files too")
+    for cmd_name in ("deps", "layers"):
+        cmds[cmd_name].add_argument("--level", choices=("package", "folder", "concept", "deployable"), default="package",
+                                    help="what a row of the matrix is (default package)")
+        cmds[cmd_name].add_argument("--from", "--start", dest="start", help="only dependencies that leave this node")
+        cmds[cmd_name].add_argument("--to", "--end", dest="end", help="only dependencies that enter this node")
+        cmds[cmd_name].add_argument("--forbid", action="append", default=[], metavar="FROM:TO",
+                                    help="exit 1 when a production import runs from FROM to TO")
+        cmds[cmd_name].add_argument("--include-tests", action="store_true", help="count imports from test files too")
     cmds["tests-for"].add_argument("node", help="a node ID, a repo-relative path, path#qualified.name, or a symbol name")
     cmds["tasks"].add_argument("--kind", help="only tasks of this kind, such as summarise-files or summarise-architecture-change")
     cmds["tasks"].add_argument("--limit", type=int, help="most tasks to list")
@@ -207,7 +211,8 @@ def build_parser():
     cmds["ingest"].add_argument("files", nargs="+", metavar="file", help="lcov, coverage.py JSON or JUnit XML file")
     ref_help = "branch, tag or commit. scan stores its model; the other commands read it"
     for name in ("scan", "search", "show", "tests-for", "status", "build", "tasks", "task", "submit",
-                 "ingest", "hotspots", "orphans", "cycles", "deps", "open-file", "query", "endpoints", "tables"):
+                 "ingest", "hotspots", "orphans", "cycles", "deps", "layers", "dead",
+                 "open-file", "query", "endpoints", "tables"):
         cmds[name].add_argument("--ref", metavar="REF", help=ref_help)
     viewed = cmds["context"].add_mutually_exclusive_group()
     viewed.add_argument("--ref", metavar="REF", help=ref_help)
@@ -314,7 +319,8 @@ def build_parser():
 
 
 READERS = ("search", "show", "context", "tests-for", "tasks", "task", "submit", "build",
-           "hotspots", "orphans", "cycles", "deps", "open-file", "mcp", "query", "endpoints", "tables")
+           "hotspots", "orphans", "cycles", "deps", "layers", "dead",
+           "open-file", "mcp", "query", "endpoints", "tables")
 
 TEAM_INIT_HELP = """\
 Opt in to team mode. Writes team.toml, rewrites .gitignore so only derived
@@ -1274,6 +1280,8 @@ HANDLERS = {"bug": cmd_bug, "init": cmd_init, "team": cmd_team, "scan": cmd_scan
             "hotspots": cmd_hotspots, "orphans": cmd_orphans, "cycles": cmd_cycles, "deps": cmd_deps, "mcp": cmd_mcp,
             "query": cmd_query, "endpoints": cmd_endpoints, "tables": cmd_tables, "gallery": cmd_gallery}
 HANDLERS["ingest"] = cmd_ingest
+HANDLERS["layers"] = cmd_deps
+HANDLERS["dead"] = cmd_orphans
 
 
 def _silence_broken_pipe():
