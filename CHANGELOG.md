@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-initialization in `cbi scan` when a custom `--out` directory is clean or missing (`cbi-5ru.3`).
 - `--metric` argument alias in `cbi hotspots` matching MCP parameter name (`cbi-kr7`).
 - `--start` and `--end` argument aliases in `cbi deps` matching MCP parameter names (`cbi-2va.3`).
+- Offset pagination: --offset parameter supported across CLI cbi search, cbi hotspots, and cbi query, matching MCP cbi_search and cbi_hotspots query parity (cbi-g7c).
 
 ### Changed
 
@@ -37,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP `cbi_tasks` schema declared `offset` integer property for pagination and `cbi_diff` declared `base_model`/`head_model` (`cbi-zfg`).
 - MCP `cbi_tests_for`, `cbi_search`, and `cbi_hotspots` schemas declared `format` property with text/json enum (`cbi-2cj`).
 - Architecture documentation header aligned to cover PRD-01 to PRD-08 (`cbi-2va.2`).
+- Prevent git diff argument injection in git_line_stats by specifying --end-of-options before revisions (cbi-089).
+- Prevent path traversal in MCP _get_connection and cbi_ingest by restricting database resolution and ingestion to allowed project roots (cbi-e8n).
+- Harden SQL query execution in cbi_query and CLI cbi query via SQLite authorizer denying ATTACH/DETACH/PRAGMA, 5.0-second execution timeout, bounded pagination limits and offsets, and 50 MB max ingestion size (cbi-523).
+- Exclude private keys and cloud credentials (id_rsa*, *.pem, *.key, credentials.json, *service-account*.json) in BASE_IGNORE by default and sanitize developer host filesystem paths in static viewer and gallery builds (cbi-lha).
 
 
 ## [0.4.0] - 2026-11-09

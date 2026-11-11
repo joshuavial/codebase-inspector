@@ -387,6 +387,13 @@ Recorded during the build; the code is the reference where these and earlier sec
 - Submitted answers are data: they are stored as text and rendered in the viewer with `textContent`, never as HTML, because an agent could paste content from the repo.
 - `.cbi/` is created with its own `.gitignore` containing `*`.
 
+### Security boundaries
+
+- SQLite authorizer blocking `ATTACH`, `DETACH`, and `PRAGMA` in ad-hoc queries, combined with a 5.0s query timeout interrupt.
+- MCP path traversal containment confining ref resolution and file ingestion to allowed repository boundaries.
+- Default exclusion of credentials and private keys in `BASE_IGNORE`.
+- Static viewer path sanitization preventing developer host directory leakage.
+
 ## Bug reports
 
 `src/cbi/bug_report.py` builds a GitHub issue-form URL without reading the

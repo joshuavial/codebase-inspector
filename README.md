@@ -215,7 +215,7 @@ Or use our reusable GitHub Action to run architecture checks and generate visual
   - uses: actions/checkout@v4
     with:
       fetch-depth: 0
-  - uses: joshuavial/codebase-inspector@v0.3.0
+  - uses: joshuavial/codebase-inspector@v0.5.0
     with:
       base-ref: ${{ github.base_ref || 'main' }}
 ```
