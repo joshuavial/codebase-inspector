@@ -1,11 +1,11 @@
 import json
 import os
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from cbi import files
 from cbi.cli import main
 from cbi.files import workspace_title
 
@@ -13,11 +13,10 @@ GOLDEN = Path(__file__).parent / "golden" / "scan.txt"
 
 
 def git(cwd, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-         "-c", "protocol.file.allow=always", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
-    ).stdout
+    return files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+        "-c", "protocol.file.allow=always", *args,
+    ).decode()
 
 
 @pytest.fixture

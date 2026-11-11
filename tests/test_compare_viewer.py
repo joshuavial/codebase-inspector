@@ -2,10 +2,9 @@
 
 import json
 import shutil
-import subprocess
 from pathlib import Path
 
-from cbi import build, diff, store
+from cbi import build, diff, files, store
 from cbi.cli import main
 
 WS = "local:repo"
@@ -166,20 +165,17 @@ def test_compare_copied_model_projects_concepts_onto_an_unseen_head(
     concept_text = json.dumps(document, indent=2) + "\n"
     (model / "concepts.json").write_text(concept_text)
     assert main(["scan", "--out", str(model)]) == 0
-    base = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    base = files.resolve_commit(root, "HEAD")
     base_home = model / "refs" / base
     base_home.mkdir(parents=True)
     (base_home / "concepts.json").write_text(concept_text)
     assert main(["scan", "--out", str(model), "--ref", base]) == 0
 
     (root / "README.md").write_text("# Viewer-only change\n")
-    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
-         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "viewer"],
-        cwd=root, check=True,
+    files._git(root, "add", "README.md")
+    files._git(
+        root, "-c", "user.name=test", "-c", "user.email=test@example.com",
+        "-c", "commit.gpgsign=false", "commit", "-q", "-m", "viewer",
     )
 
     copied = tmp_path / "copied-model"

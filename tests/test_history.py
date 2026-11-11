@@ -3,18 +3,16 @@
 import datetime as dt
 import json
 import sqlite3
-import subprocess
 
-from cbi import change_summaries, history, store, tasks
+from cbi import change_summaries, files, history, store, tasks
 from cbi.cli import main
 
 
 def git(root, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
-         "-c", "commit.gpgsign=false", *args], cwd=root, check=True,
-        capture_output=True, text=True,
-    ).stdout.strip()
+    return files._git(
+        root, "-c", "user.name=test", "-c", "user.email=test@example.com",
+        "-c", "commit.gpgsign=false", *args,
+    ).decode().strip()
 
 
 def commit(root, message, **files):

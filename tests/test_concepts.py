@@ -1,11 +1,10 @@
 """define-concepts: every check, apply on scan, show, search and rescan."""
 
 import json
-import subprocess
 from copy import deepcopy
 from pathlib import Path
 
-from cbi import build, concepts, store, tasks
+from cbi import build, concepts, files, store, tasks
 from cbi.cli import main
 
 FILES = {
@@ -36,7 +35,7 @@ def submit(capsys, tmp_path, task_id, value):
 
 
 def git(root, *args):
-    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    return files._git(root, *args)
 
 
 def concept_brief(capsys):

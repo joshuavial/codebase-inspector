@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cbi import build, editor
+from cbi import build, editor, files
 from cbi.cli import main
 from cbi.editor import EditorError
 
@@ -295,7 +295,7 @@ def test_open_file_prints_and_runs_argv(make_repo, monkeypatch, tmp_path, capsys
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    return files._git(cwd, *args)
 
 
 def _side_repo(tmp_path):
@@ -314,9 +314,7 @@ def _side_repo(tmp_path):
     (root / "src" / "pay.py").write_text(side_text)
     _git(root, "add", "src/pay.py")
     _git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "side")
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    sha = files.resolve_commit(root, "HEAD")
     _git(root, "checkout", "-q", "main")
     return root, sha, side_text
 
@@ -326,7 +324,7 @@ def test_ref_opens_the_worktree_that_has_the_branch(tmp_path):
     other = tmp_path / "side-work"
     _git(root, "worktree", "add", "-q", str(other), "feature/side-by-side")
     cache = tmp_path / "cache"
-    before = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
+    before = files._git(root, "status", "--porcelain").decode()
     opened = editor.resolve_ref_target(
         "src/pay.py", 1, repo=root, branch="feature/side-by-side", sha=sha, cache_dir=cache,
     )
@@ -339,7 +337,7 @@ def test_ref_opens_the_worktree_that_has_the_branch(tmp_path):
     assert opened["line"] == 1
     assert Path(opened["file"]).read_text() == side_text
     assert not cache.exists()
-    after = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
+    after = files._git(root, "status", "--porcelain").decode()
     assert after == before
 
 
@@ -452,8 +450,8 @@ def test_open_file_ref_writes_a_snapshot_and_leaves_the_repo(make_repo, monkeypa
     assert main(["init"]) == 0
     assert main(["scan", "--ref", "side"]) == 0
     _code, launched = _fake_code(tmp_path, monkeypatch)
-    before = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
-    trees = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
+    before = files._git(root, "status", "--porcelain").decode()
+    trees = files._git(root, "worktree", "list", "--porcelain").decode()
     capsys.readouterr()
     rc = main(["open-file", "--ref", "side", "src/app.py"])
     out, err = capsys.readouterr()
@@ -467,11 +465,9 @@ def test_open_file_ref_writes_a_snapshot_and_leaves_the_repo(make_repo, monkeypa
     assert stat.S_IMODE(snap.stat().st_mode) == 0o444
     assert "src/app.py" in out.replace("\\", "/")
     assert (root / "src" / "app.py").read_text() != side_text
-    after = subprocess.run(["git", "status", "--porcelain"], cwd=root, check=True, capture_output=True, text=True).stdout
+    after = files._git(root, "status", "--porcelain").decode()
     assert after == before
-    assert subprocess.run(
-        ["git", "worktree", "list", "--porcelain"], cwd=root, check=True, capture_output=True, text=True,
-    ).stdout == trees
+    assert files._git(root, "worktree", "list", "--porcelain").decode() == trees
     capsys.readouterr()
     rc = main(["open-file", "--ref", "side", "src/app.py"])
     _out, err = capsys.readouterr()

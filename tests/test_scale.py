@@ -1,12 +1,11 @@
 """Guards for the hotspots found on sample-monorepo and sample-saas (docs/acceptance/v0.1-scale.md)."""
 
 import re
-import subprocess
 import time
 
 from cbi import context, data, history, parse, store
 from cbi.cli import main
-from cbi.files import resolve_commit
+from cbi.files import _git, resolve_commit
 from cbi.parse import python
 
 
@@ -83,10 +82,9 @@ def test_test_counts_use_an_index(tmp_path):
 
 def test_diff_parses_only_changed_files_for_the_head(make_repo, monkeypatch, capsys):
     root = make_repo({f"m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(6)})
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     base = resolve_commit(root, "HEAD")
     (root / "m0.py").write_text("def f0():\n    return 10\n")
-    subprocess.run([*git, "commit", "-qam", "change"], cwd=root, check=True)
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qam", "change")
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     parsed = []
@@ -104,8 +102,7 @@ def test_ref_scans_reuse_table_work_for_unchanged_files(make_repo, monkeypatch, 
     root = make_repo(files)
     base = resolve_commit(root, "HEAD")
     (root / "other.py").write_text("def g():\n    return 2\n")
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
-    subprocess.run([*git, "commit", "-qam", "change"], cwd=root, check=True)
+    _git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qam", "change")
     monkeypatch.chdir(root)
     data._DECLARATIONS.clear()
     data._USES.clear()
@@ -142,10 +139,9 @@ def test_history_parses_each_file_version_once(make_repo, monkeypatch, capsys):
     import json
 
     root = make_repo({f"m{i}.py": f"def f{i}():\n    return {i}\n" for i in range(5)})
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
     for n in range(3):
         (root / "m0.py").write_text(f"def f0():\n    return {n + 10}\n")
-        subprocess.run([*git, "commit", "-qam", f"change {n} (#{n + 1})"], cwd=root, check=True)
+        _git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qam", f"change {n} (#{n + 1})")
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     (root / ".cbi" / "concepts.json").write_text(json.dumps({

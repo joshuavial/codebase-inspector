@@ -3,11 +3,10 @@
 import json
 import os
 import sqlite3
-import subprocess
 
 import pytest
 
-from cbi import manifests
+from cbi import files, manifests
 from cbi.cli import main
 
 FILES = {
@@ -66,9 +65,9 @@ def repo(make_repo, monkeypatch):
     root = make_repo(FILES, name="acme")
     (root / ".agents").mkdir()
     os.symlink("../.claude/skills", root / ".agents" / "skills")
-    subprocess.run(["git", "add", ".agents/skills"], cwd=root, check=True)
-    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
-                    "commit", "-q", "-m", "link"], cwd=root, check=True)
+    files._git(root, "add", ".agents/skills")
+    files._git(root, "-c", "user.name=t", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
+               "commit", "-q", "-m", "link")
     monkeypatch.chdir(root)
     assert main(["init"]) == 0
     assert main(["scan"]) == 0

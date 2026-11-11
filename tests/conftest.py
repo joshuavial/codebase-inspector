@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from cbi import files
+
 _TESTS_DIR = Path(__file__).resolve().parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
@@ -111,7 +113,7 @@ def write_standin(directory, name, body):
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+    return files._git(cwd, *args)
 
 
 @pytest.fixture(autouse=True)

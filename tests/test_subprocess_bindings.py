@@ -1,7 +1,7 @@
 """Subprocess tests bind literal child programs and expose unknown execution."""
 import sqlite3
-import subprocess
 
+from cbi import files
 from cbi.cli import main
 
 
@@ -78,7 +78,7 @@ def test_subprocess_binding_reads_ref_objects(make_repo, monkeypatch, capsys):
     assert main(['init']) == 0
     assert main(['scan', '--ref', 'HEAD']) == 0
     capsys.readouterr()
-    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+    sha = files.resolve_commit(root, 'HEAD')
     with sqlite3.connect(root / '.cbi' / 'refs' / sha / 'model.db') as conn:
         assert conn.execute("SELECT 1 FROM edges WHERE kind='tests' AND dst LIKE '%:worker.py'").fetchone()
 

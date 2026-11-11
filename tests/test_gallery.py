@@ -11,6 +11,7 @@ if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
 import pytest
+from cbi import files
 import cbi.cli as cli
 from cbi.gallery import (
     build_repo_viewer,
@@ -26,12 +27,7 @@ import generate_gallery as legacy_generate_gallery
 
 
 def _git(root, *args):
-    import subprocess
-    cmd = ["git", "-C", str(root)] + list(args)
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"git command failed: {' '.join(cmd)}\n{res.stderr}")
-    return res.stdout.strip()
+    return files._git(root, *args).decode().strip()
 
 
 def test_parse_repo_spec():

@@ -1,3 +1,4 @@
+from cbi import files
 from cbi.files import BASE_IGNORE, Ignore, classify, cs_test_roots, default_ignore, doc_collections
 
 
@@ -187,13 +188,10 @@ def test_shebang_classification_streams_git_prefix_without_caching_blob(make_rep
 
 
 def _git(cwd, *args):
-    import subprocess
-
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-         "-c", "protocol.file.allow=always", *args],
-        cwd=cwd, check=True, capture_output=True,
-    ).stdout
+    return files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+        "-c", "protocol.file.allow=always", *args,
+    )
 
 
 def _disk_hashes(root, tracked):

@@ -3,14 +3,13 @@
 import json
 import os
 import sqlite3
-import subprocess
 from pathlib import Path
 
 from conftest import write_standin
 
 import pytest
 
-from cbi import diff, render, review, store
+from cbi import diff, files, render, review, store
 from cbi.cli import main
 
 MERMAID = """\
@@ -61,10 +60,9 @@ def run(capsys, *argv):
 
 
 def git(cwd, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    return files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args,
+    ).decode().strip()
 
 
 def commit_files(root, files, message="head"):
@@ -88,7 +86,7 @@ def seed_concepts(root, commit, document):
 
 def snapshot(root):
     def capture(*args):
-        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
+        return files._git(root, *args)
     return {
         "status": capture("status", "--porcelain=v1", "-z"),
         "stash": capture("stash", "list"),

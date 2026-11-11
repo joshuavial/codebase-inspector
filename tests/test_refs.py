@@ -18,11 +18,10 @@ LIB = "github.com/acme/lib"
 
 
 def git(cwd, *args):
-    return subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-         "-c", "protocol.file.allow=always", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
-    ).stdout
+    return files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+        "-c", "protocol.file.allow=always", *args,
+    ).decode()
 
 
 def run(capsys, *argv):
@@ -262,7 +261,7 @@ os.execv({real!r}, [{real!r}, *sys.argv[1:]])
 
 def _snapshot(root):
     def capture(*args):
-        return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
+        return files._git(root, *args)
     return capture("status", "--porcelain"), capture("worktree", "list", "--porcelain"), capture("for-each-ref")
 
 

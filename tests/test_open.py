@@ -9,7 +9,7 @@ from conftest import write_standin
 import pytest
 
 from cbi.cli import main
-from cbi import open_link
+from cbi import files, open_link
 from cbi.open_link import (
     NO_HANDLER,
     build_compare_url,
@@ -64,15 +64,11 @@ def _query(url):
 
 
 def _porcelain(repo):
-    return subprocess.run(
-        ["git", "status", "--porcelain"], cwd=repo, check=True, capture_output=True, text=True,
-    ).stdout
+    return files._git(repo, "status", "--porcelain").decode()
 
 
 def _head(repo):
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    return files.resolve_commit(repo, "HEAD")
 
 
 def _open(monkeypatch, capsys, argv):
@@ -151,7 +147,7 @@ def test_open_prints_the_current_worktree_and_does_not_change_git(make_repo, mon
 def test_open_branch_commit_and_worktree(make_repo, monkeypatch, capsys, tmp_path):
     repo = make_repo({"README.md": "# app\n"}, name="app")
     lane = tmp_path / "lane"
-    subprocess.run(["git", "worktree", "add", "-q", "-b", "lane", str(lane)], cwd=repo, check=True)
+    files._git(repo, "worktree", "add", "-q", "-b", "lane", str(lane))
     sha = _head(repo)
     monkeypatch.chdir(repo)
 
@@ -231,9 +227,7 @@ def test_open_rejects_injection_and_unknown_versions(make_repo, monkeypatch, cap
 
 
 def _git_text(repo, *args):
-    return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
-    ).stdout
+    return files._git(repo, *args).decode()
 
 
 def _snapshot(repo):
@@ -249,11 +243,10 @@ def _second_commit(repo):
     base = _head(repo)
     readme = repo / "README.md"
     readme.write_text("# next\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-         "commit", "-q", "-m", "next"],
-        cwd=repo, check=True,
+    files._git(repo, "add", "README.md")
+    files._git(
+        repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+        "commit", "-q", "-m", "next",
     )
     return base, _head(repo)
 

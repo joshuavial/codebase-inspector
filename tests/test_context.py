@@ -4,10 +4,9 @@ import importlib.util
 import json
 import shlex
 import sqlite3
-import subprocess
 from pathlib import Path
 
-from cbi import build, context
+from cbi import build, context, files
 from cbi.cli import build_parser, main
 
 _spec = importlib.util.spec_from_file_location(
@@ -268,11 +267,10 @@ def test_context_compare_and_bad_compare(make_repo, monkeypatch, tmp_path, capsy
     monkeypatch.chdir(root)
     path = root / "a.ts"
     path.write_text("export function hi() { return 2; }\n")
-    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-         "commit", "-q", "-m", "next"],
-        cwd=root, check=True, capture_output=True,
+    files._git(root, "add", "-A")
+    files._git(
+        root, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
+        "commit", "-q", "-m", "next",
     )
     out = tmp_path / "model"
     assert main(["init", "--out", str(out)]) == 0

@@ -1,11 +1,11 @@
 import io
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 import cbi.cli as cli
+from cbi import files
 from cbi.cli import COMMANDS, main
 
 
@@ -54,13 +54,9 @@ def test_prime_prints_not_initialised_guide(make_repo, monkeypatch, capsys):
 
 def test_make_repo_commits_files(make_repo):
     repo = make_repo({"a.py": "x = 1\n", "pkg/b.py": "y = 2\n"})
-    tracked = subprocess.run(
-        ["git", "ls-files"], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout.split()
+    tracked = files._git(repo, "ls-files").decode().split()
     assert tracked == ["a.py", "pkg/b.py"]
-    status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout
+    status = files._git(repo, "status", "--porcelain").decode()
     assert status == ""
 
 

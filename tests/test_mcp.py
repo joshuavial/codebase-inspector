@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 import pytest
 
-from cbi import prime
+from cbi import files, prime
 from cbi.cli import main
 from cbi.mcp import (
     MAX_MULTILINE_LINES,
@@ -1410,11 +1410,8 @@ def test_tool_diff(repo):
 
 
 def test_tool_diff_drilldown(repo):
-    import subprocess
-
-    git = lambda *args: subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
-        cwd=repo, check=True, capture_output=True, text=True,
+    git = lambda *args: files._git(
+        repo, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args,
     )
 
     # Modify src/shapes/circle.ts and commit to create a diff
@@ -2046,18 +2043,17 @@ def test_tools_call_system_views_with_data(make_repo, monkeypatch):
 
 
 def test_tool_history(make_repo, monkeypatch):
-    import subprocess
     root = make_repo({"a.py": "def a():\n    return 1\n"}, name="mcp-history-repo")
 
     def commit_file(rel, content, msg):
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-        subprocess.run([
-            "git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+        files._git(root, "add", "-A")
+        files._git(
+            root, "-c", "user.name=test", "-c", "user.email=test@example.com",
             "-c", "commit.gpgsign=false", "commit", "-q", "-m", msg,
-        ], cwd=root, check=True)
+        )
 
     commit_file("b.py", "def b():\n    return 2\n", "feat: add b (#1)")
     commit_file("c.py", "def c():\n    return 3\n", "feat: add c (#2)")
@@ -2135,18 +2131,17 @@ def test_tool_history(make_repo, monkeypatch):
 
 
 def test_tool_review(make_repo, monkeypatch):
-    import subprocess
     root = make_repo({"core/a.ts": "export function a() { return 1; }\n"}, name="mcp-review-repo")
 
     def commit_file(rel, content, msg):
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
-        subprocess.run([
-            "git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+        files._git(root, "add", "-A")
+        files._git(
+            root, "-c", "user.name=test", "-c", "user.email=test@example.com",
             "-c", "commit.gpgsign=false", "commit", "-q", "-m", msg,
-        ], cwd=root, check=True)
+        )
 
     commit_file("app/b.ts", "import { a } from '../core/a';\nexport function b() { return a(); }\n", "feat: add app caller")
 
@@ -2199,7 +2194,7 @@ def test_tool_review(make_repo, monkeypatch):
     assert any(n["id"] == "app" for n in data["diagram"]["nodes"])
 
     # Branch target with automatic merge-base default
-    subprocess.run(["git", "checkout", "-q", "-b", "feature-branch"], cwd=root, check=True)
+    files._git(root, "checkout", "-q", "-b", "feature-branch")
     commit_file("app/c.ts", "export function c() { return 3; }\n", "feat: branch commit")
     res_branch = server.execute_tool("cbi_review", {
         "target": "HEAD",
@@ -2291,9 +2286,8 @@ def test_tool_check(repo):
 
 
 def test_tool_worktrees(repo, tmp_path):
-    import subprocess
     lane = tmp_path / "wt-lane"
-    subprocess.run(["git", "worktree", "add", "-q", "-b", "lane", str(lane)], cwd=repo, check=True)
+    files._git(repo, "worktree", "add", "-q", "-b", "lane", str(lane))
 
     server = MCPServer(root=repo)
 

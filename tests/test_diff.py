@@ -3,7 +3,6 @@
 import json
 import os
 import sqlite3
-import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -158,9 +157,8 @@ def _head_concepts():
 
 
 def git(cwd, *args):
-    subprocess.run(
-        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
-        cwd=cwd, check=True, capture_output=True, text=True,
+    files._git(
+        cwd, "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args,
     )
 
 
@@ -475,8 +473,8 @@ def test_diff_refs_scan_reuse_and_failures(make_repo, monkeypatch, tmp_path, cap
 
     code, _, err = run(capsys, "diff", "--out", str(out), "no-such-ref", "HEAD")
     assert code == 1 and "unknown ref" in err
-    status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True)
-    assert status.stdout == ""
+    status = files._git(root, "status", "--porcelain").decode()
+    assert status == ""
     assert not (root / ".cbi").exists()
 
 
