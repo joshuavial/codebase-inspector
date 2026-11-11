@@ -147,7 +147,7 @@ Exposed MCP tools:
 * `cbi_review`: Architectural review between two versions (branch, commit, PR, or HEAD against base) including a Mermaid diagram, changed concepts, and untested changes (format: markdown or json).
 * `cbi_check`: Verify that committed map and judgement files match files changed since the merge base with default branch or a specified base ref (format: text or json).
 * `cbi_worktrees`: List the repository's worktrees and local branches, their head commits, lanes, and model statuses (format: text or json).
-* `cbi_prime`: State-aware guide for an agent meeting cbi for the first time. Reports repository mapping status, open judgement tasks breakdown, the task loop, and ingest instructions (format: markdown or text).
+* `cbi_prime`: State-aware guide for an agent meeting cbi for the first time. Reports repository mapping status, open judgement tasks breakdown, the task loop, and ingest instructions (optional ref: branch, tag, or commit SHA; format: markdown or text).
 * `cbi_task`: Print the brief for one judgement task, inspect partitioned parts for large briefs, or pre-validate an answer JSON schema before submission (format: text or json).
 
 Exposed MCP resources:
