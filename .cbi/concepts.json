@@ -151,6 +151,7 @@
             "src/cbi/gallery.py",
             "src/cbi/mcp.py",
             "src/cbi/scan.py",
+            "tests/test_action.py",
             "tests/test_bug_report.py",
             "tests/test_capture_demo.py",
             "tests/test_check.py",
