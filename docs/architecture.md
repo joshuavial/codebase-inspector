@@ -208,6 +208,7 @@ Decided in ADR-0024. Autonomous AI coding agents (Claude Code, Cursor, Codex, An
 - **Tools (25)**: Exposes full CBI capabilities across mapping (`cbi_init`, `cbi_scan`), navigation and search (`cbi_context`, `cbi_show`, `cbi_search`, `cbi_query`, `cbi_concepts`, `cbi_endpoints`, `cbi_tables`, `cbi_worktrees`, `cbi_prime`), dependency analytics (`cbi_deps`, `cbi_cycles`, `cbi_orphans`, `cbi_hotspots`), diagnostics and testing (`cbi_status`, `cbi_tests_for`, `cbi_ingest`), task loop (`cbi_tasks`, `cbi_task`, `cbi_submit`), and architecture change analysis (`cbi_diff`, `cbi_history`, `cbi_review`, `cbi_check`).
 - **Resources and templates (6)**: Direct URI-based access to model views under `cbi://` (`cbi://system/overview`, `cbi://model/status`, `cbi://model/schema`, `cbi://concepts`, `cbi://node/{id}`, `cbi://context/{node}`).
 - **Prompts (3)**: Reusable prompt workflows for architecture onboarding (`cbi_architecture_orientation`), pull request architecture review (`cbi_review_pr`), and judgement task resolution (`cbi_judgement_task`).
+- **Security hardening & resource limits**: Query engine runs in read-only mode with SQLite authorizer callback blocking `ATTACH`/`DETACH`/`PRAGMA`, a 5.0-second background execution timeout interrupt, strict repository boundary path traversal containment on ref resolution and file ingestion, and bounded limits (1..500 pagination, 50MB max ingestion size).
 - **Client installation**: `cbi mcp --install <client>` automatically configures Claude Code, Claude Desktop, Cursor, Gemini, Antigravity, Windsurf, and VS Code.
 
 ## Test ingest
@@ -387,12 +388,32 @@ Recorded during the build; the code is the reference where these and earlier sec
 - Submitted answers are data: they are stored as text and rendered in the viewer with `textContent`, never as HTML, because an agent could paste content from the repo.
 - `.cbi/` is created with its own `.gitignore` containing `*`.
 
-### Security boundaries
+### Runtime Security Model
 
-- SQLite authorizer blocking `ATTACH`, `DETACH`, and `PRAGMA` in ad-hoc queries, combined with a 5.0s query timeout interrupt.
-- MCP path traversal containment confining ref resolution and file ingestion to allowed repository boundaries.
-- Default exclusion of credentials and private keys in `BASE_IGNORE`.
-- Static viewer path sanitization preventing developer host directory leakage.
+Codebase Inspector implements defence-in-depth isolation across its query engines, MCP protocol handlers, filesystem scanner, and export pipelines:
+
+- **Traversal confinement in MCP connection resolution and test ingestion**:
+  - *Connection resolution (`_get_connection`)*: Historical git ref and model resolution confines database lookup strictly within the `.cbi/refs/` directory hierarchy. Path validation rejects relative traversal components (`..`), absolute filesystem paths, and paths attempting to escape the configured repository root.
+  - *Test artifact ingestion (`cbi_ingest`)*: The `cbi_ingest` tool verifies that all incoming coverage and JUnit artifact paths reside strictly within allowed project directories (the repository root or explicit test runner working directory `cwd`). Ingestion rejects directory traversal sequences (`..`), absolute paths outside designated roots, empty strings, and symlinks resolving outside the repository boundary. In addition, file sizes are bounded to a maximum ceiling of 50MB per artifact.
+
+- **SQLite security sandbox (authorizer, read-only queries, timeout)**:
+  - *Read-only queries*: Ad-hoc SQL execution via CLI `cbi query` and MCP `cbi_query` accesses `model.db` with SQLite read-only connection flags (`mode=ro`).
+  - *Authorizer callback*: An active SQLite authorizer callback (`set_authorizer`) intercepts statement compilation and denies unauthorized actions. Arbitrary database attachment (`SQLITE_ATTACH`), detachment (`SQLITE_DETACH`), and administrative PRAGMAs (`SQLITE_PRAGMA`, including table-valued functions like `pragma_database_list()`) are strictly blocked.
+  - *Execution timeout*: Queries are governed by a 5.0-second background execution timeout via SQLite's progress handler (`set_progress_handler`), interrupting expensive runaway queries, Cartesian joins, or recursive common table expressions (`WITH RECURSIVE`).
+  - *Bounded limits*: SQL queries and search results enforce bounded pagination limits (clamped 1..500, default 50) and non-negative offsets (`--offset`).
+
+- **Default ignore rule sanitization**:
+  - *Credential and private key exclusion*: The baseline ignore rules (`BASE_IGNORE` in `files.py`) automatically exclude sensitive secrets from AST parsing, symbol extraction, and agent context:
+    - SSH private keys and key pairs: `id_rsa*`
+    - Certificates and private keys: `*.pem`, `*.key`
+    - Cloud credentials and API keys: `credentials.json`
+    - Service account tokens: `*service-account*.json` (such as GCP service accounts and IAM keys)
+  - *Environment and noise exclusion*: Real `.env` and `.env.*` files containing runtime secrets are ignored (only `.env.example` and `.env.sample` are read for declared variable names). Generated bundles (`*.min.js`, `*.min.css`) and committed virtualenvs (`pyvenv.cfg`) are excluded to avoid polluting the codebase model.
+  - *Exclusion auditing*: `cbi check`, `cbi init`, and `cbi scan` compute and display the count of excluded tracked executable files, ensuring visibility into ignored assets without silently overriding explicit rules.
+
+- **Static gallery host filesystem path sanitization**:
+  - *Host path neutralization*: Multi-repository gallery builds (`cbi gallery`) and static viewer packaging (`cbi build`) sanitize developer host filesystem paths to prevent environment and user directory leakage.
+  - *Editor configuration sanitization*: When generating static gallery viewers or exporting viewers with `--editor none`, `data/editor.js` writes empty workspace roots (`"root": ""`) and disables editor integration (`"editor": "none"`). Absolute host directories (such as `/Users/...` or `/home/...`) and local repository checkouts are scrubbed from exported static web assets.
 
 ## Bug reports
 

@@ -163,6 +163,14 @@ Exposed MCP prompts:
 * `cbi_review_pr`: Perform an architectural code review of changes between git base and head (optional `base` and `head` arguments).
 * `cbi_judgement_task`: Investigate and answer an open architectural judgement task in the codebase (required `task_id` argument).
 
+#### MCP Security Boundary & Resource Limits
+
+The MCP server enforces strict sandboxing and bounded resource consumption to keep autonomous agent interactions safe and predictable:
+* **Read-only SQLite query engine**: Arbitrary SQL execution (`cbi_query`) runs in read-only mode (`mode=ro`) with an active SQLite authorizer callback that blocks arbitrary `ATTACH`, `DETACH`, and `PRAGMA` operations (preventing unauthorized database attachments and administrative pragma queries, including table-valued pragma functions).
+* **5.0-second background query timeout**: Query executions are monitored by an execution interrupt that cancels runaway, Cartesian product, or recursive CTE queries after 5.0 seconds.
+* **Strict path confinement**: Validates all file and revision references to prevent directory traversal attacks (`..`, absolute paths outside allowed roots, and symlinks escaping the repository root). Both stored model ref resolution (`_get_connection`) and test coverage ingestion (`cbi_ingest`) enforce these boundaries and reject empty path strings.
+* **Bounded pagination & ingestion limits**: Query, search, and hotspot pagination limits are clamped between 1 and 500 rows with non-negative offset parameters (`--offset`), and test coverage/result artifact ingestion strictly enforces a 50MB maximum file size ceiling per file.
+
 ### System Views
 
 Inspect HTTP API surface and database schemas from the command line:
@@ -195,6 +203,58 @@ cbi gallery --config gallery.json --out-dir dist/gallery --cache-dir /tmp/cbi-ca
 ```
 
 External repositories remain strictly read-only: models are cached out-of-tree at `<out-dir>/models/<repo_name>/model.db` (or `--cache-dir`), leaving working trees clean with zero `.cbi/` files created.
+
+### Codebase Search, Hotspots, and SQL Queries
+
+Explore the codebase AST, analyze coupling hotspots, and execute safe analytical SQL queries with limit and offset pagination across both human-readable text and structured JSON:
+
+```bash
+# Full-text symbol search with pagination
+cbi search "HTTPTransport" --limit 10 --offset 20
+cbi search "Auth" --kind class --json
+
+# Rank hotspots by metric with offset pagination
+cbi hotspots --by loc --limit 10 --offset 10
+cbi hotspots --metric symbols --kind "source file"
+
+# Safe read-only SQL queries with pagination and schema introspection
+cbi query "SELECT id, kind, path FROM nodes WHERE kind = 'file' ORDER BY id" --limit 25 --offset 50
+cbi query --schema
+```
+
+Options:
+* `cbi search <text...>`: Fast full-text search across all AST nodes in the codebase.
+  * `--limit N`: Maximum results to return (default: `20`).
+  * `--offset N`: Skip the first `N` matches for pagination (default: `0`).
+  * `--kind K`: Filter results by display kind (`class`, `function`, `test case`, `folder`) or internal kind.
+  * `--ref REF`: Search within a stored ref model instead of the working tree.
+  * `--json`: Standardized JSON output flag.
+* `cbi hotspots`: Rank files and folders by coupling or complexity metrics.
+  * `--by`, `--metric {fan-in,fan-out,loc,symbols}`: Metric to rank by (default: `fan-in`).
+  * `--kind K`: Filter to a specific node kind or display kind (`source file`, `package`, `folder`).
+  * `--limit N`: Maximum rows to return per section (default: `20`).
+  * `--offset N`: Skip the first `N` items for pagination (default: `0`).
+  * `--ref REF`: Evaluate hotspots on a stored ref model.
+  * `--json`: Standardized JSON output flag.
+* `cbi query [sql]`: Execute safe read-only SQL queries against `model.db`.
+  * `--schema`: Print table definitions (`nodes`, `edges`, `diagnostics`, `coverage_lines`, `results`, `tasks`).
+  * `--limit N`: Maximum rows to return (clamped 1..500, default: `50`).
+  * `--offset N`: Skip the first `N` rows for pagination (default: `0`).
+  * `--ref REF`: Query a stored ref model.
+  * `--json`: Standardized JSON output flag.
+  * Protected by a 5.0-second background execution timeout and an SQLite authorizer callback that denies `ATTACH`, `DETACH`, and `PRAGMA` operations.
+
+### Default Ignore Rules and Secret Exclusion
+
+When initialized (via `cbi init` or automatic scan initialization), Codebase Inspector writes `.cbi/ignore` using standard `.gitignore` syntax. The baseline ignore rules (`BASE_IGNORE`) automatically exclude sensitive credentials, private keys, and noisy build artifacts from entering the codebase knowledge graph:
+
+* **Private keys and certificates**: Excludes SSH private keys and key pairs (`id_rsa*`), PEM certificates (`*.pem`), and cryptographic private keys (`*.key`).
+* **Cloud credentials and tokens**: Excludes API/OAuth credential manifests (`credentials.json`) and service account tokens (`*service-account*.json`, including GCP and cloud IAM service account keys).
+* **Generated bundles & minified code**: Excludes minified web bundles (`*.min.js`, `*.min.css`) and files detected with predominantly minified lines.
+* **Environment secret files**: Real `.env` and `.env.*` files containing secret runtime credentials are strictly excluded (only `.env.example` and `.env.sample` are read for declared variable names).
+* **Virtual environments and data dumps**: Excludes committed Python virtualenvs (`pyvenv.cfg`) and large persistent data directories.
+
+Tracked source files are preserved by default, and `cbi init`, `cbi scan`, and `cbi check` report the number of excluded tracked executable files to maintain visibility into omitted assets.
 
 ---
 
