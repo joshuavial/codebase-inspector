@@ -27,6 +27,31 @@ The following components are computed entirely through static analysis, AST extr
 | **Architectural PR Diffs** | Git diff + symbol cross-referencing | Identifies exact modified AST nodes, affected callers, altered endpoints, schema migrations, and affected test suites without calling an LLM. |
 | **CI Gate (`cbi check`)** | SQLite query validation | Checks whether changed files have current committed summaries and valid judgement documents. Boundary assertions use `cbi deps --forbid`. The gate uses no model or network for its analysis. |
 
+### Layering Constraints and Forbid Output (`cbi deps --forbid`)
+
+Architectural boundaries are enforced deterministically using `cbi deps --forbid <FROM>:<TO>` (or `<FROM>-><TO>`). When `--json` is specified, `cbi deps` outputs a structured violation report:
+
+```json
+{
+  "level": "package",
+  "include_tests": false,
+  "passed": true,
+  "rules": [
+    {
+      "spec": "src:core",
+      "passed": true,
+      "violations": []
+    }
+  ]
+}
+```
+
+When a violation occurs:
+* `passed` is `false`.
+* The failing rule has `"passed": false`.
+* `violations` contains a list of `{"from": "<source_file>", "to": "<target_file>"}` pairs.
+* The command exits with code `1` (or `0` when all forbid rules pass).
+
 ---
 
 ## 3. What Requires Agent Enrichment (Judgement Tasks)

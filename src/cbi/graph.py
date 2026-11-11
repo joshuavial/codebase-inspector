@@ -900,6 +900,8 @@ def deps(conn, args):
         return 0
 
     failed = False
+    as_json = getattr(args, "json", False)
+    rules = []
     word = "imports" if args.include_tests else "production imports"
     for spec in args.forbid:
         if "->" in spec:
@@ -920,15 +922,32 @@ def deps(conn, args):
             if dst_err:
                 print(dst_err, file=sys.stderr)
             failed = True
+            if as_json:
+                rules.append({"spec": spec, "passed": False, "violations": []})
             continue
         src_ids = _members(files, level, src_node, file_pkg, file_deps, owns)
         dst_ids = _members(files, level, dst_node, file_pkg, file_deps, owns)
         offending = sorted(((by_id[s]["path"], by_id[d]["path"]) for s, d in imports if s in src_ids and d in dst_ids),
                            key=lambda pair: pair)
-        if not offending:
-            print(f"no {word} from {src_text.strip('/')} to {dst_text.strip('/')}")
-            continue
-        failed = True
-        for src_path, dst_path in offending:
-            print(f"{src_path} → {dst_path}")
+        if offending:
+            failed = True
+        if as_json:
+            rules.append({
+                "spec": spec,
+                "passed": not bool(offending),
+                "violations": [{"from": s, "to": d} for s, d in offending],
+            })
+        else:
+            if not offending:
+                print(f"no {word} from {src_text.strip('/')} to {dst_text.strip('/')}")
+                continue
+            for src_path, dst_path in offending:
+                print(f"{src_path} → {dst_path}")
+    if as_json:
+        _print_json({
+            "level": level,
+            "include_tests": bool(args.include_tests),
+            "passed": not failed,
+            "rules": rules,
+        })
     return 1 if failed else 0

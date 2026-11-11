@@ -5,6 +5,7 @@ import json
 from conftest import run_playwright
 
 from cbi import build, store
+from cbi.cli import main
 
 WS = "local:repo"
 BOX = f"{WS}:concept:box"
@@ -187,3 +188,43 @@ def test_container_relationships_match_the_drawer(tmp_path, playwright_runner, c
     assert info["hoverLinked"] > 0
     assert "states a link" in focus and "stated by the concept map" in focus
     assert info["focusLinked"] > 0
+
+
+def test_deps_forbid_json_clean_architecture(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    conn.commit()
+    conn.close()
+
+    code = main(["deps", "--out", str(tmp_path), "--level", "concept", "--forbid", "Caller:Left", "--json"])
+    assert code == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["level"] == "concept"
+    assert data["include_tests"] is False
+    assert data["passed"] is True
+    assert len(data["rules"]) == 1
+    assert data["rules"][0]["spec"] == "Caller:Left"
+    assert data["rules"][0]["passed"] is True
+    assert data["rules"][0]["violations"] == []
+
+
+def test_deps_forbid_json_violation_detected(tmp_path, capsys):
+    conn = _model(tmp_path)
+    conn.execute("UPDATE nodes SET attrs = json_set(coalesce(attrs, '{}'), '$.role', 'code') WHERE kind = 'file'")
+    _edge(conn, FILE_CALL, FILE_LEFT, "imports")
+    conn.commit()
+    conn.close()
+
+    code = main(["deps", "--out", str(tmp_path), "--level", "concept", "--forbid", "Caller:Left", "--json"])
+    assert code == 1
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["level"] == "concept"
+    assert data["include_tests"] is False
+    assert data["passed"] is False
+    assert len(data["rules"]) == 1
+    assert data["rules"][0]["spec"] == "Caller:Left"
+    assert data["rules"][0]["passed"] is False
+    assert data["rules"][0]["violations"] == [{"from": "call.ts", "to": "left.ts"}]
+
