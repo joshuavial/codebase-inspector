@@ -1740,6 +1740,7 @@ class MCPServer:
         limit = min(max(limit, 1), 100)
 
         offset_arg = args.get("offset")
+        offset = 0
         if offset_arg is not None:
             try:
                 offset = int(offset_arg)
@@ -1747,6 +1748,7 @@ class MCPServer:
                 raise ValueError(f"Invalid offset: {offset_arg!r}") from err
             if offset < 0:
                 raise ValueError("offset must be non-negative")
+            offset = min(offset, 100_000)
 
         conn = self._get_connection(ref=args.get("ref"))
         try:
@@ -1756,7 +1758,7 @@ class MCPServer:
             buf = io.StringIO()
             with self._stdout_lock:
                 with contextlib.redirect_stdout(buf):
-                    query.search(conn, argparse.Namespace(text=words, limit=limit, kind=kind, json=as_json))
+                    query.search(conn, argparse.Namespace(text=words, limit=limit, offset=offset, kind=kind, json=as_json), offset=offset)
             return buf.getvalue().rstrip()
         finally:
             conn.close()
@@ -1772,6 +1774,7 @@ class MCPServer:
         limit = min(max(limit, 1), 500)
 
         offset_arg = args.get("offset")
+        offset = 0
         if offset_arg is not None:
             try:
                 offset = int(offset_arg)
@@ -1779,6 +1782,7 @@ class MCPServer:
                 raise ValueError(f"Invalid offset: {offset_arg!r}") from err
             if offset < 0:
                 raise ValueError("offset must be non-negative")
+            offset = min(offset, 100_000)
 
         conn = self._get_connection(ref=ref)
         try:
@@ -1787,7 +1791,7 @@ class MCPServer:
             buf = io.StringIO()
             with self._stdout_lock:
                 with contextlib.redirect_stdout(buf):
-                    graph.hotspots(conn, argparse.Namespace(by=metric, limit=limit, kind=kind, json=as_json))
+                    graph.hotspots(conn, argparse.Namespace(by=metric, limit=limit, offset=offset, kind=kind, json=as_json), offset=offset)
             return buf.getvalue().rstrip()
         finally:
             conn.close()

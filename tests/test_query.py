@@ -263,3 +263,73 @@ def test_query_bounds_limit_and_json(repo, capsys):
     assert hits["row_count"] > 0
     assert hits["row_count"] <= 500
 
+
+def test_cli_search_offset(repo, capsys):
+    first = run_json(capsys, "search", "Circle", "--limit", "1", "--offset", "0")
+    second = run_json(capsys, "search", "Circle", "--limit", "1", "--offset", "1")
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0]["id"] != second[0]["id"]
+
+    code0, out0, _ = run(capsys, "search", "Circle", "--limit", "1", "--offset", "0")
+    code1, out1, _ = run(capsys, "search", "Circle", "--limit", "1", "--offset", "1")
+    assert code0 == 0 and code1 == 0
+    assert out0 != out1
+
+    # Negative offset rejected
+    code_neg, _, err_neg = run(capsys, "search", "Circle", "--offset", "-1")
+    assert code_neg == 2
+    assert "offset must be 0 or greater" in err_neg
+
+
+def test_cli_query_offset(repo, capsys):
+    first = run_json(capsys, "query", "SELECT id FROM nodes ORDER BY id", "--limit", "1", "--offset", "0")
+    second = run_json(capsys, "query", "SELECT id FROM nodes ORDER BY id", "--limit", "1", "--offset", "1")
+    assert first["row_count"] == 1
+    assert second["row_count"] == 1
+    assert first["rows"][0]["id"] != second["rows"][0]["id"]
+
+    code0, out0, _ = run(capsys, "query", "SELECT id FROM nodes ORDER BY id", "--limit", "1", "--offset", "0")
+    code1, out1, _ = run(capsys, "query", "SELECT id FROM nodes ORDER BY id", "--limit", "1", "--offset", "1")
+    assert code0 == 0 and code1 == 0
+    assert out0 != out1
+
+    # Negative offset rejected
+    code_neg, _, err_neg = run(capsys, "query", "SELECT 1", "--offset", "-1")
+    assert code_neg == 2
+    assert "offset must be 0 or greater" in err_neg
+
+
+def test_cli_hotspots_offset(repo, capsys):
+    first = run_json(capsys, "hotspots", "--by", "loc", "--limit", "1", "--offset", "0")
+    second = run_json(capsys, "hotspots", "--by", "loc", "--limit", "1", "--offset", "1")
+    assert len(first["files"]) == 1
+    assert len(second["files"]) == 1
+    assert first["files"][0]["id"] != second["files"][0]["id"]
+
+    code_neg, _, err_neg = run(capsys, "hotspots", "--offset", "-1")
+    assert code_neg == 2
+    assert "offset must be 0 or greater" in err_neg
+
+
+def test_query_search_offset(repo):
+    from cbi import query as query_mod
+
+    conn = sqlite3.connect(repo / ".cbi" / "model.db")
+    try:
+        all_hits = query_mod.search(conn, "Circle")
+        offset_hits = query_mod.search(conn, "Circle", offset=1)
+        assert len(all_hits) > 1
+        assert len(offset_hits) == len(all_hits) - 1
+        assert offset_hits == all_hits[1:]
+
+        # Test with limit and offset
+        first = query_mod.search(conn, "Circle", limit=1, offset=0)
+        second = query_mod.search(conn, "Circle", limit=1, offset=1)
+        assert len(first) == 1
+        assert len(second) == 1
+        assert first[0]["id"] != second[0]["id"]
+        assert second[0]["id"] == all_hits[1]["id"]
+    finally:
+        conn.close()
+

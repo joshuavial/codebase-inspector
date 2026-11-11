@@ -159,49 +159,88 @@ def _search_query(text):
     return " ".join('"' + w.replace('"', '""') + '"*' for w in text.split())
 
 
-def search(conn, args):
-    text = " ".join(args.text)
+def search(conn, terms=None, kind=None, limit=None, offset=0, json=False, **kwargs):
+    if hasattr(terms, "text") or hasattr(terms, "terms"):
+        args = terms
+        raw_text = getattr(args, "text", None) or getattr(args, "terms", None) or []
+        text = " ".join(raw_text) if isinstance(raw_text, (list, tuple)) else str(raw_text)
+        kind = getattr(args, "kind", kind)
+        limit = getattr(args, "limit", limit)
+        offset = getattr(args, "offset", offset)
+        as_json = getattr(args, "json", json)
+    elif isinstance(terms, (list, tuple)):
+        text = " ".join(str(t) for t in terms)
+        as_json = json
+    elif terms is not None:
+        text = str(terms)
+        as_json = json
+    else:
+        raw_text = kwargs.get("text", "")
+        text = " ".join(raw_text) if isinstance(raw_text, (list, tuple)) else str(raw_text)
+        as_json = json
+
+    offset = kwargs.get("offset", offset)
+    limit = kwargs.get("limit", limit)
+    kind = kwargs.get("kind", kind)
+    if "json" in kwargs:
+        as_json = kwargs["json"]
+
+    try:
+        offset = int(offset) if offset is not None else 0
+    except (ValueError, TypeError):
+        offset = 0
+    offset = max(offset, 0)
+
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (ValueError, TypeError):
+            limit = None
+
     query = _search_query(text)
-    kind_filter = " AND (n.display_kind = :kind OR n.kind = :kind)" if args.kind else ""
+    kind_filter = " AND (n.display_kind = :kind OR n.kind = :kind)" if kind else ""
+    limit_val = -1 if limit is None else limit
     rows = conn.execute(
         "SELECT n.id, n.kind, n.display_kind, n.name, n.path, n.start_line FROM search s JOIN nodes n ON n.id = s.id "
         # Weights per column: id, name, display_kind, path, signature, doc, summary.
-        f"WHERE search MATCH :q{kind_filter} ORDER BY bm25(search, 0, 10, 2, 3, 2, 1, 1) LIMIT :limit",
-        {"q": query, "kind": args.kind, "limit": args.limit},
+        f"WHERE search MATCH :q{kind_filter} ORDER BY bm25(search, 0, 10, 2, 3, 2, 1, 1) LIMIT :limit OFFSET :offset",
+        {"q": query, "kind": kind, "limit": limit_val, "offset": offset},
     ).fetchall() if query else []
     hits = [dict(zip(("id", "kind", "display_kind", "name", "path", "start_line"), r)) for r in rows]
     if "/" in text:
         seen = {hit["id"] for hit in hits}
-        for row in _route_hits(conn, text, args.kind, args.limit):
+        for row in _route_hits(conn, text, kind, limit, offset):
             hit = dict(zip(("id", "kind", "display_kind", "name", "path", "start_line"), row))
             if hit["id"] not in seen:
                 seen.add(hit["id"])
                 hits.append(hit)
-        hits = hits[:args.limit]
-    if args.json:
+        if limit is not None and limit >= 0:
+            hits = hits[:limit]
+    if as_json:
         _print_json(hits)
-        return 0
+        return hits
     for h in hits:
         print(f"{h['display_kind']:<12} {h['name']}  {_where(h['path'], h['start_line'])}\n  {h['id']}")
     if not hits:
-        print(f"no matches for {text!r}" + (f" with kind {args.kind!r}" if args.kind else ""))
-    return 0
+        print(f"no matches for {text!r}" + (f" with kind {kind!r}" if kind else ""))
+    return hits
 
 
 # --- resolving a node reference -------------------------------------------------
 
 
-def _route_hits(conn, text, kind, limit):
+def _route_hits(conn, text, kind, limit, offset=0):
     """Nodes whose stored route path contains text. `/` is not an FTS token."""
     needle = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     kind_sql = " AND (display_kind = ? OR kind = ?)" if kind else ""
     params = [f"%{needle}%"]
     if kind:
         params.extend((kind, kind))
-    params.append(limit)
+    lim = -1 if limit is None else limit
+    params.extend((lim, offset))
     return conn.execute(
         "SELECT id, kind, display_kind, name, path, start_line FROM nodes "
-        f"WHERE attrs LIKE ? ESCAPE '\\'{kind_sql} ORDER BY path, start_line, id LIMIT ?",
+        f"WHERE attrs LIKE ? ESCAPE '\\'{kind_sql} ORDER BY path, start_line, id LIMIT ? OFFSET ?",
         params,
     ).fetchall()
 
@@ -803,12 +842,31 @@ def status(conn, args):
 # --- query ----------------------------------------------------------------------
 
 
-def sql(conn, args):
-    if getattr(args, "schema", False):
+def sql(conn, query=None, limit=50, offset=0, **kwargs):
+    if hasattr(query, "sql") or hasattr(query, "schema"):
+        args = query
+        schema = getattr(args, "schema", False)
+        query_str = (getattr(args, "sql", None) or "").strip()
+        limit = getattr(args, "limit", limit)
+        offset = getattr(args, "offset", offset)
+        as_json = getattr(args, "json", False)
+    else:
+        schema = kwargs.get("schema", False)
+        query_str = (query or "").strip()
+        as_json = kwargs.get("json", False)
+
+    offset = kwargs.get("offset", offset)
+    limit = kwargs.get("limit", limit)
+    if "json" in kwargs:
+        as_json = kwargs["json"]
+    if "schema" in kwargs:
+        schema = kwargs["schema"]
+
+    if schema:
         tables = dict(conn.execute(
             "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
         ).fetchall())
-        if getattr(args, "json", False):
+        if as_json:
             _print_json(tables)
             return 0
         print("Model Schema:")
@@ -816,7 +874,6 @@ def sql(conn, args):
             print(f"\n-- {name} --\n{ddl}")
         return 0
 
-    query_str = (getattr(args, "sql", None) or "").strip()
     if not query_str:
         print("cbi query: provide a SQL statement (e.g. `cbi query \"SELECT ...\"`) or use `--schema`.", file=sys.stderr)
         return 2
@@ -826,13 +883,18 @@ def sql(conn, args):
         print(f"cbi query: only read-only queries are permitted (got {first_token}).", file=sys.stderr)
         return 1
 
-    limit = getattr(args, "limit", 50)
     if limit is not None:
         try:
             limit = int(limit)
         except (ValueError, TypeError):
             limit = 50
         limit = min(max(limit, 1), 500)
+
+    try:
+        offset = int(offset) if offset is not None else 0
+    except (ValueError, TypeError):
+        offset = 0
+    offset = max(offset, 0)
 
     try:
         def authorizer(action, arg1, arg2, dbname, source):
@@ -847,12 +909,14 @@ def sql(conn, args):
             cursor = conn.cursor()
             cursor.execute(query_str)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            if offset > 0:
+                cursor.fetchmany(offset)
             rows = cursor.fetchmany(limit) if limit else cursor.fetchall()
         finally:
             timer.cancel()
             conn.set_authorizer(None)
 
-        if getattr(args, "json", False):
+        if as_json:
             results = [dict(zip(columns, row)) for row in rows]
             _print_json({
                 "query": query_str,

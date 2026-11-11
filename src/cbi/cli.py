@@ -103,6 +103,7 @@ def build_parser():
     cmds["bug"].add_argument("--error", default="", help=argparse.SUPPRESS)
     cmds["search"].add_argument("text", nargs="+", help="words to look for; each word also matches as a prefix")
     cmds["search"].add_argument("--limit", type=int, default=20, help="most results to print (default 20)")
+    cmds["search"].add_argument("--offset", type=int, default=0, help="skip the first N matches")
     cmds["search"].add_argument("--kind", metavar="K", help="only nodes of this display kind (class, test case, folder) or kind")
     cmds["status"].add_argument("--out", metavar="DIR", type=Path, help="model directory to use instead of .cbi/ in the repo root")
     cmds["status"].add_argument("--json", action="store_true", help="print JSON instead of text")
@@ -120,6 +121,7 @@ def build_parser():
                                   help="rank by this metric (default fan-in)")
     cmds["hotspots"].add_argument("--kind", metavar="K", help="only this display kind or kind")
     cmds["hotspots"].add_argument("--limit", type=int, default=20, help="most rows per list (default 20)")
+    cmds["hotspots"].add_argument("--offset", type=int, default=0, help="skip the first N items")
     cmds["deps"].add_argument("--level", choices=("package", "folder", "concept", "deployable"), default="package",
                               help="what a row of the matrix is (default package)")
     cmds["deps"].add_argument("--from", "--start", dest="start", help="only dependencies that leave this node")
@@ -250,6 +252,7 @@ def build_parser():
     cmds["query"].add_argument("sql", nargs="?", help="SQL query to execute against model.db (SELECT, WITH, EXPLAIN)")
     cmds["query"].add_argument("--schema", action="store_true", help="print table definitions (nodes, edges, diagnostics, coverage)")
     cmds["query"].add_argument("--limit", type=int, default=50, help="maximum rows to return (default: 50)")
+    cmds["query"].add_argument("--offset", type=int, default=0, help="skip the first N rows")
     cmds["endpoints"].add_argument("--format", choices=("text", "json", "markdown"), default="text",
                                   help="output format (text, json, markdown; default: text)")
     cmds["endpoints"].add_argument("--path", help="only endpoints matching this path (substring)")
@@ -685,7 +688,11 @@ def _print_json(value):
 
 
 def cmd_search(args):
-    return _query(args, query.search)
+    if getattr(args, "offset", 0) < 0:
+        print("--offset must be 0 or greater", file=sys.stderr)
+        return 2
+    res = _query(args, query.search)
+    return 0 if res is None or isinstance(res, list) else res
 
 
 def cmd_show(args):
@@ -750,6 +757,9 @@ def _print_update_notice():
 
 
 def cmd_hotspots(args):
+    if getattr(args, "offset", 0) < 0:
+        print("--offset must be 0 or greater", file=sys.stderr)
+        return 2
     return _query(args, graph.hotspots)
 
 
@@ -1220,6 +1230,9 @@ def cmd_mcp(args):
 
 
 def cmd_query(args):
+    if getattr(args, "offset", 0) < 0:
+        print("--offset must be 0 or greater", file=sys.stderr)
+        return 2
     return _query(args, query.sql)
 
 

@@ -299,10 +299,14 @@ def _containers(conn, files, imports, symbols, names, multi):
     return source, groups, packages, concepts
 
 
-def _ordered(rows, by, limit):
+def _ordered(rows, by, limit, offset=0):
     key = _METRIC[by]
     rows = sorted(rows, key=lambda r: (-r[key], r["path"] or "", r["id"]))
-    return rows[:limit] if limit >= 0 else []
+    if limit is not None and limit < 0:
+        return []
+    if offset < 0:
+        return []
+    return rows[offset:offset + limit] if limit is not None else rows[offset:]
 
 
 def _public(row):
@@ -325,36 +329,66 @@ def _print_rows(title, rows):
         print(f"  {row['label']}  " + "  ".join(bits))
 
 
-def hotspots(conn, args):
-    limit = args.limit if args.limit is not None else 20
+def hotspots(conn, args=None, *, by="fan-in", kind=None, limit=20, offset=0, json=False, **kwargs):
+    if hasattr(args, "by") or hasattr(args, "limit"):
+        by = getattr(args, "by", by)
+        kind = getattr(args, "kind", kind)
+        limit = getattr(args, "limit", limit)
+        offset = getattr(args, "offset", offset)
+        as_json = getattr(args, "json", json)
+    elif isinstance(args, str):
+        by = args
+        as_json = json
+    else:
+        as_json = json
+
+    offset = kwargs.get("offset", offset)
+    limit = kwargs.get("limit", limit)
+    kind = kwargs.get("kind", kind)
+    by = kwargs.get("by", by)
+    if "json" in kwargs:
+        as_json = kwargs["json"]
+
+    limit = 20 if limit is None else limit
+    try:
+        limit = int(limit)
+    except (ValueError, TypeError):
+        limit = 20
+
+    try:
+        offset = int(offset) if offset is not None else 0
+    except (ValueError, TypeError):
+        offset = 0
+    offset = max(offset, 0)
+
     files = _files(conn)
     names, multi = _ws_names(conn)
     source, groups, packages, concepts = _containers(
         conn, files, _imports(conn, {f["id"] for f in files}), _symbol_counts(conn), names, multi)
-    if args.kind:
+    if kind:
         pool = [r for r in (*source, *groups, *packages, *concepts)
-                if r["display_kind"] == args.kind or r["kind"] == args.kind]
-        pool = _ordered(pool, args.by, limit)
-        if args.json:
-            _print_json({"by": args.by, "kind": args.kind, "nodes": [_public(r) for r in pool]})
+                if r["display_kind"] == kind or r["kind"] == kind]
+        pool = _ordered(pool, by, limit, offset)
+        if as_json:
+            _print_json({"by": by, "kind": kind, "nodes": [_public(r) for r in pool]})
             return 0
         if not pool:
-            print(f"no nodes of kind {args.kind!r}")
+            print(f"no nodes of kind {kind!r}")
             return 0
-        _print_rows(f"by {args.by}", pool)
+        _print_rows(f"by {by}", pool)
         return 0
     sections = (("files", source), ("folders", groups), ("packages", packages))
     if concepts:
         sections = (*sections, ("concepts", concepts))
-    shown = [(title, _ordered(rows, args.by, limit)) for title, rows in sections]
-    if args.json:
-        body = {"by": args.by, "kind": None}
+    shown = [(title, _ordered(rows, by, limit, offset)) for title, rows in sections]
+    if as_json:
+        body = {"by": by, "kind": None}
         for title, rows in shown:
             body[title] = [_public(r) for r in rows]
         _print_json(body)
         return 0
     for title, rows in shown:
-        _print_rows(f"{title} by {args.by}", rows)
+        _print_rows(f"{title} by {by}", rows)
     return 0
 
 

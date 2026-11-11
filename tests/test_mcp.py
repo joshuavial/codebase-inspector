@@ -1651,6 +1651,56 @@ def test_mcp_pagination_bounds(repo):
     assert len(data_offset["rows"]) <= 2
 
 
+def test_mcp_search_and_hotspots_offset(repo):
+    server = MCPServer(root=repo)
+
+    # cbi_search with limit=1, offset=0 vs limit=1, offset=1
+    res_search_0 = server.execute_tool("cbi_search", {"query": "Circle", "limit": 1, "offset": 0, "format": "json"})
+    assert not res_search_0["isError"]
+    hits_0 = json.loads(res_search_0["content"][0]["text"])
+
+    res_search_1 = server.execute_tool("cbi_search", {"query": "Circle", "limit": 1, "offset": 1, "format": "json"})
+    assert not res_search_1["isError"]
+    hits_1 = json.loads(res_search_1["content"][0]["text"])
+
+    assert len(hits_0) == 1
+    assert len(hits_1) == 1
+    assert hits_0[0]["id"] != hits_1[0]["id"]
+
+    # Text format returns distinct output
+    res_search_txt_0 = server.execute_tool("cbi_search", {"query": "Circle", "limit": 1, "offset": 0, "format": "text"})
+    res_search_txt_1 = server.execute_tool("cbi_search", {"query": "Circle", "limit": 1, "offset": 1, "format": "text"})
+    assert not res_search_txt_0["isError"]
+    assert not res_search_txt_1["isError"]
+    assert res_search_txt_0["content"][0]["text"] != res_search_txt_1["content"][0]["text"]
+
+    # cbi_hotspots with limit=1, offset=0 vs limit=1, offset=1
+    res_hot_0 = server.execute_tool("cbi_hotspots", {"metric": "loc", "kind": "source file", "limit": 1, "offset": 0, "format": "json"})
+    assert not res_hot_0["isError"]
+    hot_0 = json.loads(res_hot_0["content"][0]["text"])
+
+    res_hot_1 = server.execute_tool("cbi_hotspots", {"metric": "loc", "kind": "source file", "limit": 1, "offset": 1, "format": "json"})
+    assert not res_hot_1["isError"]
+    hot_1 = json.loads(res_hot_1["content"][0]["text"])
+
+    assert len(hot_0["nodes"]) == 1
+    assert len(hot_1["nodes"]) == 1
+    assert hot_0["nodes"][0]["id"] != hot_1["nodes"][0]["id"]
+
+    # Sections format (without kind filter)
+    res_sec_0 = server.execute_tool("cbi_hotspots", {"metric": "loc", "limit": 1, "offset": 0, "format": "json"})
+    assert not res_sec_0["isError"]
+    sec_0 = json.loads(res_sec_0["content"][0]["text"])
+
+    res_sec_1 = server.execute_tool("cbi_hotspots", {"metric": "loc", "limit": 1, "offset": 1, "format": "json"})
+    assert not res_sec_1["isError"]
+    sec_1 = json.loads(res_sec_1["content"][0]["text"])
+
+    assert len(sec_0["files"]) == 1
+    assert len(sec_1["files"]) == 1
+    assert sec_0["files"][0]["id"] != sec_1["files"][0]["id"]
+
+
 def test_tool_concepts(repo):
     server = MCPServer(root=repo)
 
