@@ -457,7 +457,7 @@ TOOLS = [
                 "forbid": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Layering constraints as 'from->to' that must not exist (e.g. ['core->api', 'viewer->cli'])",
+                    "description": "Forbidden dependency rules. Each rule is 'FROM:TO' or 'FROM->TO' specifying disallowed dependencies between paths or modules. Repeatable.",
                 },
                 "include_tests": {
                     "type": "boolean",
@@ -2245,6 +2245,22 @@ class MCPServer:
                     )
             out = out_buf.getvalue()
             err = err_buf.getvalue()
+            if as_json and forbid:
+                if code in (0, 1):
+                    try:
+                        payload = json.loads(out)
+                        if isinstance(payload, dict) and "passed" in payload and "rules" in payload:
+                            return out.rstrip()
+                    except (ValueError, TypeError):
+                        pass
+                report_parts = []
+                if out.strip():
+                    report_parts.append(out.strip())
+                if err.strip():
+                    report_parts.append(err.strip())
+                msg = "\n".join(report_parts) or f"cbi deps failed with exit code {code}"
+                raise ValueError(msg)
+
             if code != 0:
                 report_parts = []
                 if out.strip():
@@ -2255,14 +2271,6 @@ class MCPServer:
                 if forbid and out.strip():
                     msg = f"Forbidden dependencies detected:\n{msg}"
                 raise ValueError(msg)
-            if as_json and forbid:
-                return json.dumps({
-                    "level": level,
-                    "forbid": forbid,
-                    "passed": True,
-                    "violations": [],
-                    "message": out.strip(),
-                }, indent=2)
             return (out or err).rstrip()
         finally:
             conn.close()
