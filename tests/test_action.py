@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import run_command
+
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_YML = ROOT / "action.yml"
 CBI_CHECK_ACTION_YML = ROOT / ".github" / "actions" / "cbi-check" / "action.yml"
@@ -61,7 +63,7 @@ def run_action_script(
         f"{substituted}\n"
         f"echo \"OUTPUT_RESOLVED_BASE_REF=$RESOLVED_BASE_REF\"\n"
     )
-    return subprocess.run(
+    return run_command(
         ["bash", "-c", full_script],
         cwd=repo_dir,
         capture_output=True,
@@ -71,9 +73,9 @@ def run_action_script(
 
 def _init_git_repo(repo_dir: Path) -> Path:
     repo_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo_dir, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Tester"], cwd=repo_dir, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True)
+    run_command(["git", "init", "-b", "main"], cwd=repo_dir, check=True, capture_output=True)
+    run_command(["git", "config", "user.name", "Tester"], cwd=repo_dir, check=True)
+    run_command(["git", "config", "user.email", "test@example.com"], cwd=repo_dir, check=True)
     return repo_dir
 
 
@@ -81,14 +83,14 @@ def test_check_step_resolution_push_event_identical_sha(tmp_path):
     """When pushing to main, BASE_REF resolves to HEAD; fallback to HEAD~1 with log message."""
     repo = _init_git_repo(tmp_path / "push_repo")
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "initial commit"], cwd=repo, check=True)
 
     (repo / "file.txt").write_text("v2\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "second commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "second commit"], cwd=repo, check=True)
 
-    head_sha = subprocess.run(
+    head_sha = run_command(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
@@ -107,14 +109,14 @@ def test_check_step_resolution_default_empty_input(tmp_path):
     """When inputs.base-ref is empty, it defaults to main and falls back to HEAD~1 on push."""
     repo = _init_git_repo(tmp_path / "empty_input_repo")
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "initial commit"], cwd=repo, check=True)
 
     (repo / "file.txt").write_text("v2\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "second commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "second commit"], cwd=repo, check=True)
 
-    head_sha = subprocess.run(
+    head_sha = run_command(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
@@ -133,13 +135,13 @@ def test_check_step_resolution_pr_event_different_branch(tmp_path):
     """For PR events, HEAD differs from BASE_REF, so RESOLVED_BASE_REF remains main."""
     repo = _init_git_repo(tmp_path / "pr_repo")
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "main commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "main commit"], cwd=repo, check=True)
 
-    subprocess.run(["git", "checkout", "-b", "feat/my-change"], cwd=repo, check=True)
+    run_command(["git", "checkout", "-b", "feat/my-change"], cwd=repo, check=True)
     (repo / "file.txt").write_text("v2-feature\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "feature commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "feature commit"], cwd=repo, check=True)
 
     script = extract_step_resolution(CBI_CHECK_ACTION_YML, "check-step")
     res = run_action_script(repo, script, input_base_ref="main")
@@ -153,10 +155,10 @@ def test_check_step_resolution_root_commit_graceful(tmp_path):
     """When HEAD is the root commit (no parent HEAD~1), the action handles it gracefully."""
     repo = _init_git_repo(tmp_path / "root_commit_repo")
     (repo / "file.txt").write_text("root\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "initial root commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "initial root commit"], cwd=repo, check=True)
 
-    head_sha = subprocess.run(
+    head_sha = run_command(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
@@ -175,14 +177,14 @@ def test_check_step_resolution_shallow_checkout_fails(tmp_path):
     """If repository checkout is shallow on push event, fail with helpful fetch-depth advice."""
     origin = _init_git_repo(tmp_path / "origin_repo")
     (origin / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=origin, check=True)
-    subprocess.run(["git", "commit", "-m", "c1"], cwd=origin, check=True)
+    run_command(["git", "add", "."], cwd=origin, check=True)
+    run_command(["git", "commit", "-m", "c1"], cwd=origin, check=True)
     (origin / "file.txt").write_text("v2\n")
-    subprocess.run(["git", "add", "."], cwd=origin, check=True)
-    subprocess.run(["git", "commit", "-m", "c2"], cwd=origin, check=True)
+    run_command(["git", "add", "."], cwd=origin, check=True)
+    run_command(["git", "commit", "-m", "c2"], cwd=origin, check=True)
 
     clone_dir = tmp_path / "shallow_clone"
-    subprocess.run(
+    run_command(
         ["git", "clone", "--depth", "1", f"file://{origin}", str(clone_dir)],
         check=True,
         capture_output=True,
@@ -200,13 +202,13 @@ def test_review_step_resolution_push_event(tmp_path):
     """Review step falls back to HEAD~1 when BASE_REF matches HEAD."""
     repo = _init_git_repo(tmp_path / "review_push_repo")
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "c1"], cwd=repo, check=True)
     (repo / "file.txt").write_text("v2\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c2"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "c2"], cwd=repo, check=True)
 
-    head_sha = subprocess.run(
+    head_sha = run_command(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
@@ -225,10 +227,10 @@ def test_review_step_resolution_root_commit(tmp_path):
     """Review step handles root commit gracefully when BASE_REF matches HEAD."""
     repo = _init_git_repo(tmp_path / "review_root_repo")
     (repo / "file.txt").write_text("root\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "initial root commit"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "initial root commit"], cwd=repo, check=True)
 
-    head_sha = subprocess.run(
+    head_sha = run_command(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
     ).stdout.strip()
 
@@ -247,12 +249,12 @@ def test_review_step_resolution_pr_event(tmp_path):
     """Review step preserves base ref on PR events where HEAD differs from BASE_REF."""
     repo = _init_git_repo(tmp_path / "review_pr_repo")
     (repo / "file.txt").write_text("v1\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c1"], cwd=repo, check=True)
-    subprocess.run(["git", "checkout", "-b", "feat/my-branch"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "c1"], cwd=repo, check=True)
+    run_command(["git", "checkout", "-b", "feat/my-branch"], cwd=repo, check=True)
     (repo / "file.txt").write_text("v2\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-m", "c2"], cwd=repo, check=True)
+    run_command(["git", "add", "."], cwd=repo, check=True)
+    run_command(["git", "commit", "-m", "c2"], cwd=repo, check=True)
 
     script = extract_step_resolution(CBI_CHECK_ACTION_YML, "review-step")
     res = run_action_script(repo, script, input_base_ref="main")
