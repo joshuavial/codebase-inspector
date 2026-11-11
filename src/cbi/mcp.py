@@ -442,6 +442,11 @@ TOOLS = [
                     "type": "string",
                     "description": "Only dependencies that enter this container node ID, name, or repo-relative path.",
                 },
+                "forbid": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Layering constraints as 'from->to' that must not exist (e.g. ['core->api', 'viewer->cli'])",
+                },
                 "include_tests": {
                     "type": "boolean",
                     "description": "Include imports from test files (default: false).",
@@ -2143,6 +2148,13 @@ class MCPServer:
         level = args.get("level") or "package"
         start = args.get("start")
         end = args.get("end")
+        forbid_raw = args.get("forbid") or []
+        if isinstance(forbid_raw, str):
+            forbid = [forbid_raw]
+        elif isinstance(forbid_raw, (list, tuple)):
+            forbid = [str(item) for item in forbid_raw]
+        else:
+            forbid = [str(forbid_raw)]
         include_tests = bool(args.get("include_tests", False))
         fmt = args.get("format", "text")
         as_json = fmt == "json"
@@ -2160,15 +2172,31 @@ class MCPServer:
                             level=level,
                             start=start,
                             end=end,
-                            forbid=[],
+                            forbid=forbid,
                             include_tests=include_tests,
                             json=as_json,
                         ),
                     )
             out = out_buf.getvalue()
             err = err_buf.getvalue()
-            if code != 0 and err and not out:
-                raise ValueError(err.strip())
+            if code != 0:
+                report_parts = []
+                if out.strip():
+                    report_parts.append(out.strip())
+                if err.strip():
+                    report_parts.append(err.strip())
+                msg = "\n".join(report_parts) or f"cbi deps failed with exit code {code}"
+                if forbid and out.strip():
+                    msg = f"Forbidden dependencies detected:\n{msg}"
+                raise ValueError(msg)
+            if as_json and forbid:
+                return json.dumps({
+                    "level": level,
+                    "forbid": forbid,
+                    "passed": True,
+                    "violations": [],
+                    "message": out.strip(),
+                }, indent=2)
             return (out or err).rstrip()
         finally:
             conn.close()

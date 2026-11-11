@@ -902,10 +902,13 @@ def deps(conn, args):
     failed = False
     word = "imports" if args.include_tests else "production imports"
     for spec in args.forbid:
-        if ":" not in spec:
+        if "->" in spec:
+            src_text, dst_text = spec.split("->", 1)
+        elif ":" in spec:
+            src_text, dst_text = spec.split(":", 1)
+        else:
             print("error: --forbid expects FROM:TO", file=sys.stderr)
             return 2
-        src_text, dst_text = spec.split(":", 1)
         if not src_text or not dst_text:
             print("error: --forbid expects FROM:TO", file=sys.stderr)
             return 2

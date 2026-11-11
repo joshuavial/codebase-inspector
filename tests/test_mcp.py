@@ -157,6 +157,9 @@ def test_tools_list():
     assert tools_by_name["cbi_diff"]["inputSchema"]["properties"]["base_model"]["type"] == "string"
     assert "head_model" in tools_by_name["cbi_diff"]["inputSchema"]["properties"]
     assert tools_by_name["cbi_diff"]["inputSchema"]["properties"]["head_model"]["type"] == "string"
+    assert "forbid" in tools_by_name["cbi_deps"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["type"] == "array"
+    assert tools_by_name["cbi_deps"]["inputSchema"]["properties"]["forbid"]["items"]["type"] == "string"
 
     query_tools_with_ref = [
         "cbi_show",
@@ -1851,6 +1854,99 @@ def test_tools_call_deps(repo):
     resp_bad = server.execute_tool("cbi_deps", {"level": "folder", "start": "nonexistent_dir"})
     assert resp_bad["isError"]
     assert "no folder" in resp_bad["content"][0]["text"]
+
+
+def test_tools_call_deps_forbid(repo):
+    server = MCPServer(root=repo)
+
+    # 1. Passing case: no forbidden dependencies exist
+    resp_pass = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/shapes->src/other"],
+    })
+    assert not resp_pass["isError"]
+    assert "no production imports from src/shapes to src/other" in resp_pass["content"][0]["text"]
+
+    # Passing case with single string forbid
+    resp_pass_str = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": "src/shapes->src/other",
+    })
+    assert not resp_pass_str["isError"]
+    assert "no production imports from src/shapes to src/other" in resp_pass_str["content"][0]["text"]
+
+    # Passing case with colon syntax
+    resp_pass_colon = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/shapes:src/other"],
+    })
+    assert not resp_pass_colon["isError"]
+    assert "no production imports from src/shapes to src/other" in resp_pass_colon["content"][0]["text"]
+
+    # Passing case with format=json
+    resp_pass_json = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/shapes->src/other"],
+        "format": "json",
+    })
+    assert not resp_pass_json["isError"]
+    data_pass = json.loads(resp_pass_json["content"][0]["text"])
+    assert data_pass["passed"] is True
+    assert data_pass["violations"] == []
+
+    # 2. Failing case: create an import between folders that violates forbidden constraint
+    (repo / "src/other/area.ts").write_text("import { Circle } from '../shapes/circle';\nexport function area() { return 0; }\n")
+    assert main(["scan"]) == 0
+
+    resp_fail = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/other->src/shapes"],
+    })
+    assert resp_fail["isError"] is True
+    text = resp_fail["content"][0]["text"]
+    assert "Forbidden dependencies detected" in text
+    assert "src/other/area.ts → src/shapes/circle.ts" in text
+
+    # Failing case with single string forbid
+    resp_fail_str = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": "src/other->src/shapes",
+    })
+    assert resp_fail_str["isError"] is True
+    assert "src/other/area.ts → src/shapes/circle.ts" in resp_fail_str["content"][0]["text"]
+
+    # Failing case with colon syntax
+    resp_fail_colon = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["src/other:src/shapes"],
+    })
+    assert resp_fail_colon["isError"] is True
+    assert "src/other/area.ts → src/shapes/circle.ts" in resp_fail_colon["content"][0]["text"]
+
+    # JSON-RPC handle_request call for forbid violation
+    req = {
+        "jsonrpc": "2.0",
+        "id": 42,
+        "method": "tools/call",
+        "params": {
+            "name": "cbi_deps",
+            "arguments": {
+                "level": "folder",
+                "forbid": ["src/other->src/shapes"],
+            },
+        },
+    }
+    resp_rpc = server.handle_request(req)
+    assert resp_rpc["result"]["isError"] is True
+    assert "src/other/area.ts → src/shapes/circle.ts" in resp_rpc["result"]["content"][0]["text"]
+
+    # Invalid forbid syntax returns error
+    resp_bad_syntax = server.execute_tool("cbi_deps", {
+        "level": "folder",
+        "forbid": ["nocolon"],
+    })
+    assert resp_bad_syntax["isError"] is True
+    assert "FROM:TO" in resp_bad_syntax["content"][0]["text"]
 
 
 def test_concurrent_requests_stress(repo):

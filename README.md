@@ -135,7 +135,7 @@ Exposed MCP tools:
 * `cbi_hotspots`: Rank nodes by coupling (fan-in/fan-out), size (LOC), or symbol count.
 * `cbi_cycles`: Detect dependency cycles at file, folder, and package levels.
 * `cbi_orphans`: Identify orphaned code, test-only exported symbols, unreachable files, and untested packages/folders.
-* `cbi_deps`: Container dependency matrix between packages, folders, concepts, or deployables.
+* `cbi_deps`: Container dependency matrix between packages, folders, concepts, or deployables (supports forbidden layering constraints via `forbid`).
 * `cbi_diff`: Architectural diff between commits, branches, or model databases, with drill-down options (`concept`, `module`, `file`, `symbol`; `format`: text, markdown, or json; `detail`: boolean).
 * `cbi_tasks`: Query open judgement tasks or retrieve full task briefs with input schemas.
 * `cbi_submit`: Submit an answer for an open judgement task (task_id and answer object or JSON string) with database write serialization.
