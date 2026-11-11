@@ -632,6 +632,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Git branch, tag, or commit SHA of a historical model database to query.",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'markdown' (default) or 'text'.",
@@ -2510,6 +2514,14 @@ class MCPServer:
         return "\n".join(lines)
 
     def handle_prime(self, args: dict) -> str:
+        ref = args.get("ref")
+        if ref is not None:
+            conn = self._get_connection(ref=ref)
+            try:
+                return prime.render(root=self.root, out=self.out, ref=ref, conn=conn).rstrip()
+            finally:
+                conn.close()
+
         if not self.model_path.is_file():
             return prime.NOT_INITIALISED.rstrip()
         conn = self._get_connection()

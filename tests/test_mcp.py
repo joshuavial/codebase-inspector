@@ -180,6 +180,7 @@ def test_tools_list():
         "cbi_tasks",
         "cbi_task",
         "cbi_submit",
+        "cbi_prime",
     ]
     for name in query_tools_with_ref:
         assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
@@ -2582,6 +2583,81 @@ def test_tool_prime(repo, tmp_path):
         conn_orig.close()
 
 
+def test_tool_prime_historical_ref(make_repo, monkeypatch, tmp_path):
+    root = make_repo(FILES)
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    server = MCPServer(root=root)
+
+    # 1. Clean checkout after init: working tree model (.cbi/model.db) does NOT exist
+    assert not server.model_path.is_file()
+
+    # Calling cbi_prime without ref returns unmapped / not-initialised guide
+    res_unmapped = server.execute_tool("cbi_prime", {})
+    assert not res_unmapped["isError"]
+    assert "This repo is not mapped yet" in res_unmapped["content"][0]["text"]
+
+    # 2. Scan HEAD ref into .cbi/refs/<head_sha>/model.db
+    scan_res = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    assert not scan_res["isError"]
+    head_sha = json.loads(scan_res["content"][0]["text"])["ref"]
+    assert head_sha is not None and len(head_sha) == 40
+
+    # Ensure working tree model STILL does NOT exist
+    assert not server.model_path.is_file()
+    assert not (root / ".cbi" / "model.db").exists()
+    assert (root / ".cbi" / "refs" / head_sha / "model.db").is_file()
+
+    # 3. cbi_prime with ref="HEAD" succeeds and returns ref-specific orientation content without requiring .cbi/model.db
+    res_prime_head = server.execute_tool("cbi_prime", {"ref": "HEAD"})
+    assert not res_prime_head["isError"]
+    head_text = res_prime_head["content"][0]["text"]
+    assert "# cbi: codebase inspector" in head_text
+    assert f"--ref {head_sha}" in head_text
+    assert "--out" not in head_text
+    assert "cbi tasks" in head_text
+
+    # 4. cbi_prime with explicit commit SHA
+    res_prime_sha = server.execute_tool("cbi_prime", {"ref": head_sha})
+    assert not res_prime_sha["isError"]
+    sha_text = res_prime_sha["content"][0]["text"]
+    assert f"--ref {head_sha}" in sha_text
+
+    # 5. Calling cbi_prime without ref preserves unmapped working-tree behavior
+    res_still_unmapped = server.execute_tool("cbi_prime", {})
+    assert not res_still_unmapped["isError"]
+    assert "This repo is not mapped yet" in res_still_unmapped["content"][0]["text"]
+
+    # 6. Error handling: invalid or nonexistent git ref
+    res_bad = server.execute_tool("cbi_prime", {"ref": "nonexistent-branch-9999"})
+    assert res_bad["isError"] is True
+    assert "No CBI model found for ref" in res_bad["content"][0]["text"]
+
+    # 7. Error handling: empty ref
+    res_empty = server.execute_tool("cbi_prime", {"ref": "   "})
+    assert res_empty["isError"] is True
+    assert "ref parameter cannot be empty" in res_empty["content"][0]["text"]
+
+    # 8. Error handling: path traversal in ref
+    res_trav = server.execute_tool("cbi_prime", {"ref": "../../outside"})
+    assert res_trav["isError"] is True
+    assert "path traversal outside refs directory is forbidden" in res_trav["content"][0]["text"]
+
+    # 9. Incompatible schema on ref model returns error
+    incompat_sha_dir = root / ".cbi" / "refs" / "fake_sha_999"
+    incompat_sha_dir.mkdir(parents=True)
+    incompat_db = incompat_sha_dir / "model.db"
+    conn = sqlite3.connect(incompat_db)
+    conn.execute("CREATE TABLE sentinel(val TEXT)")
+    conn.execute("PRAGMA user_version = 999")
+    conn.commit()
+    conn.close()
+
+    res_incompat_ref = server.execute_tool("cbi_prime", {"ref": "fake_sha_999"})
+    assert res_incompat_ref["isError"] is True
+    assert "schema 999" in res_incompat_ref["content"][0]["text"]
+
+
 def test_tool_task(repo):
     server = MCPServer(root=repo)
 
@@ -2973,6 +3049,11 @@ def test_query_tools_ref_parameter(repo):
     concepts_res = server.execute_tool("cbi_concepts", {"ref": "HEAD"})
     assert not concepts_res["isError"]
 
+    # cbi_prime
+    prime_res = server.execute_tool("cbi_prime", {"ref": "HEAD"})
+    assert not prime_res["isError"]
+    assert f"--ref {head_sha}" in prime_res["content"][0]["text"]
+
     # 3. Verify tools work with explicit commit SHA ref
     show_sha_res = server.execute_tool("cbi_show", {"node": circle_node, "ref": head_sha})
     assert not show_sha_res["isError"]
@@ -2980,6 +3061,10 @@ def test_query_tools_ref_parameter(repo):
 
     query_sha_res = server.execute_tool("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": head_sha})
     assert not query_sha_res["isError"]
+
+    prime_sha_res = server.execute_tool("cbi_prime", {"ref": head_sha})
+    assert not prime_sha_res["isError"]
+    assert f"--ref {head_sha}" in prime_sha_res["content"][0]["text"]
 
     # 4. Verify non-existent ref returns isError: True across all 8 query tools
     bad_ref_cases = [
@@ -2992,6 +3077,7 @@ def test_query_tools_ref_parameter(repo):
         ("cbi_tables", {"ref": "nonexistent-ref"}),
         ("cbi_query", {"sql": "SELECT count(*) FROM nodes", "ref": "nonexistent-ref"}),
         ("cbi_concepts", {"ref": "nonexistent-ref"}),
+        ("cbi_prime", {"ref": "nonexistent-ref"}),
     ]
     for tool_name, args in bad_ref_cases:
         res = server.execute_tool(tool_name, args)
