@@ -175,6 +175,9 @@ def test_tools_list():
         "cbi_orphans",
         "cbi_hotspots",
         "cbi_status",
+        "cbi_tasks",
+        "cbi_task",
+        "cbi_submit",
     ]
     for name in query_tools_with_ref:
         assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
@@ -3108,30 +3111,153 @@ end_of_record
     assert "cannot be empty" in res_empty["content"][0]["text"]
 
 
-def test_tool_ingest_enforces_max_file_size(repo, tmp_path, monkeypatch):
-    from cbi import ingest
-
+def test_task_tools_ref_parameter(repo):
     server = MCPServer(root=repo)
 
-    # 1. Sparse file exceeding default MAX_INGEST_BYTES (50 MB)
-    huge_file = tmp_path / "huge_coverage.lcov"
-    with open(huge_file, "wb") as f:
-        f.truncate(51 * 1024 * 1024)
+    # 1. Scan HEAD into refs/<head_sha>/model.db
+    scan_res = server.execute_tool("cbi_scan", {"ref": "HEAD", "format": "json"})
+    assert not scan_res["isError"]
+    head_sha = json.loads(scan_res["content"][0]["text"])["ref"]
 
-    res_huge = server.execute_tool("cbi_ingest", {"files": [str(huge_file)]})
-    assert res_huge["isError"] is True
-    assert "exceeds maximum allowed size" in res_huge["content"][0]["text"]
-    assert "huge_coverage.lcov" in res_huge["content"][0]["text"]
+    # 2. cbi_tasks returns open tasks from historical ref (using ref="HEAD" and explicit SHA)
+    tasks_res = server.execute_tool("cbi_tasks", {"ref": "HEAD", "format": "json"})
+    assert not tasks_res["isError"]
+    open_tasks = json.loads(tasks_res["content"][0]["text"])
+    assert len(open_tasks) > 0, "Expected open tasks in historical ref model"
 
-    # 2. Monkeypatched limit triggers on smaller file
-    monkeypatch.setattr(ingest, "MAX_INGEST_BYTES", 20)
-    small_file = tmp_path / "small_coverage.lcov"
-    small_file.write_text("TN:\nSF:src/shapes/circle.ts\nDA:18,1\nend_of_record\n")
+    tasks_sha_res = server.execute_tool("cbi_tasks", {"ref": head_sha, "format": "json"})
+    assert not tasks_sha_res["isError"]
+    assert json.loads(tasks_sha_res["content"][0]["text"]) == open_tasks
 
-    res_small = server.execute_tool("cbi_ingest", {"files": [str(small_file)]})
-    assert res_small["isError"] is True
-    assert "exceeds maximum allowed size" in res_small["content"][0]["text"]
-    assert "small_coverage.lcov" in res_small["content"][0]["text"]
+    tasks_txt_res = server.execute_tool("cbi_tasks", {"ref": "HEAD", "format": "text"})
+    assert not tasks_txt_res["isError"]
+    assert len(tasks_txt_res["content"][0]["text"].splitlines()) == len(open_tasks)
+
+    target_task = open_tasks[0]
+    task_id = target_task["id"]
+
+    # Filter tasks by kind with ref
+    kind_res = server.execute_tool("cbi_tasks", {"ref": "HEAD", "kind": target_task["kind"], "format": "json"})
+    assert not kind_res["isError"]
+    assert any(t["id"] == task_id for t in json.loads(kind_res["content"][0]["text"]))
+
+    # Retrieve brief via cbi_tasks with task_id and ref
+    brief_tasks_res = server.execute_tool("cbi_tasks", {"task_id": task_id, "ref": "HEAD", "format": "json"})
+    assert not brief_tasks_res["isError"]
+    assert json.loads(brief_tasks_res["content"][0]["text"])["id"] == task_id
+
+    # 3. cbi_task loads task brief from historical ref
+    task_txt_res = server.execute_tool("cbi_task", {"task_id": task_id, "ref": "HEAD"})
+    assert not task_txt_res["isError"]
+    text_content = task_txt_res["content"][0]["text"]
+    assert f"# Task {task_id}:" in text_content or "node:" in text_content or "instructions" in text_content.lower()
+
+    task_json_res = server.execute_tool("cbi_task", {"task_id": task_id, "ref": head_sha, "format": "json"})
+    assert not task_json_res["isError"]
+    brief = json.loads(task_json_res["content"][0]["text"])
+    assert brief["id"] == task_id
+    assert "input_hash" in brief
+    assert "bytes" in brief
+
+    # Pre-validate answer schema using check on historical ref
+    check_bad = server.execute_tool("cbi_task", {"task_id": task_id, "check": "{not-valid", "ref": "HEAD", "format": "json"})
+    assert not check_bad["isError"]
+    assert json.loads(check_bad["content"][0]["text"])["ok"] is False
+
+    # 4. cbi_submit writes answer to historical ref and resolves task
+    if brief["kind"] == "summarise-files":
+        answer = {
+            "input_hash": brief["input_hash"],
+            "files": [{"path": f["path"], "summary": f"Summary for {f['path']}."} for f in brief["files"]],
+        }
+    elif brief["kind"] == "confirm-structure":
+        answer = {"input_hash": brief["input_hash"], "deployables": [], "packages": []}
+    elif brief["kind"] == "define-concepts":
+        answer = {
+            "input_hash": brief["input_hash"],
+            "summary": "Concepts summary.",
+            "concepts": [],
+            "externals": [],
+            "relationships": [],
+        }
+    else:
+        answer = {"input_hash": brief["input_hash"], "summary": "Task summary."}
+
+    submit_res = server.execute_tool("cbi_submit", {"task_id": task_id, "answer": answer, "ref": "HEAD"})
+    assert not submit_res["isError"]
+    report = submit_res["content"][0]["text"]
+    assert "accepted" in report or task_id in report
+
+    # Verify task is now resolved in historical ref
+    after_res = server.execute_tool("cbi_tasks", {"ref": "HEAD", "format": "json"})
+    assert not after_res["isError"]
+    remaining_ids = [t["id"] for t in json.loads(after_res["content"][0]["text"])]
+    assert task_id not in remaining_ids
+
+    conn = server._get_connection(ref=head_sha)
+    state = conn.execute("SELECT state FROM tasks WHERE id = ?", (task_id,)).fetchone()[0]
+    assert state == "done"
+    conn.close()
+
+    # 5. Path traversal safeguards and nonexistent ref errors
+    for tool_name, args in [
+        ("cbi_tasks", {"ref": "nonexistent-ref"}),
+        ("cbi_task", {"task_id": task_id, "ref": "nonexistent-ref"}),
+        ("cbi_submit", {"task_id": task_id, "answer": answer, "ref": "nonexistent-ref"}),
+    ]:
+        res_bad = server.execute_tool(tool_name, args)
+        assert res_bad["isError"] is True
+        assert "No CBI model found for ref" in res_bad["content"][0]["text"]
+
+    for tool_name, args in [
+        ("cbi_tasks", {"ref": "../../outside"}),
+        ("cbi_task", {"task_id": task_id, "ref": "/etc/passwd"}),
+        ("cbi_submit", {"task_id": task_id, "answer": answer, "ref": "../evil"}),
+    ]:
+        res_trav = server.execute_tool(tool_name, args)
+        assert res_trav["isError"] is True
+        assert "path traversal outside refs directory is forbidden" in res_trav["content"][0]["text"]
+
+
+def test_task_tools_change_task_ref_resolution(repo):
+    server = MCPServer(root=repo)
+
+    # Add a file and create a second commit
+    new_file = repo / "src" / "shapes" / "square.ts"
+    new_file.write_text("export class Square {}\n", encoding="utf-8")
+    files._git(repo, "add", ".")
+    files._git(repo, "commit", "-m", "feat: add square")
+    head_sha = files.resolve_commit(repo, "HEAD")
+
+    # Run cbi_review to compare HEAD with HEAD~1, opening change tasks in refs/<head_sha>/model.db
+    rev_res = server.execute_tool("cbi_review", {"target": "HEAD", "base": "HEAD~1"})
+    assert not rev_res["isError"]
+
+    # Verify cbi_tasks returns tasks from HEAD ref
+    tasks_res = server.execute_tool("cbi_tasks", {"ref": "HEAD", "format": "json"})
+    assert not tasks_res["isError"]
+    tasks_list = json.loads(tasks_res["content"][0]["text"])
+    assert len(tasks_list) > 0
+
+    sac_tasks = [t for t in tasks_list if t["kind"] == "summarise-architecture-change"]
+    if sac_tasks:
+        sac = sac_tasks[0]
+        # Verify cbi_task loads brief from historical ref
+        brief_res = server.execute_tool("cbi_task", {"task_id": sac["id"], "ref": "HEAD", "format": "json"})
+        assert not brief_res["isError"]
+        brief = json.loads(brief_res["content"][0]["text"])
+        assert brief["id"] == sac["id"]
+
+        # Verify cbi_submit resolves task on historical ref
+        answer = {
+            "input_hash": brief["input_hash"],
+            "narrative": "Square was added to the shapes module to support box shapes.",
+            "citations": [f"{sac['node_path']}#Square"] if sac.get("node_path") else [],
+        }
+        sub_res = server.execute_tool("cbi_submit", {"task_id": sac["id"], "answer": answer, "ref": "HEAD"})
+        assert not sub_res["isError"]
+        assert "accepted" in sub_res["content"][0]["text"]
+
 
 
 

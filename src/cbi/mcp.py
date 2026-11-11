@@ -305,6 +305,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Offset into task list for pagination (default 0).",
                 },
+                "ref": {
+                    "type": "string",
+                    "description": "Git ref, branch, or commit SHA to inspect tasks from (default: working tree)",
+                },
                 "format": {
                     "type": "string",
                     "description": "Output format: 'text' (default) or 'json'.",
@@ -326,6 +330,10 @@ TOOLS = [
                 },
                 "answer": {
                     "description": "Answer JSON object or serialized string matching the task's answer schema.",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git ref, branch, or commit SHA where the task was created (default: working tree)",
                 },
             },
             "required": ["task_id", "answer"],
@@ -638,6 +646,10 @@ TOOLS = [
                 "task_id": {
                     "type": "string",
                     "description": "The task ID (e.g. dc-..., sf-..., etc.).",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git ref, branch, or commit SHA where the task was created (default: working tree)",
                 },
                 "parts": {
                     "type": "boolean",
@@ -1040,7 +1052,7 @@ class MCPServer:
         self._stdout_lock = threading.Lock()
         self._scan_lock = threading.Lock()
 
-    def _get_connection(self, ref=None):
+    def _resolve_model_path(self, ref=None):
         if ref is not None:
             ref_str = str(ref).strip()
             if not ref_str:
@@ -1062,12 +1074,15 @@ class MCPServer:
                     pass
             if not candidate.is_file():
                 raise ValueError(f"No CBI model found for ref '{ref}' at {self.out / 'refs' / ref / 'model.db'}")
-            model_file = candidate
+            return candidate
         else:
             model_file = self.model_path
             if not model_file.is_file():
                 raise FileNotFoundError(f"No CBI model found at {model_file}. Run `cbi scan` first.")
+            return model_file
 
+    def _get_connection(self, ref=None):
+        model_file = self._resolve_model_path(ref=ref)
         conn = store.read_only(model_file)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != store.SCHEMA_VERSION:
@@ -1078,18 +1093,33 @@ class MCPServer:
         tasks.attach_cache(conn, readonly=True)
         return conn
 
-    def _get_write_connection(self):
-        if not self.model_path.is_file():
-            raise FileNotFoundError(f"No CBI model found at {self.model_path}. Run `cbi scan` first.")
-        conn = store._connect(self.model_path)
+    def _get_write_connection(self, ref=None):
+        model_file = self._resolve_model_path(ref=ref)
+        conn = store._connect(model_file)
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version != store.SCHEMA_VERSION:
             conn.close()
             raise sqlite3.DatabaseError(
-                f"{self.model_path} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
+                f"{model_file} is schema {version}; this cbi expects {store.SCHEMA_VERSION}. Rescan it."
             )
         tasks.attach_cache(conn, readonly=False)
         return conn
+
+    def _source(self, ref=None):
+        if ref is None:
+            return None
+        ref_str = str(ref).strip()
+        if not ref_str:
+            return None
+        refs_dir = (self.out / "refs").resolve()
+        candidate = (self.out / "refs" / ref_str / "model.db").resolve()
+        if ".." in ref_str or "/" in ref_str or "\\" in ref_str or not candidate.is_relative_to(refs_dir):
+            raise ValueError(f"Invalid ref '{ref}': path traversal outside refs directory is forbidden")
+        try:
+            sha = files.resolve_commit(self.root, ref_str)
+        except Exception:
+            sha = ref_str
+        return files.CommitTree(self.root, sha, files.Ignore(""))
 
     def handle_request(self, request: dict) -> dict | None:
         """Handle a JSON-RPC 2.0 request or notification."""
@@ -1843,15 +1873,18 @@ class MCPServer:
         return rendered.rstrip()
 
     def handle_tasks(self, args: dict) -> str:
-        conn = self._get_connection()
+        ref = args.get("ref")
+        conn = self._get_connection(ref=ref)
+        source = None
         try:
+            source = self._source(ref=ref)
             task_id = args.get("task_id") or args.get("id")
             fmt = args.get("format", "text")
             as_json = fmt == "json"
 
             if task_id:
                 try:
-                    b = tasks.brief(conn, task_id, self.root)
+                    b = tasks.brief(conn, task_id, source or self.root)
                 except tasks.UnknownTask as err:
                     raise ValueError(f"Unknown task: {err}") from err
                 if as_json:
@@ -1886,6 +1919,8 @@ class MCPServer:
             ]
             return "\n".join(lines)
         finally:
+            if source is not None:
+                source.close()
             conn.close()
 
     def handle_submit(self, args: dict) -> str:
@@ -1896,6 +1931,8 @@ class MCPServer:
         if "answer" not in args or args["answer"] is None:
             raise ValueError("Missing required argument: 'answer'")
 
+        ref = args.get("ref")
+
         answer = args["answer"]
         if isinstance(answer, (dict, list)):
             text = json.dumps(answer)
@@ -1905,13 +1942,19 @@ class MCPServer:
             text = json.dumps(answer)
 
         with self._scan_lock:
-            conn = self._get_write_connection()
+            conn = self._get_write_connection(ref=ref)
+            source = None
             try:
-                report = tasks.submit(conn, task_id, text, self.root, self.out)
+                source = self._source(ref=ref)
+                source_tree = source or self.root
+                model_dir = self._resolve_model_path(ref=ref).parent if ref is not None else self.out
+                report = tasks.submit(conn, task_id, text, source_tree, model_dir)
                 return report
             except (tasks.AnswerError, tasks.UnknownTask) as err:
                 raise ValueError(str(err)) from err
             finally:
+                if source is not None:
+                    source.close()
                 conn.close()
 
     def handle_query(self, args: dict) -> str:
@@ -2448,10 +2491,16 @@ class MCPServer:
 
         fmt = args.get("format", "text")
         as_json = fmt == "json"
+        ref = args.get("ref")
 
-        conn = self._get_connection()
-        token = parts.bind(self.out)
+        conn = self._get_connection(ref=ref)
+        model_dir = self._resolve_model_path(ref=ref).parent if ref is not None else self.out
+        token = parts.bind(model_dir)
+        source = None
         try:
+            source = self._source(ref=ref)
+            source_tree = source or self.root
+
             if "check" in args and args["check"] is not None:
                 check_val = args["check"]
                 if isinstance(check_val, (dict, list)):
@@ -2462,7 +2511,7 @@ class MCPServer:
                     check_text = json.dumps(check_val)
 
                 try:
-                    warnings = tasks.check(conn, task_id, check_text, self.root)
+                    warnings = tasks.check(conn, task_id, check_text, source_tree)
                 except tasks.UnknownTask as err:
                     raise ValueError(f"Unknown task: {err}") from err
                 except tasks.AnswerError as err:
@@ -2478,7 +2527,7 @@ class MCPServer:
                     return "ok"
 
             try:
-                b = tasks.brief(conn, task_id, self.root)
+                b = tasks.brief(conn, task_id, source_tree)
             except tasks.UnknownTask as err:
                 raise ValueError(f"Unknown task: {err}") from err
 
@@ -2489,7 +2538,7 @@ class MCPServer:
                 if b["kind"] not in parts.SPLIT_KINDS:
                     raise ValueError(f"{b['kind']} briefs are not split")
                 try:
-                    spec = parts.split_brief(conn, b, self.root)
+                    spec = parts.split_brief(conn, b, source_tree)
                 except ValueError as err:
                     raise ValueError(str(err)) from err
 
@@ -2520,6 +2569,8 @@ class MCPServer:
             return stamped.rstrip()
         finally:
             parts.unbind(token)
+            if source is not None:
+                source.close()
             conn.close()
 
     def handle_ingest(self, args: dict) -> str:
