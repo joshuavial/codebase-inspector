@@ -62,8 +62,20 @@ jobs:
           python-version: "3.13"
           enable-cache: true
       - run: uv build
+      - run: ls -la dist/*.whl dist/*.tar.gz
       - run: uv tool install dist/*.whl --force
       - run: cbi --version
+      - run: |
+          uv venv /tmp/test-sdist-venv
+          uv pip install --python /tmp/test-sdist-venv dist/*.tar.gz
+          /tmp/test-sdist-venv/bin/cbi --version
+      - run: |
+          mkdir -p /tmp/test-sdist-cbi
+          git -C /tmp/test-sdist-cbi init
+          (cd /tmp/test-sdist-cbi && /tmp/test-sdist-venv/bin/cbi init)
+          (cd /tmp/test-sdist-cbi && /tmp/test-sdist-venv/bin/cbi scan)
+          (cd /tmp/test-sdist-cbi && /tmp/test-sdist-venv/bin/cbi status --out /tmp/test-sdist-cbi/.cbi)
+          rm -rf /tmp/test-sdist-venv /tmp/test-sdist-cbi
 
   app:
     name: Desktop app
