@@ -71,7 +71,7 @@ def package_version():
     try:
         return version("codebase-inspector")
     except PackageNotFoundError:
-        return "0.4.0"
+        return "0.5.0"
 
 
 def build_parser():
