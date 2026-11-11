@@ -399,6 +399,10 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
+                "fail": {
+                    "type": "boolean",
+                    "description": "Exit with error (isError: True) if dependency cycles are found (default: false).",
+                },
                 "ref": {
                     "type": "string",
                     "description": "Git branch, tag, or commit SHA of a historical model database to query.",
@@ -407,7 +411,7 @@ TOOLS = [
                     "type": "string",
                     "description": "Output format: 'text' or 'json' (default: text)",
                     "enum": ["text", "json"],
-                }
+                },
             },
             "required": [],
         },
@@ -2188,13 +2192,16 @@ class MCPServer:
     def handle_cycles(self, args: dict) -> str:
         fmt = args.get("format", "text")
         as_json = fmt == "json"
+        fail = bool(args.get("fail", False))
         ref = args.get("ref")
         conn = self._get_connection(ref=ref)
         try:
             buf = io.StringIO()
             with self._stdout_lock:
                 with contextlib.redirect_stdout(buf):
-                    graph.cycles(conn, argparse.Namespace(json=as_json))
+                    rc = graph.cycles(conn, argparse.Namespace(json=as_json, fail=fail))
+            if fail and rc != 0 and not as_json:
+                raise ValueError(buf.getvalue().rstrip())
             return buf.getvalue().rstrip()
         finally:
             conn.close()

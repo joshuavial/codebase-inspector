@@ -186,6 +186,9 @@ def test_tools_list():
         assert "ref" in tools_by_name[name]["inputSchema"]["properties"]
         assert tools_by_name[name]["inputSchema"]["properties"]["ref"]["type"] == "string"
 
+    assert "fail" in tools_by_name["cbi_cycles"]["inputSchema"]["properties"]
+    assert tools_by_name["cbi_cycles"]["inputSchema"]["properties"]["fail"]["type"] == "boolean"
+
     for name in ("cbi_tests_for", "cbi_search", "cbi_hotspots"):
         props = tools_by_name[name]["inputSchema"]["properties"]
         assert "format" in props
@@ -1761,7 +1764,7 @@ def test_tool_concepts(repo):
     assert "not found" in resp_missing["content"][0]["text"]
 
 
-def test_tools_call_cycles(repo):
+def test_tools_call_cycles(repo, make_repo, monkeypatch):
     server = MCPServer(root=repo)
 
     # Text format
@@ -1780,6 +1783,53 @@ def test_tools_call_cycles(repo):
     data = json.loads(resp_json["content"][0]["text"])
     assert "files" in data and "folders" in data and "packages" in data
     assert isinstance(data["files"], list)
+    assert data["passed"] is True
+
+    # With fail parameter on clean repo
+    resp_clean_fail = server.execute_tool("cbi_cycles", {"fail": True, "format": "json"})
+    assert not resp_clean_fail["isError"]
+    data_clean_fail = json.loads(resp_clean_fail["content"][0]["text"])
+    assert data_clean_fail["passed"] is True
+
+    resp_clean_nofail = server.execute_tool("cbi_cycles", {"fail": False, "format": "json"})
+    assert not resp_clean_nofail["isError"]
+    data_clean_nofail = json.loads(resp_clean_nofail["content"][0]["text"])
+    assert data_clean_nofail["passed"] is True
+
+    # Cyclic dependency test case
+    cyclic_root = make_repo({
+        "core/a.ts": 'import { b } from "./b"; export const a = b;\n',
+        "core/b.ts": 'import { a } from "./a"; export const b = a;\n',
+    }, name="cyclic-cycles")
+    monkeypatch.chdir(cyclic_root)
+    assert main(["init"]) == 0 and main(["scan"]) == 0
+    server_cyclic = MCPServer(root=cyclic_root)
+
+    # cbi_cycles with fail=True, format="text" returns isError: True
+    resp_cyclic_fail_text = server_cyclic.execute_tool("cbi_cycles", {"fail": True, "format": "text"})
+    assert resp_cyclic_fail_text["isError"] is True
+    text_fail = resp_cyclic_fail_text["content"][0]["text"]
+    assert "core/a.ts" in text_fail and "core/b.ts" in text_fail
+
+    # cbi_cycles with fail=True, format="json" returns isError: False and JSON contains "passed": False
+    resp_cyclic_fail_json = server_cyclic.execute_tool("cbi_cycles", {"fail": True, "format": "json"})
+    assert resp_cyclic_fail_json["isError"] is False
+    data_cyclic_fail = json.loads(resp_cyclic_fail_json["content"][0]["text"])
+    assert data_cyclic_fail["passed"] is False
+    assert len(data_cyclic_fail["files"]) > 0
+
+    # cbi_cycles with fail=False returns isError: False
+    resp_cyclic_nofail_text = server_cyclic.execute_tool("cbi_cycles", {"fail": False, "format": "text"})
+    assert resp_cyclic_nofail_text["isError"] is False
+
+    resp_cyclic_nofail_json = server_cyclic.execute_tool("cbi_cycles", {"fail": False, "format": "json"})
+    assert resp_cyclic_nofail_json["isError"] is False
+    data_cyclic_nofail = json.loads(resp_cyclic_nofail_json["content"][0]["text"])
+    assert data_cyclic_nofail["passed"] is False
+
+    # Default fail=False
+    resp_cyclic_default = server_cyclic.execute_tool("cbi_cycles", {})
+    assert resp_cyclic_default["isError"] is False
 
 
 def test_tools_call_orphans(repo):
