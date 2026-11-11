@@ -20,7 +20,7 @@ from cbi import change_overview, change_summaries, concepts, diff, files, render
 HELP = """\
 Write a review of the architectural changes in a pull request, branch or commit.
 
-The target is a pull request number, a branch, a commit, or base..head.
+The target is a pull request number, a branch, a commit, or base..head (or base...head).
 A pull request is resolved with
 `gh pr view <n> --json baseRefName,headRefOid,baseRefOid,number,url`
 (read-only). A branch or commit is compared with --base, or with the
@@ -94,8 +94,9 @@ class ReviewError(Exception):
         self.code = code
 
 
-def review(root, target, base=None, model=None, out_dir=None, post=False):
-    """Resolve, scan, write review.md and maybe post it. Returns a short report."""
+def review_data(root, target, base=None, model=None, out_dir=None, post=False):
+    """Resolve, scan, compare, generate review diagram and review.md.
+    Returns structured review dict."""
     root = Path(root)
     model = Path(model) if model else root / ".cbi"
     if not (model / "ignore").exists():
@@ -147,7 +148,28 @@ def review(root, target, base=None, model=None, out_dir=None, post=False):
         lines.append("images: before.png, before.svg, after.png, after.svg")
     if action:
         lines.append(f"posted: {action}")
-    return "\n".join(lines)
+    report = "\n".join(lines)
+    return {
+        "base": base_sha,
+        "head": head_sha,
+        "spec": spec,
+        "result": result,
+        "diagram": diagram,
+        "mermaid": mermaid,
+        "narrative": narrative,
+        "change_task": change_task,
+        "define_task": define_task,
+        "review_file": str(path),
+        "report": report,
+    }
+
+
+def review(root, target, base=None, model=None, out_dir=None, post=False, format="markdown"):
+    """Resolve, scan, write review.md and maybe post it. Returns a short report or JSON."""
+    data = review_data(root, target, base=base, model=model, out_dir=out_dir, post=post)
+    if format == "json":
+        return json.dumps(data, indent=2)
+    return data["report"]
 
 
 def _capture_images(model, base_sha, head_sha, result, folder):
@@ -175,11 +197,27 @@ def resolve_target(root, target, base):
                 raise ReviewError(f"gh pr view did not return {key}")
         return {"base": base or pr["baseRefOid"], "head": pr["headRefOid"], "pr": pr["number"],
                 "url": pr["url"], "base_name": pr.get("baseRefName")}
+    if "..." in target:
+        if base:
+            raise ReviewError("pass a range or --base, not both", code=2)
+        left, sep, right = target.partition("...")
+        if not left or not right or left.endswith(".") or right.startswith(".") or "..." in right:
+            raise ReviewError("a range needs both ends, like base...head", code=2)
+        left_sha = files.resolve_commit(root, left)
+        right_sha = files.resolve_commit(root, right)
+        result = subprocess.run(
+            ["git", "merge-base", "--end-of-options", left_sha, right_sha],
+            cwd=root, capture_output=True, text=True,
+        )
+        found = result.stdout.strip()
+        if result.returncode != 0 or not found:
+            raise ReviewError(f"pass --base REF. There is no merge-base between {left} and {right}.", code=2)
+        return {"base": found, "head": right}
     if ".." in target:
         if base:
             raise ReviewError("pass a range or --base, not both", code=2)
-        left, right = target.split("..", 1)
-        if not left or not right:
+        left, sep, right = target.partition("..")
+        if not left or not right or left.endswith(".") or right.startswith(".") or ".." in right:
             raise ReviewError("a range needs both ends, like base..head", code=2)
         return {"base": left, "head": right}
     head_sha = files.resolve_commit(root, target)
@@ -195,7 +233,7 @@ def _default_base(root, head_sha):
         except files.BadRef:
             continue
         if sha == head_sha:
-            continue
+            return sha
         result = subprocess.run(
             ["git", "merge-base", "--end-of-options", sha, head_sha],
             cwd=root, capture_output=True, text=True,

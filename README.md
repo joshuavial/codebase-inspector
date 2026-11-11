@@ -375,7 +375,7 @@ cbi review 123 --out-dir dist/reviews/pr-123
 ```
 
 Options:
-* `target`: A pull request number (e.g. `cbi review 123`), branch name, commit SHA, or `BASE..HEAD` revision range.
+* `target`: A pull request number (e.g. `cbi review 123`), branch name, commit SHA, or revision range (`BASE..HEAD` or `BASE...HEAD`).
 * `--base REF`: Base reference when target is a branch or commit, or to override a pull request's base branch.
 * `--format {markdown,json}`: Review output format (`markdown` default with summary, Mermaid flowchart, and concept breakdown; `json` for machine-readable review data).
 * `--json`: Standardized flag equivalent to `--format json`.
@@ -488,7 +488,7 @@ For seamless automation, CI pipelines, and AI agent tool chains, CBI commands su
 
 * `cbi check --json`: Returns `{ "passed": boolean, "problems": string[], "findings": object[] }` with exit code `0` on clean pass or warn mode, and `1` on check failure.
 * `cbi diff ... --json`: Returns structured diff metrics, concept overview, and drill-down records.
-* `cbi review ... --json`: Returns structural PR comparison, changed concepts, and test coverage gaps as JSON.
+* `cbi review ... --json`: Returns structured review data (`{ "base", "head", "spec", "result", "diagram", "mermaid", "review_file" }`) including structural PR comparison, changed concepts, Mermaid change graph, and test coverage gaps as JSON.
 * `cbi history ... --json`: Returns default-branch architecture changelog entries and diff summaries as JSON.
 
 This uniform flag complements existing JSON-enabled query and inspection commands (`cbi query --json`, `cbi endpoints --json`, `cbi tables --json`, `cbi status --json`, `cbi search --json`, `cbi show --json`, `cbi tests-for --json`, `cbi hotspots --json`, `cbi cycles --json`, `cbi orphans --json`, `cbi deps --json`, `cbi tasks --json`, `cbi task --json`).
