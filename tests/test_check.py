@@ -402,11 +402,11 @@ def test_check_json_format_and_alias(make_repo, monkeypatch, capsys, tmp_path):
     code, out, err = run(capsys, "check", "--json")
     assert code == 0, err
     data = json.loads(out)
-    assert data == {"passed": True, "problems": []}
+    assert data == {"passed": True, "problems": [], "findings": []}
 
     code, out, err = run(capsys, "check", "--format", "json")
     assert code == 0, err
-    assert json.loads(out) == {"passed": True, "problems": []}
+    assert json.loads(out) == {"passed": True, "problems": [], "findings": []}
 
     # 2. Problem detection when code file changes
     (root / "a.ts").write_text("export const a = 2\n")
@@ -417,6 +417,9 @@ def test_check_json_format_and_alias(make_repo, monkeypatch, capsys, tmp_path):
     assert data["passed"] is False
     assert len(data["problems"]) == 1
     assert "a.ts: changed code file has no summary" in data["problems"][0]
+    assert len(data["findings"]) == 1
+    assert data["findings"][0]["kind"] == "summary"
+    assert data["findings"][0]["file"] == "a.ts"
 
     code, out, err = run(capsys, "check", "--format", "json")
     assert code == 1
@@ -425,13 +428,15 @@ def test_check_json_format_and_alias(make_repo, monkeypatch, capsys, tmp_path):
     # 3. Kind filtering in JSON output
     code, out, err = run(capsys, "check", "--kind", "secret", "--json")
     assert code == 0
-    assert json.loads(out) == {"passed": True, "problems": []}
+    assert json.loads(out) == {"passed": True, "problems": [], "findings": []}
 
     code, out, err = run(capsys, "check", "--kind", "summary", "--json")
     assert code == 1
     data_summary = json.loads(out)
     assert data_summary["passed"] is False
     assert len(data_summary["problems"]) == 1
+    assert len(data_summary["findings"]) == 1
+    assert data_summary["findings"][0]["kind"] == "summary"
 
     # 4. Warn mode in JSON output exits 0 with passed=True
     (root / ".cbi" / "team.toml").write_text('check = "warn"\n')
@@ -440,4 +445,48 @@ def test_check_json_format_and_alias(make_repo, monkeypatch, capsys, tmp_path):
     data_warn = json.loads(out)
     assert data_warn["passed"] is True
     assert any("a.ts: changed code file has no summary" in p for p in data_warn["problems"])
+    assert any(f["kind"] == "summary" and f["file"] == "a.ts" for f in data_warn["findings"])
+
+
+def test_invalid_kind_exits_code_2(make_repo, monkeypatch, capsys):
+    root = make_repo({"a.ts": "export const a = 1\n", "README.md": "# Demo\n"}, name="invalid-kind")
+    monkeypatch.chdir(root)
+    assert main(["init"]) == 0
+    assert main(["scan"]) == 0
+
+    # 1. Invalid kind via CLI exits with code 2
+    for bad in ("cycles", "naming", "unknown", "edges", "orphans"):
+        with pytest.raises(SystemExit) as exc:
+            main(["check", "--kind", bad])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert f"error: invalid check kind: '{bad}'." in err
+        assert "Valid kinds: ignore, json, owner, secret, stale, summary" in err
+
+    # 2. check.run directly with invalid kind
+    with pytest.raises(SystemExit) as exc:
+        check.run(root, root / ".cbi", None, "text", lambda r, o: None, kind="cycles")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "error: invalid check kind: 'cycles'." in err
+
+    # 3. check.verify directly with invalid kind
+    with pytest.raises(SystemExit) as exc:
+        check.verify(root, root / ".cbi", kind="naming")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "error: invalid check kind: 'naming'." in err
+
+    # 4. check._report directly with invalid kind
+    with pytest.raises(SystemExit) as exc:
+        check._report(root, root / ".cbi", "HEAD", "text", kind="bad")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "error: invalid check kind: 'bad'." in err
+
+    # 5. All valid kinds are accepted without exiting 2
+    for valid in sorted(check.VALID_KINDS):
+        code, out, err = run(capsys, "check", "--kind", valid)
+        assert code in (0, 1)
+        assert "invalid check kind" not in err
 

@@ -596,7 +596,7 @@ TOOLS = [
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Optional filter for check findings by kind (e.g. 'summary', 'owner', 'json', 'secret').",
+                    "description": "Optional filter for check findings by kind (e.g. 'summary', 'owner', 'json', 'stale', 'secret', 'ignore').",
                 },
                 "format": {
                     "type": "string",
@@ -2440,11 +2440,14 @@ class MCPServer:
                 res = check.verify(self.root, self.out, base_ref=base, kind=kind)
             except (files.BadRef, FileNotFoundError) as err:
                 raise ValueError(str(err)) from err
+            except SystemExit as err:
+                raise ValueError(f"invalid check kind: '{kind}'. Valid kinds: {', '.join(sorted(check.VALID_KINDS))}") from err
 
             if fmt == "json":
                 return json.dumps({
                     "passed": res["passed"],
                     "problems": res["problems"],
+                    "findings": res.get("findings", []),
                 }, indent=2)
             return res["report"].rstrip()
 

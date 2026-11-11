@@ -28,7 +28,7 @@ hold every accepted answer, and answer text must not look like a key or a
 token (a known prefix, or a high-entropy token).
 
 Prints each file and how to fix it. --format github prints GitHub Actions
-annotations. --format json or --json prints {passed, problems} as JSON.
+annotations. --format json or --json prints {passed, problems, findings} as JSON.
 team.toml can set check = "warn": the same list is printed and
 the command exits 0.
 
@@ -36,9 +36,17 @@ The scan writes the derived model. Judgement files are restored afterwards,
 so this command does not rewrite answers.jsonl or the JSON files.
 
 Exit codes: 0 passed, or problems while check = "warn"; 1 a check failed,
-not inside a git repo, not initialised, or an unknown base."""
+not inside a git repo, not initialised, or an unknown base. 2 an invalid check kind."""
 
 KEPT = ("structure.json", "concepts.json", "screens.json", team.ANSWERS_NAME)
+VALID_KINDS = {"summary", "owner", "json", "stale", "secret", "ignore"}
+
+
+def _validate_kind(kind):
+    if kind is not None and kind not in VALID_KINDS:
+        print(f"error: invalid check kind: '{kind}'. Valid kinds: {', '.join(sorted(VALID_KINDS))}", file=sys.stderr)
+        sys.exit(2)
+
 _PREFIXES = (
     ("aws access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
@@ -54,6 +62,7 @@ _TOKEN = re.compile(r"[A-Za-z0-9+/_=-]{24,}")
 
 def run(root, out, base_ref, fmt, scan, kind=None):
     """Scan, report, and restore judgement files. `scan` is `cbi.scan.scan`."""
+    _validate_kind(kind)
     root, out = Path(root), Path(out)
     if not (out / "ignore").exists():
         print(f"{out} is not initialised. Run `cbi init` first.", file=sys.stderr)
@@ -82,6 +91,7 @@ def verify(root, out, base_ref=None, scan=None, kind=None):
         'report': str (clean rendered text report)
         'base': str (resolved base commit SHA)
     """
+    _validate_kind(kind)
     root, out = Path(root), Path(out)
     if not (out / "ignore").exists():
         raise FileNotFoundError(f"{out} is not initialised. Run `cbi init` first.")
@@ -229,6 +239,7 @@ def _git_text(root, *args):
 
 
 def _report(root, out, base, fmt, kind=None):
+    _validate_kind(kind)
     conn = store.open_db(out / "model.db")
     try:
         tasks.attach_cache(conn)
@@ -558,6 +569,7 @@ def _render(findings, mode, fmt):
         return json.dumps({
             "passed": passed,
             "problems": problems,
+            "findings": findings,
         }, indent=2)
     if not findings:
         return "cbi check: passed"
