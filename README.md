@@ -298,9 +298,9 @@ cbi check --base origin/main
 # Output GitHub Actions workflow annotations (::error file=...::)
 cbi check --base origin/main --format github
 
-# Filter findings by kind (e.g. naming, cycles, edges, orphans, summary, owner, json, secret)
-cbi check --kind cycles
-cbi check --kind naming
+# Filter findings by kind (summary, owner, json, stale, secret, ignore)
+cbi check --kind summary
+cbi check --kind owner
 
 # Structured JSON output for CI pipelines and automation
 cbi check --json
@@ -308,9 +308,29 @@ cbi check --json
 
 Key CI options:
 * `--base REF`: Compare against the merge base with `REF` (such as `origin/main` or `${{ github.base_ref }}`) instead of the default branch.
-* `--kind KIND`: Filter check findings by kind (e.g. `naming`, `cycles`, `edges`, `orphans`, `summary`, `owner`, `json`, `secret`).
+* `--kind KIND`: Filter check findings by kind (`summary`, `owner`, `json`, `stale`, `secret`, `ignore`). Architectural cycle verification and forbid constraints belong to `cbi cycles` and `cbi deps --forbid`.
 * `--format {text,github,json}`: Choose output format (`text` default, `github` annotations, or `json`).
 * `--json`: Standardized flag equivalent to `--format json`. Emits `{"passed": bool, "problems": [...], "findings": [...]}` with exit code `0` on success (or warn mode) and `1` on check failure.
+
+### Architecture Verification (`cbi deps --forbid` and `cbi cycles`)
+
+Enforce layering rules, container boundaries, and cycle freedom in CI:
+
+```bash
+# Detect circular dependencies between files, folders, or packages (exits 1 on cycles)
+cbi cycles
+
+# Enforce layering rules: exit 1 when forbidden imports run between containers
+cbi deps --level package --forbid "viewer:cli"
+cbi deps --level folder --forbid "api->db"
+cbi deps --forbid "web:db" --forbid "services->legacy"
+```
+
+The `--forbid` option accepts `FROM:TO` or `FROM->TO` syntax:
+* Specify container names, node IDs, or paths corresponding to `--level` (`package` default, or `folder`, `concept`, `deployable`).
+* Pass multiple `--forbid` options to verify several boundary constraints in a single run.
+* Exits `0` when no forbidden imports exist, `1` when a forbidden dependency is found, or `2` on invalid argument syntax or unknown node names.
+* Use `--include-tests` to check imports from test files in addition to production code.
 
 ---
 

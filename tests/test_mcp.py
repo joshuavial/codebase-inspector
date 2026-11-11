@@ -2333,6 +2333,7 @@ def test_tool_check(repo):
     data = json.loads(res_json["content"][0]["text"])
     assert data["passed"] is True
     assert data["problems"] == []
+    assert data["findings"] == []
 
     # 3. Clean pass with explicit base
     res_base = server.execute_tool("cbi_check", {"base": "main", "format": "json"})
@@ -2340,6 +2341,7 @@ def test_tool_check(repo):
     data_base = json.loads(res_base["content"][0]["text"])
     assert data_base["passed"] is True
     assert data_base["problems"] == []
+    assert data_base["findings"] == []
 
     # 4. Bad ref error handling
     res_bad = server.execute_tool("cbi_check", {"base": "nonexistent_ref_9999"})
@@ -2354,6 +2356,8 @@ def test_tool_check(repo):
     assert data_prob["passed"] is False
     assert len(data_prob["problems"]) > 0
     assert any("src/shapes/circle.ts" in p for p in data_prob["problems"])
+    assert len(data_prob["findings"]) > 0
+    assert any(f["file"] == "src/shapes/circle.ts" for f in data_prob["findings"])
 
     res_prob_text = server.execute_tool("cbi_check", {"format": "text"})
     assert not res_prob_text["isError"]
@@ -2367,6 +2371,8 @@ def test_tool_check(repo):
     data_match = json.loads(res_kind_match["content"][0]["text"])
     assert data_match["passed"] is False
     assert len(data_match["problems"]) > 0
+    assert len(data_match["findings"]) > 0
+    assert all(f["kind"] == "summary" for f in data_match["findings"])
 
     # Filter by non-matching kind ("secret"): passed is True, no problems
     res_kind_nonmatch = server.execute_tool("cbi_check", {"kind": "secret", "format": "json"})
@@ -2374,11 +2380,17 @@ def test_tool_check(repo):
     data_nonmatch = json.loads(res_kind_nonmatch["content"][0]["text"])
     assert data_nonmatch["passed"] is True
     assert data_nonmatch["problems"] == []
+    assert data_nonmatch["findings"] == []
 
     # Non-matching kind in text format: passed
     res_kind_text = server.execute_tool("cbi_check", {"kind": "secret", "format": "text"})
     assert not res_kind_text["isError"]
     assert "cbi check: passed" in res_kind_text["content"][0]["text"]
+
+    # 7. Invalid kind error handling
+    res_bad_kind = server.execute_tool("cbi_check", {"kind": "cycles"})
+    assert res_bad_kind["isError"]
+    assert "invalid check kind: 'cycles'" in res_bad_kind["content"][0]["text"]
 
 
 def test_tool_worktrees(repo, tmp_path):
