@@ -330,6 +330,17 @@ def extract_step_definition(action_yaml: str, step_id: str) -> dict[str, str]:
     return step_info
 
 
+
+@pytest.mark.parametrize("action_path", [ACTION_YML, CBI_CHECK_ACTION_YML])
+def test_action_input_metadata_has_no_expressions(action_path):
+    """Input metadata is loaded before workflow contexts are available."""
+    inputs = extract_action_inputs(action_path.read_text(encoding="utf-8"))
+    assert inputs["base-ref"]["default"] == "main"
+    for name, metadata in inputs.items():
+        for key, value in metadata.items():
+            assert "${{" not in value, f"{action_path}: inputs.{name}.{key} uses an expression"
+
+
 def test_action_verification_inputs_contract():
     """Verify fail-on-cycles, fail-on-orphans, forbid, and level inputs are defined."""
     for action_yaml in (

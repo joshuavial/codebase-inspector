@@ -3453,7 +3453,13 @@ def test_task_tools_ref_parameter(repo):
         assert "path traversal outside refs directory is forbidden" in res_trav["content"][0]["text"]
 
 
-def test_task_tools_change_task_ref_resolution(repo):
+def test_task_tools_change_task_ref_resolution(repo, monkeypatch):
+    # Exercise the second commit without global identity or Git's host fallback.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(repo / "absent-gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.delenv(key, raising=False)
+    files._git(repo, "config", "user.useConfigOnly", "true")
     server = MCPServer(root=repo)
 
     # Add a file and create a second commit
