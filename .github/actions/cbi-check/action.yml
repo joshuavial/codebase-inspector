@@ -7,7 +7,7 @@ branding:
 
 inputs:
   base-ref:
-    description: "Target branch or base commit to compare against (e.g. main or ${{ github.base_ref }})"
+    description: "Target branch or base commit to compare against (e.g. main or the pull request base branch)"
     required: false
     default: "main"
   fail-on-problems:

@@ -156,6 +156,10 @@ def make_repo(tmp_path):
         _git(root, "init", "-q", "-b", "main")
         # Working-tree hashes are raw bytes. Keep LF so they match the goldens.
         _git(root, "config", "core.autocrlf", "false")
+        # Keep later commits independent of the host's identity and signing setup.
+        _git(root, "config", "user.name", "test")
+        _git(root, "config", "user.email", "test@example.com")
+        _git(root, "config", "commit.gpgsign", "false")
         for rel, content in files.items():
             path = root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
